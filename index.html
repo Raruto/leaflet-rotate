@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+
+	<head>
+		<title>leaflet-rotate.js</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+		<script src="https://unpkg.com/leaflet@1.7/dist/leaflet-src.js"></script>
+		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7/dist/leaflet.css">
+
+		<script src="leaflet-rotate.js"></script>
+
+		<script src="route.js"></script>
+		<script src="debug.js"></script>
+
+		<style>
+			#map {
+				width: 100%;
+				height: 600px;
+				border: 1px solid #ccc;
+				max-height: 50vh;
+			}
+	</style>
+	</head>
+
+	<body>
+
+		<div id="map"></div>
+
+		<hr>
+
+		<div>
+			<p>
+				<strong>Fly to bounds: </strong>
+				<button onclick="map.flyToBounds(circle.getBounds());">CIRCLE</button>
+				<button onclick="map.flyToBounds(polygon.getBounds());"> POLYGON</button>
+				<button onclick="map.flyToBounds(path.getBounds());">PATH</button>
+			</p>
+			<p>
+				<strong>Fly to: </strong>
+				<button onclick="map.flyTo(places['Kyiv'], 10);">Kyiv</button>
+				<button onclick="map.flyTo(places['London'], 10);">London</button>
+				<button onclick="map.flyTo(places['San Francisco'], 10);">San Francisco</button>
+				<button onclick="map.flyTo(places['Washington'], 10);">Washington</button>
+				<button onclick="map.flyTo(places['Trondheim'], 10);">Trondheim</button>
+			</p>
+		</div>
+
+		<script type="text/javascript">
+			var loremIpsum =
+				"<p>Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Donec odio. Quisque volutpat mattis eros. Nullam malesuada erat ut turpis. Suspendisse urna nibh, viverra non, semper suscipit, posuere a, pede.</p><p>Donec nec justo eget felis facilisis fermentum. Aliquam porttitor mauris sit amet orci. Aenean dignissim pellentesque.</p>";
+
+			var places = {
+				'Kyiv': [50.5, 30.5],
+				'London': [51.51, -0.12],
+				'San Francisco': [37.77, -122.42],
+				'Washington': [38.91, -77.04],
+				'Trondheim': [63.41, 10.41],
+			};
+
+			var esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+				id: 'mapbox.streets',
+				attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+			});
+
+			var osm = L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+				maxZoom: 18,
+				attribution: '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+			});
+
+			var map = L.map('map', {
+				center: [55, 10],
+				zoom: 2,
+				layers: [esri],
+				rotate: true,
+			});
+
+			var layers = L.control.layers({
+				'Empty': L.tileLayer(''),
+				'Streets': osm,
+				'Satellite': esri,
+			}, null, {
+				collapsed: false
+			}).addTo(map);
+
+			for (var i in places) {
+				L.marker(places[i])
+					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
+					.bindTooltip('<b>' + i + '</b>')
+					.addTo(map);
+			}
+
+			var path = L.polyline(route, {
+				renderer: L.canvas()
+			}).addTo(map);
+
+			var circle = L.circle([53, 4], 111111)
+				.addTo(map);
+
+			var polygon = L.polygon([
+				[48, -3],
+				[50, -4],
+				[52, 4]
+			]).addTo(map);
+
+			L.Rotate.debug(map);
+		</script>
+	</body>
+
+</html>
