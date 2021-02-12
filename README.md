@@ -2,10 +2,10 @@
 
 A Leaflet plugin that allows to add rotation functionality to map tiles
 
-_For a working example see the following [demo](https://raruto.github.io/leaflet-rotate/index.html)_
+_For a working example see the following [demo](https://raruto.github.io/leaflet-rotate/examples/leaflet-rotate.html)_
 
 <p align="center">
-    <a href="https://raruto.github.io/leaflet-rotate/index.html"><img src="https://raruto.github.io/img/leaflet-rotate.png" alt="Leaflet rotate viewer" /></a>
+    <a href="https://raruto.github.io/leaflet-rotate/examples/leaflet-rotate.html"><img src="https://raruto.github.io/img/leaflet-rotate.png" alt="Leaflet rotate viewer" /></a>
 </p>
 
 ---
