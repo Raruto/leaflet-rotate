@@ -10,8 +10,10 @@
 
 		<script src="leaflet-rotate.js"></script>
 
-		<script src="route.js"></script>
-		<script src="debug.js"></script>
+		<script src="misc/route.js"></script>
+		<script src="misc/places.js"></script>
+		<script src="misc/loremIpsum.js"></script>
+		<script src="lib/debug.js"></script>
 
 		<style>
 			#map {
@@ -20,7 +22,7 @@
 				border: 1px solid #ccc;
 				max-height: 50vh;
 			}
-	</style>
+		</style>
 	</head>
 
 	<body>
@@ -46,18 +48,7 @@
 			</p>
 		</div>
 
-		<script type="text/javascript">
-			var loremIpsum =
-				"<p>Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Donec odio. Quisque volutpat mattis eros. Nullam malesuada erat ut turpis. Suspendisse urna nibh, viverra non, semper suscipit, posuere a, pede.</p><p>Donec nec justo eget felis facilisis fermentum. Aliquam porttitor mauris sit amet orci. Aenean dignissim pellentesque.</p>";
-
-			var places = {
-				'Kyiv': [50.5, 30.5],
-				'London': [51.51, -0.12],
-				'San Francisco': [37.77, -122.42],
-				'Washington': [38.91, -77.04],
-				'Trondheim': [63.41, 10.41],
-			};
-
+		<script>
 			var esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
 				id: 'mapbox.streets',
 				attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
@@ -84,7 +75,9 @@
 			}).addTo(map);
 
 			for (var i in places) {
-				L.marker(places[i])
+				L.marker(places[i], {
+						draggable: true
+					})
 					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
 					.bindTooltip('<b>' + i + '</b>')
 					.addTo(map);

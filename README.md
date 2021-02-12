@@ -18,13 +18,15 @@ _For a working example see the following [demo](https://raruto.github.io/leaflet
 
 ---
 
-**Open issues:**
+**Side notes:**
 
-- while they are open, **popups** and **tooltips** rotate accordingly with map tiles
+Be aware that this is a proof of concept that shows how to alter the core leaflet library and make rotation feature usable as a standalone plugin. Check out fnicollet's [rotate-master](https://github.com/fnicollet/Leaflet/tree/rotate-master) branch if you prefer to use a more stable and reliable solution.
+
+Latest changes to this project have been updated comparing on the following: https://github.com/Leaflet/Leaflet/compare/master...fnicollet:rotate-master (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
 
 ---
 
 **Compatibile with:**
 [![Leaflet 1.x compatible!](https://img.shields.io/badge/Leaflet-1.7-1EB300.svg?style=flat)](http://leafletjs.com/reference.html)
 
-**Contributors:** [IvanSanchez](https://github.com/IvanSanchez), [Hyperknot](https://github.com/hyperknot), [Fnicollet](https://github.com/fnicollet), [Raruto](https://github.com/Raruto/leaflet-rotate)
+**Contributors:** [IvanSanchez](https://github.com/IvanSanchez), [Fnicollet](https://github.com/fnicollet/Leaflet/tree/rotate-master), [Hyperknot](https://github.com/hyperknot), [Raruto](https://github.com/Raruto/leaflet-rotate)
