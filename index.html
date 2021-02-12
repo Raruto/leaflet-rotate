@@ -9,7 +9,6 @@
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7/dist/leaflet.css">
 
 		<script src="leaflet-rotate.js"></script>
-		<script src="lib/leaflet-rotate-control.js"></script>
 
 		<script src="misc/route.js"></script>
 		<script src="misc/places.js"></script>
@@ -67,13 +66,12 @@
 				// worldCopyJump: true,
 				rotate: true,
 				touchRotate: true,
+				rotateControl: {
+					closeOnZeroBearing: false
+				},
 			});
 
 			// map.touchRotate.enable();
-
-			var rotateControl = L.control.rotate({
-				closeOnZeroBearing: false
-			}).addTo(map);
 
 			var layers = L.control.layers({
 				'Empty': L.tileLayer(''),
