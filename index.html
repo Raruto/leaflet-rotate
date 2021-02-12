@@ -9,9 +9,7 @@
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7/dist/leaflet.css">
 
 		<script src="leaflet-rotate.js"></script>
-
-		<script src="lib/leaflet-bearing-control.js"></script>
-		<link rel="stylesheet" href="lib/leaflet-bearing-control.css">
+		<script src="lib/leaflet-rotate-control.js"></script>
 
 		<script src="misc/route.js"></script>
 		<script src="misc/places.js"></script>
@@ -73,7 +71,7 @@
 
 			// map.touchRotate.enable();
 
-			var bearingControl = L.control.bearing({
+			var rotateControl = L.control.rotate({
 				closeOnZeroBearing: false
 			}).addTo(map);
 
