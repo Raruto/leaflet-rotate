@@ -75,13 +75,14 @@
 				collapsed: false
 			}).addTo(map);
 
+			var markers = [];
 			for (var i in places) {
-				L.marker(places[i], {
+				markers.push(L.marker(places[i], {
 						draggable: true
 					})
 					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
 					.bindTooltip('<b>' + i + '</b>')
-					.addTo(map);
+					.addTo(map));
 			}
 
 			var path = L.polyline(route, {
@@ -100,7 +101,13 @@
 			L.Rotate.debug(map);
 		</script>
 
-		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github" width="163"> </a>
+		<script>
+
+		</script>
+
+
+		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github"
+			  width="163"> </a>
 
 	</body>
 
