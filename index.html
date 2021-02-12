@@ -10,6 +10,9 @@
 
 		<script src="leaflet-rotate.js"></script>
 
+		<script src="lib/leaflet-bearing-control.js"></script>
+		<link rel="stylesheet" href="lib/leaflet-bearing-control.css">
+
 		<script src="misc/route.js"></script>
 		<script src="misc/places.js"></script>
 		<script src="misc/loremIpsum.js"></script>
@@ -65,7 +68,14 @@
 				layers: [esri],
 				// worldCopyJump: true,
 				rotate: true,
+				touchRotate: true,
 			});
+
+			// map.touchRotate.enable();
+
+			var bearingControl = L.control.bearing({
+				closeOnZeroBearing: false
+			}).addTo(map);
 
 			var layers = L.control.layers({
 				'Empty': L.tileLayer(''),
@@ -100,11 +110,6 @@
 
 			L.Rotate.debug(map);
 		</script>
-
-		<script>
-
-		</script>
-
 
 		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github"
 			  width="163"> </a>
