@@ -1,0 +1,46 @@
+{
+	"name": "leaflet-rotate",
+	"version": "0.0.1",
+	"description": "A Leaflet plugin that allows to add rotation functionality to map tiles",
+	"main": "leaflet-rotate.min.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Raruto/leaflet-rotate.git"
+	},
+	"keywords": [
+		"leaflet",
+		"javascript",
+		"tiles",
+		"rotation",
+		"leaflet-rotate"
+	],
+	"author": {
+		"name": "Iván Sánchez Ortega",
+		"url": "https://github.com/Leaflet/Leaflet/tree/rotate"
+	},
+	"contributors": [
+		{
+			"name": "Raruto",
+			"url": "https://github.com/Raruto/leaflet-rotate"
+		},
+		{
+			"name": "Fabien Nicollet",
+			"url": "https://github.com/fnicollet/Leaflet/tree/rotate-master"
+		},
+		{
+			"name": "Zsolt “Hyperknot” Ero",
+			"url": "https://github.com/hyperknot"
+		}
+	],
+	"license": "GPL-3.0",
+	"bugs": {
+		"url": "https://github.com/Raruto/leaflet-rotate/issues"
+	},
+	"homepage": "https://github.com/Raruto/leaflet-rotate#readme",
+	"peerDependencies": {
+		"leaflet": "^1.7.0"
+	}
+}
