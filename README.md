@@ -25,7 +25,7 @@ _For a working example see the following [demo](https://raruto.github.io/leaflet
 
 Be aware that this is a proof of concept that shows how to alter the core leaflet library and make rotation feature usable as a standalone plugin. Check out fnicollet's [rotate-master](https://github.com/fnicollet/Leaflet/tree/rotate-master) branch if you prefer to use a more stable and reliable solution.
 
-Latest changes to this project have been updated comparing on the following: https://github.com/Leaflet/Leaflet/compare/master...fnicollet:rotate-master (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
+Latest changes to this project have been updated comparing on the following: [https://github.com/Leaflet/Leaflet/compare/master...fnicollet:rotate-master](https://github.com/Leaflet/Leaflet/compare/master...fnicollet:rotate-master) (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
 
 ---
 
