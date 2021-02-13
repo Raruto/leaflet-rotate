@@ -1,4 +1,7 @@
-(function() {
+(function (factory) {
+    typeof define === 'function' && define.amd ? define(factory) :
+    factory();
+}((function () { 'use strict';
 
     /**
      * L.DomUtil
@@ -7,7 +10,9 @@
         setTransform: L.DomUtil.setTransform,
         setPosition: L.DomUtil.setPosition
     };
+
     L.extend(L.DomUtil, {
+
         setTransform: function(el, offset, scale, bearing, pivot) {
             var pos = offset || new L.Point(0, 0);
 
@@ -23,6 +28,7 @@
                 (scale ? ' scale(' + scale + ')' : '') +
                 ' rotate(' + bearing + 'rad)';
         },
+
         setPosition: function(el, point, bearing, pivot) { // (HTMLElement, Point[, Boolean])
             if (!bearing) {
                 return domUtilProto.setPosition.call(this, el, point);
@@ -39,24 +45,29 @@
                 el.style.top = point.y + 'px';
             }
         },
+
         // Constants for rotation
         DEG_TO_RAD: Math.PI / 180,
-        RAD_TO_DEG: 180 / Math.PI
+        RAD_TO_DEG: 180 / Math.PI,
+
     });
 
     /**
      * L.Draggable
      */
     L.Draggable.include({
+
         updateMapBearing: function(mapBearing) {
             this._mapBearing = mapBearing;
         },
+
     });
 
     /**
      * L.Point
      */
     L.extend(L.Point.prototype, {
+
         // Rotate around (0,0) by applying the 2D rotation matrix:
         // ⎡ x' ⎤ = ⎡ cos θ  -sin θ ⎤ ⎡ x ⎤
         // ⎣ y' ⎦   ⎣ sin θ   cos θ ⎦ ⎣ y ⎦
@@ -71,6 +82,7 @@
                 this.x * sinTheta + this.y * cosTheta
             );
         },
+
         // Rotate around (pivot.x, pivot.y) by:
         // 1. subtract (pivot.x, pivot.y)
         // 2. rotate around (0, 0)
@@ -89,7 +101,8 @@
                 x * cosTheta - y * sinTheta + cx,
                 x * sinTheta + y * cosTheta + cy
             );
-        }
+        },
+
     });
 
     /**
@@ -99,10 +112,13 @@
         getEvents: L.DivOverlay.prototype.getEvents,
         _updatePosition: L.DivOverlay.prototype._updatePosition,
     };
+
     L.DivOverlay.include({
+
         getEvents: function() {
             return L.extend(divOverlayProto.getEvents.call(this), { rotate: this._updatePosition });
         },
+
         _updatePosition: function() {
             if (!this._map) { return; }
 
@@ -127,6 +143,7 @@
             this._container.style.bottom = bottom + 'px';
             this._container.style.left = left + 'px';
         },
+
     });
 
     /**
@@ -136,7 +153,9 @@
         _animateZoom: L.Popup.prototype._animateZoom,
         _adjustPan: L.Popup.prototype._adjustPan,
     };
+
     L.Popup.include({
+
         _animateZoom: function(e) {
             if (!this._map._rotate) {
                 popupProto._animateZoom.call(this, e);
@@ -148,6 +167,7 @@
 
             L.DomUtil.setPosition(this._container, pos.add(anchor));
         },
+
         _adjustPan: function() {
             if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }
 
@@ -192,6 +212,7 @@
                     .panBy([dx, dy]);
             }
         },
+
     });
 
     /**
@@ -201,7 +222,9 @@
         _updatePosition: L.Tooltip.prototype._updatePosition,
         _animateZoom: L.Tooltip.prototype._animateZoom,
     };
+
     L.Tooltip.include({
+
         _updatePosition: function() {
             if (!this._map._rotate) {
                 return tooltipProto._updatePosition.call(this);
@@ -211,6 +234,7 @@
             pos = this._map.rotatedPointToMapPanePoint(pos);
             this._setPosition(pos);
         },
+
         _animateZoom: function(e) {
             if (!this._map._rotate) {
                 return tooltipProto._animateZoom.call(this);
@@ -220,6 +244,7 @@
             pos = this._map.rotatedPointToMapPanePoint(pos);
             this._setPosition(pos);
         },
+
     });
 
     /**
@@ -228,7 +253,9 @@
     const iconProto = {
         _updatePosition: L.Icon.prototype._setIconStyles,
     };
+
     L.Icon.include({
+
         _setIconStyles: function(img, name) {
             var options = this.options;
             var sizeOption = options[name + 'Size'];
@@ -255,6 +282,7 @@
                 img.style.height = size.y + 'px';
             }
         },
+
     });
 
     /**
@@ -265,13 +293,16 @@
         _onDrag: function() {},
         _onDragEnd: function() {},
     };
+
     var MarkerDrag = {
+
         _onDragStart: function() {
             if (!this._marker._map._rotate) {
                 return markerDragProto._onDragStart.call(this)
             }
             this._draggable.updateMapBearing(this._marker._map._bearing);
         },
+
         _onDrag: function(e) {
             var marker = this._marker,
                 // TODO: use markerDragProto._onDrag
@@ -305,12 +336,14 @@
             marker
                 .fire('drag', e);
         },
+
         _onDragEnd: function(e) {
             if (this._marker._map._rotate) {
                 this._marker.update();
             }
             markerDragProto.update.call(this, e);
-        }
+        },
+
     };
 
     /**
@@ -323,22 +356,29 @@
         _setPos: L.Marker.prototype._setPos,
         _updateZIndex: L.Marker.prototype._updateZIndex,
     };
+
     L.Marker.mergeOptions({
+
         // @option rotation: Number = 0
         // Rotation of this marker in rad
         rotation: 0,
+
         // @option rotateWithView: Boolean = false
         // Rotate this marker when map rotates
         rotateWithView: false,
+
     });
     L.Marker.include({
+
         getEvents: function() {
             return L.extend(markerProto.getEvents.call(this), { rotate: this.update });
         },
+
         onAdd: function(map) {
             markerProto.onAdd.call(this, map);
             map.on('rotate', this.update, this);
         },
+
         _initInteraction: function() {
             var ret = markerProto._initInteraction.call(this);
             if (this.dragging && this._map && this._map._rotate) {
@@ -352,6 +392,7 @@
             }
             return ret;
         },
+
         _setPos: function(pos) {
 
             // TODO: use markerProto._setPos
@@ -377,16 +418,19 @@
 
             this._resetZIndex();
         },
+
         _updateZIndex: function(offset) {
             if (!this._map._rotate) {
                 return markerProto._updateZIndex.call(this, offset)
             }
             this._icon.style.zIndex = Math.round(this._zIndex + offset);
         },
+
         setRotation: function(rotation) {
             this.options.rotation = rotation;
             this.update();
         },
+
     });
 
     /**
@@ -396,7 +440,9 @@
         getEvents: L.GridLayer.prototype.getEvents,
         _getTiledPixelBounds: L.GridLayer.prototype._getTiledPixelBounds,
     };
+
     L.GridLayer.include({
+
         getEvents: function() {
             var events = gridLayerProto.getEvents.call(this);
             if (this._map._rotate && !this.options.updateWhenIdle) {
@@ -407,6 +453,7 @@
             }
             return events;
         },
+
         _getTiledPixelBounds: function(center) {
             if (!this._map._rotate) {
                 return gridLayerProto._getTiledPixelBounds.call(this, center);
@@ -426,6 +473,7 @@
 
             return new L.Bounds(pixelCenter.subtract(halfSize), pixelCenter.add(halfSize));
         },
+
     });
 
     /**
@@ -436,21 +484,26 @@
         onRemove: L.Canvas.prototype.onRemove,
         _update: L.Canvas.prototype._update,
     };
+
     L.Canvas.include({
+
         onAdd: function() {
             canvasProto.onAdd.call(this);
             // When rotating the canvas itself, it is cleared by some weird reason, so redraw.
             this._map.on('rotate', this._redraw, this);
         },
+
         onRemove: function() {
             canvasProto.onRemove.call(this);
             this._map.off('rotate', this._redraw, this);
         },
+
         _update: function() {
             canvasProto._update.call(this);
             // Tell paths to redraw themselves
-            this.fire('update')
+            this.fire('update');
         },
+
     });
 
     /**
@@ -462,15 +515,19 @@
         _updateTransform: L.Renderer.prototype._updateTransform,
         _update: L.Renderer.prototype._update,
     };
+
     L.Renderer.include({
+
         onAdd: function() {
             rendererProto.onAdd.call(this);
             // this._map.on('rotate', this._update, this);
         },
+
         onRemove: function() {
             rendererProto.onRemove.call(this);
             // this._map.off('rotate', this._update, this);
         },
+
         _updateTransform: function(center, zoom) {
             if (!this._map._rotate) {
                 return rendererProto._updateTransform.call(this, center, zoom);
@@ -483,6 +540,7 @@
                 L.DomUtil.setPosition(this._container, offset);
             }
         },
+
         _update: function() {
             if (!this._map._rotate) {
                 return rendererProto._update.call(this);
@@ -510,7 +568,8 @@
 
             this._center = this._map.getCenter();
             this._zoom = this._map.getZoom();
-        }
+        },
+
     });
 
     /**
@@ -519,13 +578,16 @@
     const svgProto = {
         _update: L.SVG.prototype._update,
     };
+
     L.SVG.include({
+
         _update: function() {
             svgProto._update.call(this);
             if (this._map._rotate) {
                 this.fire('update');
             }
         },
+
     });
 
     /**
@@ -542,8 +604,11 @@
         _getNewPixelOrigin: L.Map.prototype._getNewPixelOrigin,
         _handleGeolocationResponse: L.Map.prototype._handleGeolocationResponse,
     };
+
     L.Map.mergeOptions({ rotate: false, });
+
     L.Map.include({
+
         initialize: function(id, options) { // (HTMLElement or String, Object)
             if (options.rotate) {
                 this._rotate = true;
@@ -551,6 +616,7 @@
             }
             mapProto.initialize.call(this, id, options);
         },
+
         createPane: function(name, container) {
             if (!this._rotate || name == 'mapPane') {
                 return mapProto.createPane.call(this, name, container);
@@ -563,6 +629,7 @@
             }
             return mapProto.createPane.call(this, name, container || this._rotatePane);
         },
+
         containerPointToLayerPoint: function(point) { // (Point)
             if (!this._rotate) {
                 return mapProto.containerPointToLayerPoint.call(this, point);
@@ -572,6 +639,7 @@
                 .rotateFrom(-this._bearing, this._getRotatePanePos())
                 .subtract(this._getRotatePanePos());
         },
+
         getBounds: function() {
             if (!this._rotate) {
                 return mapProto.getBounds.call(this);
@@ -585,6 +653,7 @@
             // Use LatLngBounds' build-in constructor that automatically extends the bounds to fit the passed points
             return new L.LatLngBounds([topleft, topright, bottomright, bottomleft]);
         },
+
         layerPointToContainerPoint: function(point) { // (Point)
             if (!this._rotate) {
                 return mapProto.layerPointToContainerPoint.call(this, point);
@@ -594,6 +663,7 @@
                 .rotateFrom(this._bearing, this._getRotatePanePos())
                 .add(this._getMapPanePos());
         },
+
         // Rotation methods
         // setBearing will work with just the 'theta' parameter.
         setBearing: function(theta) {
@@ -612,9 +682,11 @@
 
             this.fire('rotate');
         },
+
         getBearing: function() {
             return this._bearing * L.DomUtil.RAD_TO_DEG;
         },
+
         _initPanes: function() {
             var panes = this._panes = {};
             this._paneRenderers = {};
@@ -683,18 +755,21 @@
                 L.DomUtil.addClass(panes.shadowPane, 'leaflet-zoom-hide');
             }
         },
+
         // @method rotatedPointToMapPanePoint(point: Point): Point
         // Converts a coordinate from the rotated pane reference system
         // to the reference system of the not rotated map pane.
         rotatedPointToMapPanePoint: function(point) {
             return L.point(point).rotate(this._bearing)._add(this._getRotatePanePos());
         },
+
         // @method mapPanePointToRotatedPoint(point: Point): Point
         // Converts a coordinate from the not rotated map pane reference system
         // to the reference system of the rotated pane.
         mapPanePointToRotatedPoint: function(point) {
             return L.point(point)._subtract(this._getRotatePanePos()).rotate(-this._bearing);
         },
+
         // offset of the specified place to the current center in pixels
         _getCenterOffset: function(latlng) {
             var centerOffset = mapProto._getCenterOffset.call(this, latlng);
@@ -703,9 +778,11 @@
             }
             return centerOffset;
         },
+
         _getRotatePanePos: function() {
             return this._rotatePanePos || new L.Point(0, 0);
         },
+
         _getNewPixelOrigin: function(center, zoom) {
             var viewHalf = this.getSize()._divideBy(2);
             if (!this._rotate) {
@@ -719,6 +796,7 @@
                 .rotate(-this._bearing)
                 ._round();
         },
+
         _handleGeolocationResponse: function(pos) {
             var lat = pos.coords.latitude,
                 lng = pos.coords.longitude,
@@ -751,7 +829,8 @@
             // Fired when geolocation (using the [`locate`](#map-locate) method)
             // went successfully.
             this.fire('locationfound', data);
-        }
+        },
+
     });
 
     /*
@@ -787,14 +866,14 @@
             if (event.alpha !== null) {
                 this._map.setBearing(event.alpha - window.orientation);
             }
-        }
+        },
+
     });
 
     // @section Handlers
     // @property compassBearing: Handler
     // Compass bearing handler.
     L.Map.addInitHook('addHandler', 'compassBearing', L.Map.CompassBearing);
-
 
     /*
      * L.Handler.ContainerMutation triggers `invalidateResize` when the map's DOM container mutates.
@@ -803,14 +882,17 @@
     // @namespace Map
     // @section Interaction Options
     L.Map.mergeOptions({
+
         // @option trackContainerMutation: Boolean = false
         // Whether the map uses [mutation observers](https://developer.mozilla.org/docs/Web/API/MutationObserver)
         // to detect changes in its container and trigger `invalidateSize`. Disabled
         // by default due to support not being available in all web browsers.
         trackContainerMutation: false
+
     });
 
     L.Map.ContainerMutation = L.Handler.extend({
+
         addHooks: function() {
             if (!L.Browser.mutation) {
                 return;
@@ -838,7 +920,8 @@
 
         _onMutation: function() {
             this._map.invalidateSize();
-        }
+        },
+
     });
 
     // @section Handlers
@@ -853,10 +936,12 @@
     // @namespace Map
     // @section Interaction Options
     L.Map.mergeOptions({
+
         // @option bounceAtZoomLimits: Boolean = true
         // Set it to false if you don't want the map to zoom beyond min/max zoom
         // and then bounce back when pinch-zooming.
-        bounceAtZoomLimits: true
+        bounceAtZoomLimits: true,
+
     });
 
     L.Map.TouchGestures = L.Handler.extend({
@@ -998,7 +1083,8 @@
                     this._map._resetView(this._center, this._map._limitZoom(this._zoom));
                 }
             }
-        }
+        },
+
     });
 
     // @section Handlers
@@ -1013,13 +1099,16 @@
     // @namespace Map
     // @section Interaction Options
     L.Map.mergeOptions({
+
         // @section Touch interaction options
         // @option touchRotate: Boolean|String = *
         // Whether the map can be rotated with a two-finger rotation gesture
-        touchRotate: false
+        touchRotate: false,
+
     });
 
     L.Map.TouchRotate = L.Handler.extend({
+
         addHooks: function() {
             this._map.touchGestures.enable();
             this._map.touchGestures.rotate = true;
@@ -1027,7 +1116,8 @@
 
         removeHooks: function() {
             this._map.touchGestures.rotate = false;
-        }
+        },
+
     });
 
     // @section Handlers
@@ -1042,10 +1132,12 @@
     // @namespace Map
     // @section Interaction Options
     L.Map.mergeOptions({
+
         // @section Touch interaction options
         // @option touchRotate: Boolean|String = *
         // Whether the map can be rotated with a two-finger rotation gesture
-        shiftKeyRotate: true
+        shiftKeyRotate: true,
+
     });
 
     L.Map.ShiftKeyRotate = L.Handler.extend({
@@ -1069,7 +1161,8 @@
             } else {
                 this._map.scrollWheelZoom.enable();
             }
-        }
+        },
+
     });
 
     // @section Handlers
@@ -1084,6 +1177,7 @@
     // @namespace Map
     // @section Interaction Options
     L.Map.mergeOptions({
+
         // @section Touch interaction options
         // @option touchZoom: Boolean|String = *
         // Whether the map can be zoomed by touch-dragging with two fingers. If
@@ -1092,10 +1186,11 @@
         // browsers except for old Androids.
         touchZoom: L.Browser.touch && !L.Browser.android23,
 
-        bounceAtZoomLimits: false
+        bounceAtZoomLimits: false,
     });
 
     L.Map.TouchZoom = L.Handler.extend({
+
         addHooks: function() {
             L.DomUtil.addClass(this._map._container, 'leaflet-touch-zoom');
             this._map.touchGestures.enable();
@@ -1105,14 +1200,14 @@
         removeHooks: function() {
             L.DomUtil.removeClass(this._map._container, 'leaflet-touch-zoom');
             this._map.touchGestures.zoom = false;
-        }
+        },
+
     });
 
     // @section Handlers
     // @property touchZoom: Handler
     // Touch zoom handler.
     L.Map.addInitHook('addHandler', 'touchZoom', L.Map.TouchZoom);
-
 
     /**
      * L.Control.Rotate
@@ -1263,7 +1358,8 @@
             } else {
                 L.DomUtil.addClass(link, 'leaflet-disabled');
             }
-        }
+        },
+
     });
 
     L.control.rotate = function(options) {
@@ -1282,4 +1378,5 @@
         }
     });
 
-})(L);
+})));
+//# sourceMappingURL=leaflet-rotate-src.js.map
