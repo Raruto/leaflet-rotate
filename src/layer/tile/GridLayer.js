@@ -1,10 +1,7 @@
 /**
  * L.GridLayer
  */
-const gridLayerProto = {
-    getEvents: L.GridLayer.prototype.getEvents,
-    _getTiledPixelBounds: L.GridLayer.prototype._getTiledPixelBounds,
-};
+const gridLayerProto = L.extend({}, L.GridLayer.prototype);
 
 L.GridLayer.include({
 

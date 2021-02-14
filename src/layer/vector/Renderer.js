@@ -1,12 +1,7 @@
 /**
  * L.Renderer
  */
-const rendererProto = {
-    onAdd: L.Renderer.prototype.onAdd,
-    onRemove: L.Renderer.prototype.onRemove,
-    _updateTransform: L.Renderer.prototype._updateTransform,
-    _update: L.Renderer.prototype._update,
-};
+const rendererProto = L.extend({}, L.Renderer.prototype);
 
 L.Renderer.include({
 

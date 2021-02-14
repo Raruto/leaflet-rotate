@@ -1,10 +1,7 @@
 /**
  * L.Tooltip
  */
-const tooltipProto = {
-    _updatePosition: L.Tooltip.prototype._updatePosition,
-    _animateZoom: L.Tooltip.prototype._animateZoom,
-};
+const tooltipProto = L.extend({}, L.Tooltip.prototype);
 
 L.Tooltip.include({
 
@@ -20,7 +17,7 @@ L.Tooltip.include({
 
     _animateZoom: function(e) {
         if (!this._map._rotate) {
-            return tooltipProto._animateZoom.call(this);
+            return tooltipProto._animateZoom.call(this, e);
         }
         var pos = this._map._latLngToNewLayerPoint(this._latlng, e.zoom, e.center);
 

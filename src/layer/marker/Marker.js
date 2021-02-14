@@ -1,11 +1,7 @@
 /**
  * L.Handler.MarkerDrag
  */
-var markerDragProto = {
-    _onDragStart: function() {},
-    _onDrag: function() {},
-    _onDragEnd: function() {},
-};
+var markerDragProto;
 
 var MarkerDrag = {
 
@@ -34,7 +30,7 @@ var MarkerDrag = {
             // Reverse calculation from mapPane coordinates to rotatePane coordinates
             iconPos = marker._map.mapPanePointToRotatedPoint(iconPos);
         }
-        latlng = marker._map.layerPointToLatLng(iconPos);
+        var latlng = marker._map.layerPointToLatLng(iconPos);
 
         marker._latlng = latlng;
         e.latlng = latlng;
@@ -54,7 +50,7 @@ var MarkerDrag = {
         if (this._marker._map._rotate) {
             this._marker.update();
         }
-        markerDragProto.update.call(this, e);
+        markerDragProto._onDragEnd.call(this, e);
     },
 
 };
@@ -62,13 +58,7 @@ var MarkerDrag = {
 /**
  * L.Marker
  */
-const markerProto = {
-    getEvents: L.Marker.prototype.getEvents,
-    onAdd: L.Marker.prototype.onAdd,
-    _initInteraction: L.Marker.prototype._initInteraction,
-    _setPos: L.Marker.prototype._setPos,
-    _updateZIndex: L.Marker.prototype._updateZIndex,
-};
+const markerProto = L.extend({}, L.Marker.prototype);
 
 L.Marker.mergeOptions({
 
@@ -81,6 +71,7 @@ L.Marker.mergeOptions({
     rotateWithView: false,
 
 });
+
 L.Marker.include({
 
     getEvents: function() {
@@ -96,12 +87,12 @@ L.Marker.include({
         var ret = markerProto._initInteraction.call(this);
         if (this.dragging && this._map && this._map._rotate) {
             // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
-            markerDragProto._onDragStart = this.dragging._onDragStart.bind(this.dragging);
-            markerDragProto._onDrag = this.dragging._onDrag.bind(this.dragging);
-            markerDragProto._onDragEnd = this.dragging._onDragEnd.bind(this.dragging);
+            markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
             this.dragging._onDragStart = MarkerDrag._onDragStart.bind(this.dragging);
             this.dragging._onDrag = MarkerDrag._onDrag.bind(this.dragging);
             this.dragging._onDragEnd = MarkerDrag._onDragEnd.bind(this.dragging);
+            this.dragging.disable();
+            this.dragging.enable();
         }
         return ret;
     },

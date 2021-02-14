@@ -6,9 +6,9 @@
 // @section Interaction Options
 L.Map.mergeOptions({
 
-    // @section Touch interaction options
-    // @option touchRotate: Boolean|String = *
-    // Whether the map can be rotated with a two-finger rotation gesture
+    // @section ShiftKey interaction options
+    // @option shiftKeyRotate: Boolean|String = *
+    // Whether the map can be rotated with a shit-wheel rotation
     shiftKeyRotate: true,
 
 });

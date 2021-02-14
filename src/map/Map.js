@@ -1,19 +1,9 @@
 /**
  * L.Map
  */
-const mapProto = {
-    initialize: L.Map.prototype.initialize,
-    createPane: L.Map.prototype.createPane,
-    containerPointToLayerPoint: L.Map.prototype.containerPointToLayerPoint,
-    getBounds: L.Map.prototype.getBounds,
-    layerPointToContainerPoint: L.Map.prototype.layerPointToContainerPoint,
-    _initPanes: L.Map.prototype._initPanes,
-    _getCenterOffset: L.Map.prototype._getCenterOffset,
-    _getNewPixelOrigin: L.Map.prototype._getNewPixelOrigin,
-    _handleGeolocationResponse: L.Map.prototype._handleGeolocationResponse,
-};
+const mapProto = L.extend({}, L.Map.prototype);
 
-L.Map.mergeOptions({ rotate: false, });
+L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
 L.Map.include({
 
@@ -23,20 +13,23 @@ L.Map.include({
             this._bearing = 0;
         }
         mapProto.initialize.call(this, id, options);
+        if(this.options.rotate){
+          this.setBearing(this.options.bearing);
+        }
     },
 
-    createPane: function(name, container) {
-        if (!this._rotate || name == 'mapPane') {
-            return mapProto.createPane.call(this, name, container);
-        }
-        // init "rotatePane"
-        if (!this._rotatePane) {
-            // this._pivot = this.getSize().divideBy(2);
-            this._rotatePane = mapProto.createPane.call(this, 'rotatePane', this._mapPane);
-            L.DomUtil.setPosition(this._rotatePane, new L.Point(0, 0), this._bearing, this._pivot);
-        }
-        return mapProto.createPane.call(this, name, container || this._rotatePane);
-    },
+    // createPane: function(name, container) {
+    //     if (!this._rotate || name == 'mapPane') {
+    //         return mapProto.createPane.call(this, name, container);
+    //     }
+    //     // init "rotatePane"
+    //     if (!this._rotatePane) {
+    //         // this._pivot = this.getSize().divideBy(2);
+    //         this._rotatePane = mapProto.createPane.call(this, 'rotatePane', this._mapPane);
+    //         L.DomUtil.setPosition(this._rotatePane, new L.Point(0, 0), this._bearing, this._pivot);
+    //     }
+    //     return mapProto.createPane.call(this, name, container || this._rotatePane);
+    // },
 
     containerPointToLayerPoint: function(point) { // (Point)
         if (!this._rotate) {

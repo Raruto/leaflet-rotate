@@ -1,9 +1,7 @@
 /**
  * L.Icon
  */
-const iconProto = {
-    _updatePosition: L.Icon.prototype._setIconStyles,
-};
+const iconProto = L.extend({}, L.Icon.prototype);
 
 L.Icon.include({
 

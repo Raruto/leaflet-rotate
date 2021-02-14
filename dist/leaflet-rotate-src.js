@@ -6,10 +6,7 @@
     /**
      * L.DomUtil
      */
-    const domUtilProto = {
-        setTransform: L.DomUtil.setTransform,
-        setPosition: L.DomUtil.setPosition
-    };
+    const domUtilProto = L.extend({}, L.DomUtil);
 
     L.extend(L.DomUtil, {
 
@@ -108,10 +105,7 @@
     /**
      * L.DivOverlay
      */
-    const divOverlayProto = {
-        getEvents: L.DivOverlay.prototype.getEvents,
-        _updatePosition: L.DivOverlay.prototype._updatePosition,
-    };
+    const divOverlayProto = L.extend({}, L.DivOverlay.prototype);
 
     L.DivOverlay.include({
 
@@ -149,10 +143,7 @@
     /**
      * L.Popup
      */
-    const popupProto = {
-        _animateZoom: L.Popup.prototype._animateZoom,
-        _adjustPan: L.Popup.prototype._adjustPan,
-    };
+    const popupProto = L.extend({}, L.Popup.prototype);
 
     L.Popup.include({
 
@@ -218,10 +209,7 @@
     /**
      * L.Tooltip
      */
-    const tooltipProto = {
-        _updatePosition: L.Tooltip.prototype._updatePosition,
-        _animateZoom: L.Tooltip.prototype._animateZoom,
-    };
+    const tooltipProto = L.extend({}, L.Tooltip.prototype);
 
     L.Tooltip.include({
 
@@ -237,7 +225,7 @@
 
         _animateZoom: function(e) {
             if (!this._map._rotate) {
-                return tooltipProto._animateZoom.call(this);
+                return tooltipProto._animateZoom.call(this, e);
             }
             var pos = this._map._latLngToNewLayerPoint(this._latlng, e.zoom, e.center);
 
@@ -250,9 +238,7 @@
     /**
      * L.Icon
      */
-    const iconProto = {
-        _updatePosition: L.Icon.prototype._setIconStyles,
-    };
+    const iconProto = L.extend({}, L.Icon.prototype);
 
     L.Icon.include({
 
@@ -288,11 +274,7 @@
     /**
      * L.Handler.MarkerDrag
      */
-    var markerDragProto = {
-        _onDragStart: function() {},
-        _onDrag: function() {},
-        _onDragEnd: function() {},
-    };
+    var markerDragProto;
 
     var MarkerDrag = {
 
@@ -321,7 +303,7 @@
                 // Reverse calculation from mapPane coordinates to rotatePane coordinates
                 iconPos = marker._map.mapPanePointToRotatedPoint(iconPos);
             }
-            latlng = marker._map.layerPointToLatLng(iconPos);
+            var latlng = marker._map.layerPointToLatLng(iconPos);
 
             marker._latlng = latlng;
             e.latlng = latlng;
@@ -341,7 +323,7 @@
             if (this._marker._map._rotate) {
                 this._marker.update();
             }
-            markerDragProto.update.call(this, e);
+            markerDragProto._onDragEnd.call(this, e);
         },
 
     };
@@ -349,13 +331,7 @@
     /**
      * L.Marker
      */
-    const markerProto = {
-        getEvents: L.Marker.prototype.getEvents,
-        onAdd: L.Marker.prototype.onAdd,
-        _initInteraction: L.Marker.prototype._initInteraction,
-        _setPos: L.Marker.prototype._setPos,
-        _updateZIndex: L.Marker.prototype._updateZIndex,
-    };
+    const markerProto = L.extend({}, L.Marker.prototype);
 
     L.Marker.mergeOptions({
 
@@ -368,6 +344,7 @@
         rotateWithView: false,
 
     });
+
     L.Marker.include({
 
         getEvents: function() {
@@ -383,12 +360,12 @@
             var ret = markerProto._initInteraction.call(this);
             if (this.dragging && this._map && this._map._rotate) {
                 // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
-                markerDragProto._onDragStart = this.dragging._onDragStart.bind(this.dragging);
-                markerDragProto._onDrag = this.dragging._onDrag.bind(this.dragging);
-                markerDragProto._onDragEnd = this.dragging._onDragEnd.bind(this.dragging);
+                markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
                 this.dragging._onDragStart = MarkerDrag._onDragStart.bind(this.dragging);
                 this.dragging._onDrag = MarkerDrag._onDrag.bind(this.dragging);
                 this.dragging._onDragEnd = MarkerDrag._onDragEnd.bind(this.dragging);
+                this.dragging.disable();
+                this.dragging.enable();
             }
             return ret;
         },
@@ -436,10 +413,7 @@
     /**
      * L.GridLayer
      */
-    const gridLayerProto = {
-        getEvents: L.GridLayer.prototype.getEvents,
-        _getTiledPixelBounds: L.GridLayer.prototype._getTiledPixelBounds,
-    };
+    const gridLayerProto = L.extend({}, L.GridLayer.prototype);
 
     L.GridLayer.include({
 
@@ -479,11 +453,7 @@
     /**
      * L.Canvas
      */
-    const canvasProto = {
-        onAdd: L.Canvas.prototype.onAdd,
-        onRemove: L.Canvas.prototype.onRemove,
-        _update: L.Canvas.prototype._update,
-    };
+    const canvasProto = L.extend({}, L.Canvas.prototype);
 
     L.Canvas.include({
 
@@ -509,12 +479,7 @@
     /**
      * L.Renderer
      */
-    const rendererProto = {
-        onAdd: L.Renderer.prototype.onAdd,
-        onRemove: L.Renderer.prototype.onRemove,
-        _updateTransform: L.Renderer.prototype._updateTransform,
-        _update: L.Renderer.prototype._update,
-    };
+    const rendererProto = L.extend({}, L.Renderer.prototype);
 
     L.Renderer.include({
 
@@ -575,9 +540,7 @@
     /**
      * L.SVG
      */
-    const svgProto = {
-        _update: L.SVG.prototype._update,
-    };
+    const svgProto = L.extend({}, L.SVG.prototype);
 
     L.SVG.include({
 
@@ -593,19 +556,9 @@
     /**
      * L.Map
      */
-    const mapProto = {
-        initialize: L.Map.prototype.initialize,
-        createPane: L.Map.prototype.createPane,
-        containerPointToLayerPoint: L.Map.prototype.containerPointToLayerPoint,
-        getBounds: L.Map.prototype.getBounds,
-        layerPointToContainerPoint: L.Map.prototype.layerPointToContainerPoint,
-        _initPanes: L.Map.prototype._initPanes,
-        _getCenterOffset: L.Map.prototype._getCenterOffset,
-        _getNewPixelOrigin: L.Map.prototype._getNewPixelOrigin,
-        _handleGeolocationResponse: L.Map.prototype._handleGeolocationResponse,
-    };
+    const mapProto = L.extend({}, L.Map.prototype);
 
-    L.Map.mergeOptions({ rotate: false, });
+    L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
     L.Map.include({
 
@@ -615,20 +568,23 @@
                 this._bearing = 0;
             }
             mapProto.initialize.call(this, id, options);
+            if(this.options.rotate){
+              this.setBearing(this.options.bearing);
+            }
         },
 
-        createPane: function(name, container) {
-            if (!this._rotate || name == 'mapPane') {
-                return mapProto.createPane.call(this, name, container);
-            }
-            // init "rotatePane"
-            if (!this._rotatePane) {
-                // this._pivot = this.getSize().divideBy(2);
-                this._rotatePane = mapProto.createPane.call(this, 'rotatePane', this._mapPane);
-                L.DomUtil.setPosition(this._rotatePane, new L.Point(0, 0), this._bearing, this._pivot);
-            }
-            return mapProto.createPane.call(this, name, container || this._rotatePane);
-        },
+        // createPane: function(name, container) {
+        //     if (!this._rotate || name == 'mapPane') {
+        //         return mapProto.createPane.call(this, name, container);
+        //     }
+        //     // init "rotatePane"
+        //     if (!this._rotatePane) {
+        //         // this._pivot = this.getSize().divideBy(2);
+        //         this._rotatePane = mapProto.createPane.call(this, 'rotatePane', this._mapPane);
+        //         L.DomUtil.setPosition(this._rotatePane, new L.Point(0, 0), this._bearing, this._pivot);
+        //     }
+        //     return mapProto.createPane.call(this, name, container || this._rotatePane);
+        // },
 
         containerPointToLayerPoint: function(point) { // (Point)
             if (!this._rotate) {
@@ -1133,9 +1089,9 @@
     // @section Interaction Options
     L.Map.mergeOptions({
 
-        // @section Touch interaction options
-        // @option touchRotate: Boolean|String = *
-        // Whether the map can be rotated with a two-finger rotation gesture
+        // @section ShiftKey interaction options
+        // @option shiftKeyRotate: Boolean|String = *
+        // Whether the map can be rotated with a shit-wheel rotation
         shiftKeyRotate: true,
 
     });

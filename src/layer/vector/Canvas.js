@@ -1,11 +1,7 @@
 /**
  * L.Canvas
  */
-const canvasProto = {
-    onAdd: L.Canvas.prototype.onAdd,
-    onRemove: L.Canvas.prototype.onRemove,
-    _update: L.Canvas.prototype._update,
-};
+const canvasProto = L.extend({}, L.Canvas.prototype);
 
 L.Canvas.include({
 

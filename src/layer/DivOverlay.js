@@ -1,10 +1,7 @@
 /**
  * L.DivOverlay
  */
-const divOverlayProto = {
-    getEvents: L.DivOverlay.prototype.getEvents,
-    _updatePosition: L.DivOverlay.prototype._updatePosition,
-};
+const divOverlayProto = L.extend({}, L.DivOverlay.prototype);
 
 L.DivOverlay.include({
 

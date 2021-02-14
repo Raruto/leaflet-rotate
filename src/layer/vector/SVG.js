@@ -1,9 +1,7 @@
 /**
  * L.SVG
  */
-const svgProto = {
-    _update: L.SVG.prototype._update,
-};
+const svgProto = L.extend({}, L.SVG.prototype);
 
 L.SVG.include({
 

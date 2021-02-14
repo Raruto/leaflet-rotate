@@ -1,10 +1,7 @@
 /**
  * L.DomUtil
  */
-const domUtilProto = {
-    setTransform: L.DomUtil.setTransform,
-    setPosition: L.DomUtil.setPosition
-};
+const domUtilProto = L.extend({}, L.DomUtil);
 
 L.extend(L.DomUtil, {
 

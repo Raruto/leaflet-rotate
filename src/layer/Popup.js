@@ -1,10 +1,7 @@
 /**
  * L.Popup
  */
-const popupProto = {
-    _animateZoom: L.Popup.prototype._animateZoom,
-    _adjustPan: L.Popup.prototype._adjustPan,
-};
+const popupProto = L.extend({}, L.Popup.prototype);
 
 L.Popup.include({
 
