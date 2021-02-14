@@ -96,7 +96,12 @@
 						draggable: true
 					})
 					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
-					.bindTooltip('<b>' + i + '</b>', {direction: 'right', permanent: true})
+					.bindTooltip('<b>' + i + '</b>',
+						markers.length ? {} : {
+							direction: 'right',
+							permanent: true
+						}
+					)
 					.addTo(map));
 			}
 

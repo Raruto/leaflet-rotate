@@ -76,8 +76,10 @@
 				rotateControl: {
 					closeOnZeroBearing: false
 				},
+				bearing: 30,
 			});
 
+			// map.setBearing(30);
 			// map.touchRotate.enable();
 
 			var layers = L.control.layers({
@@ -94,7 +96,12 @@
 						draggable: true
 					})
 					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
-					.bindTooltip('<b>' + i + '</b>')
+					.bindTooltip('<b>' + i + '</b>',
+						markers.length ? {} : {
+							direction: 'right',
+							permanent: true
+						}
+					)
 					.addTo(map));
 			}
 
