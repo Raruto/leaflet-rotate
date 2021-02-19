@@ -1,6 +1,6 @@
 {
 	"name": "leaflet-rotate",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "A Leaflet plugin that allows to add rotation functionality to map tiles",
 	"main": "dist/leaflet-rotate.js",
 	"module": "src/index.js",
