@@ -34,7 +34,7 @@ L.Control.Rotate = L.Control.extend({
         var link = this._link = L.DomUtil.create('a', 'leaflet-control-rotate-toggle', container);
         link.appendChild(arrow);
         link.href = '#';
-        link.title = 'leaflet-control-rotate-toggle';
+        link.title = 'Rotate map';
 
         L.DomEvent
             .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -145,7 +145,7 @@ L.Control.Rotate = L.Control.extend({
                 }
             }
         } else {
-            L.DomUtil.addClass(link, 'leaflet-disabled');
+            L.DomUtil.addClass(this._link, 'leaflet-disabled');
         }
     },
 

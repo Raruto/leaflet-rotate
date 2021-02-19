@@ -42,3 +42,11 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 // @property touchZoom: Handler
 // Touch rotate handler.
 L.Map.addInitHook('addHandler', 'shiftKeyRotate', L.Map.ShiftKeyRotate);
+
+// decrease "scrollWheelZoom" handler priority over "shiftKeyRotate" handler
+L.Map.addInitHook(function() {
+    if (this.scrollWheelZoom.enabled() && this.shiftKeyRotate.enabled()) {
+        this.scrollWheelZoom.disable();
+        this.scrollWheelZoom.enable();
+    }
+});

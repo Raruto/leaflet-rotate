@@ -1126,6 +1126,14 @@
     // Touch rotate handler.
     L.Map.addInitHook('addHandler', 'shiftKeyRotate', L.Map.ShiftKeyRotate);
 
+    // decrease "scrollWheelZoom" handler priority over "shiftKeyRotate" handler
+    L.Map.addInitHook(function() {
+        if (this.scrollWheelZoom.enabled() && this.shiftKeyRotate.enabled()) {
+            this.scrollWheelZoom.disable();
+            this.scrollWheelZoom.enable();
+        }
+    });
+
     /*
      * L.Handler.TouchZoom is used by L.Map to add pinch zoom on supported mobile browsers.
      */
@@ -1201,7 +1209,7 @@
             var link = this._link = L.DomUtil.create('a', 'leaflet-control-rotate-toggle', container);
             link.appendChild(arrow);
             link.href = '#';
-            link.title = 'leaflet-control-rotate-toggle';
+            link.title = 'Rotate map';
 
             L.DomEvent
                 .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -1312,7 +1320,7 @@
                     }
                 }
             } else {
-                L.DomUtil.addClass(link, 'leaflet-disabled');
+                L.DomUtil.addClass(this._link, 'leaflet-disabled');
             }
         },
 
