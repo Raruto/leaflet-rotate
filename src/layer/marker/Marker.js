@@ -85,7 +85,7 @@ L.Marker.include({
 
     _initInteraction: function() {
         var ret = markerProto._initInteraction.call(this);
-        if (this.dragging && this._map && this._map._rotate) {
+        if (this.dragging && this.dragging.enabled() && this._map && this._map._rotate) {
             // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
             markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
             this.dragging._onDragStart = MarkerDrag._onDragStart.bind(this.dragging);
