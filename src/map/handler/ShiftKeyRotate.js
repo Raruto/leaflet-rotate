@@ -30,7 +30,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         if (e.shiftKey) {
             e.preventDefault();
             this._map.scrollWheelZoom.disable();
-            this._map.setBearing((this._map._bearing * L.DomUtil.RAD_TO_DEG) + e.deltaY);
+            this._map.setBearing((this._map._bearing * L.DomUtil.RAD_TO_DEG) + Math.sign(e.deltaY) * 5);
         } else {
             this._map.scrollWheelZoom.enable();
         }
