@@ -1,6 +1,5 @@
 # leaflet-rotate
 
-[![NPM version](https://img.shields.io/npm/v/leaflet-rotate.svg?color=red)](https://www.npmjs.com/package/leaflet-rotate)
 [![License](https://img.shields.io/badge/license-GPL%203-blue.svg?style=flat)](LICENSE)
 
 A Leaflet plugin that allows to add rotation functionality to map tiles
