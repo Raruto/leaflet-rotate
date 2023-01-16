@@ -30,6 +30,6 @@ Latest changes to this project have been updated comparing on the following: [ht
 ---
 
 **Compatibile with:**
-[![Leaflet 1.x compatible!](https://img.shields.io/badge/Leaflet-1.7-1EB300.svg?style=flat)](http://leafletjs.com/reference.html)
+[![Leaflet 1.x compatible!](https://img.shields.io/badge/Leaflet-1.9.3-1EB300.svg?style=flat)](http://leafletjs.com/reference.html)
 
 **Contributors:** [IvanSanchez](https://github.com/IvanSanchez), [Fnicollet](https://github.com/fnicollet/Leaflet/tree/rotate-master), [Hyperknot](https://github.com/hyperknot), [Raruto](https://github.com/Raruto/leaflet-rotate)

@@ -1,7 +1,7 @@
 (function (factory) {
     typeof define === 'function' && define.amd ? define(factory) :
     factory();
-}((function () { 'use strict';
+})((function () { 'use strict';
 
     /**
      * L.DomUtil
@@ -238,7 +238,7 @@
     /**
      * L.Icon
      */
-    const iconProto = L.extend({}, L.Icon.prototype);
+    L.extend({}, L.Icon.prototype);
 
     L.Icon.include({
 
@@ -1342,5 +1342,5 @@
         }
     });
 
-})));
+}));
 //# sourceMappingURL=leaflet-rotate-src.js.map

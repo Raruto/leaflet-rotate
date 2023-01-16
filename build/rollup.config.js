@@ -1,15 +1,13 @@
-import { terser } from "rollup-plugin-terser";
-import resolve from 'rollup-plugin-node-resolve';
-import commonJS from 'rollup-plugin-commonjs';
-
-let plugin = require('../package.json');
+import terser from '@rollup/plugin-terser';
+import resolve from '@rollup/plugin-node-resolve';
+import commonJS from '@rollup/plugin-commonjs';
 
 let input = "src/index.js";
 let output = {
-  file: "dist/" + plugin.name + "-src.js",
+  file: "dist/leaflet-rotate-src.js",
   format: "umd",
   sourcemap: true,
-  name: plugin.name,
+  name: "leaflet-rotate",
 };
 
 let plugins = [
@@ -27,7 +25,7 @@ export default [{
   {
     input: input,
     output: Object.assign({}, output, {
-      file: "dist/" + plugin.name + ".js"
+      file: "dist/leaflet-rotate.js"
     }),
     plugins: plugins.concat(terser()),
   }

@@ -1,5 +1,5 @@
 /**
- * Based on Leaflet structure (ver. 1.7)
+ * Based on Leaflet structure (ver. 1.9.3)
  *
  * @see https://github.com/Leaflet/Leaflet/blob/master/src/Leaflet.js
  */
