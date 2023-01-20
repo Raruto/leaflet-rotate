@@ -162,6 +162,13 @@
         _adjustPan: function() {
             if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }
 
+            // We can endlessly recurse if keepInView is set and the view resets.
+            // Let's guard against that by exiting early if we're responding to our own autopan.
+            if (this._autopanning) {
+                this._autopanning = false;
+                return;
+            }
+
             var map = this._map,
                 marginBottom = parseInt(L.DomUtil.getStyle(this._container, 'marginBottom'), 10) || 0,
                 containerHeight = this._container.offsetHeight + marginBottom,
@@ -198,6 +205,10 @@
             // @event autopanstart: Event
             // Fired when the map starts autopanning when opening a popup.
             if (dx || dy) {
+                // Track that we're autopanning, as this function will be re-ran on moveend
+                if (this.options.keepInView) {
+                    this._autopanning = true;
+                }
                 map
                     .fire('autopanstart')
                     .panBy([dx, dy]);
@@ -361,9 +372,11 @@
             if (this.dragging && this.dragging.enabled() && this._map && this._map._rotate) {
                 // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
                 markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
-                this.dragging._onDragStart = MarkerDrag._onDragStart.bind(this.dragging);
-                this.dragging._onDrag = MarkerDrag._onDrag.bind(this.dragging);
-                this.dragging._onDragEnd = MarkerDrag._onDragEnd.bind(this.dragging);
+                Object.assign(this.dragging, {
+                    _onDragStart: MarkerDrag._onDragStart.bind(this.dragging),
+                    _onDrag: MarkerDrag._onDrag.bind(this.dragging),
+                    _onDragEnd: MarkerDrag._onDragEnd.bind(this.dragging),
+                });
                 this.dragging.disable();
                 this.dragging.enable();
             }
@@ -384,7 +397,9 @@
             }
 
             // TODO: use markerProto._setPos
-            L.DomUtil.setPosition(this._icon, pos, bearing, pos);
+            if (this._icon) {
+                L.DomUtil.setPosition(this._icon, pos, bearing, pos);
+            }
 
             // TODO: use markerProto._setPos
             if (this._shadow) {
@@ -394,6 +409,30 @@
             this._zIndex = pos.y + this.options.zIndexOffset;
 
             this._resetZIndex();
+        },
+
+        /**
+         * @since leaflet@v1.8
+         * @see https://github.com/Leaflet/Leaflet/commit/4f639a85efffa49c3e64a07dc0b6f5aa73f13449
+         */
+        _panOnFocus: function () {
+            /**
+             * Temporary disable this for fix: https://github.com/Raruto/leaflet-rotate/issues/18
+             * 
+             * @TODO restore it and support for `L.Marker::autoPanOnFocus` option
+             */
+
+            // var map = this._map;
+            // if (!map) { return; }
+
+            // var iconOpts = this.options.icon.options;
+            // var size = iconOpts.iconSize ? L.point(iconOpts.iconSize) : L.point(0, 0);
+            // var anchor = iconOpts.iconAnchor ? L.point(iconOpts.iconAnchor) : L.point(0, 0);
+
+            // map.panInside(this._latlng, {
+            //     paddingTopLeft: anchor,
+            //     paddingBottomRight: size.subtract(anchor)
+            // });
         },
 
         _updateZIndex: function(offset) {
@@ -493,6 +532,11 @@
             // this._map.off('rotate', this._update, this);
         },
 
+        /**
+         * @TODO rechek this changes from leaflet@v1.9.3
+         * 
+         * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+         */
         _updateTransform: function(center, zoom) {
             if (!this._map._rotate) {
                 return rendererProto._updateTransform.call(this, center, zoom);
@@ -560,6 +604,11 @@
 
     L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
+    /**
+     * @TODO rechek this changes from leaflet@v1.9.3
+     * 
+     * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+     */
     L.Map.include({
 
         initialize: function(id, options) { // (HTMLElement or String, Object)
@@ -754,6 +803,8 @@
         },
 
         _handleGeolocationResponse: function(pos) {
+            if (!this._container._leaflet_id) { return; }
+
             var lat = pos.coords.latitude,
                 lng = pos.coords.longitude,
                 // TODO: use mapProto._handleGeolocationResponse
@@ -954,7 +1005,7 @@
 
             L.DomEvent
                 .on(document, 'touchmove', this._onTouchMove, this)
-                .on(document, 'touchend', this._onTouchEnd, this);
+                .on(document, 'touchend touchcancel', this._onTouchEnd, this);
 
             L.DomEvent.preventDefault(e);
         },
@@ -1011,7 +1062,7 @@
 
             L.Util.cancelAnimFrame(this._animRequest);
 
-            var moveFn = L.bind(map._move, map, this._center, this._zoom, { pinch: true, round: false });
+            var moveFn = L.bind(map._move, map, this._center, this._zoom, { pinch: true, round: false }, undefined);
             this._animRequest = L.Util.requestAnimFrame(moveFn, this, true);
 
             L.DomEvent.preventDefault(e);
@@ -1029,7 +1080,7 @@
 
             L.DomEvent
                 .off(document, 'touchmove', this._onTouchMove)
-                .off(document, 'touchend', this._onTouchEnd);
+                .off(document, 'touchend touchcancel', this._onTouchEnd);
 
             if (this.zoom) {
                 // Pinch updates GridLayers' levels only when snapZoom is off, so snapZoom becomes noUpdate.
@@ -1210,6 +1261,7 @@
             link.appendChild(arrow);
             link.href = '#';
             link.title = 'Rotate map';
+            // link.draggable = false;
 
             L.DomEvent
                 .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -1238,7 +1290,7 @@
         },
 
         _handleMouseDown: function(e) {
-            L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
             this.dragging = true;
             this.dragstartX = e.pageX;
             this.dragstartY = e.pageY;
@@ -1248,7 +1300,7 @@
         },
 
         _handleMouseUp: function(e) {
-            L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
             this.dragging = false;
 
             L.DomEvent

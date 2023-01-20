@@ -35,6 +35,7 @@ L.Control.Rotate = L.Control.extend({
         link.appendChild(arrow);
         link.href = '#';
         link.title = 'Rotate map';
+        // link.draggable = false;
 
         L.DomEvent
             .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -63,7 +64,7 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _handleMouseDown: function(e) {
-        L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
         this.dragging = true;
         this.dragstartX = e.pageX;
         this.dragstartY = e.pageY;
@@ -73,7 +74,7 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _handleMouseUp: function(e) {
-        L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
         this.dragging = false;
 
         L.DomEvent

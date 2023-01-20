@@ -15,6 +15,11 @@ L.Renderer.include({
         // this._map.off('rotate', this._update, this);
     },
 
+    /**
+     * @TODO rechek this changes from leaflet@v1.9.3
+     * 
+     * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+     */
     _updateTransform: function(center, zoom) {
         if (!this._map._rotate) {
             return rendererProto._updateTransform.call(this, center, zoom);

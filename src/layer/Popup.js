@@ -20,6 +20,13 @@ L.Popup.include({
     _adjustPan: function() {
         if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }
 
+        // We can endlessly recurse if keepInView is set and the view resets.
+        // Let's guard against that by exiting early if we're responding to our own autopan.
+        if (this._autopanning) {
+            this._autopanning = false;
+            return;
+        }
+
         var map = this._map,
             marginBottom = parseInt(L.DomUtil.getStyle(this._container, 'marginBottom'), 10) || 0,
             containerHeight = this._container.offsetHeight + marginBottom,
@@ -56,6 +63,10 @@ L.Popup.include({
         // @event autopanstart: Event
         // Fired when the map starts autopanning when opening a popup.
         if (dx || dy) {
+            // Track that we're autopanning, as this function will be re-ran on moveend
+            if (this.options.keepInView) {
+                this._autopanning = true;
+            }
             map
                 .fire('autopanstart')
                 .panBy([dx, dy]);

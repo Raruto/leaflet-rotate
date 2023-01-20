@@ -67,7 +67,7 @@ L.Map.TouchGestures = L.Handler.extend({
 
         L.DomEvent
             .on(document, 'touchmove', this._onTouchMove, this)
-            .on(document, 'touchend', this._onTouchEnd, this);
+            .on(document, 'touchend touchcancel', this._onTouchEnd, this);
 
         L.DomEvent.preventDefault(e);
     },
@@ -124,7 +124,7 @@ L.Map.TouchGestures = L.Handler.extend({
 
         L.Util.cancelAnimFrame(this._animRequest);
 
-        var moveFn = L.bind(map._move, map, this._center, this._zoom, { pinch: true, round: false });
+        var moveFn = L.bind(map._move, map, this._center, this._zoom, { pinch: true, round: false }, undefined);
         this._animRequest = L.Util.requestAnimFrame(moveFn, this, true);
 
         L.DomEvent.preventDefault(e);
@@ -142,7 +142,7 @@ L.Map.TouchGestures = L.Handler.extend({
 
         L.DomEvent
             .off(document, 'touchmove', this._onTouchMove)
-            .off(document, 'touchend', this._onTouchEnd);
+            .off(document, 'touchend touchcancel', this._onTouchEnd);
 
         if (this.zoom) {
             // Pinch updates GridLayers' levels only when snapZoom is off, so snapZoom becomes noUpdate.

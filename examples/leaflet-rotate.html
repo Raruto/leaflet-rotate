@@ -7,8 +7,13 @@
 		<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
 
 		<!-- Leaflet JS / CSS -->
-		<script src="https://unpkg.com/leaflet@1.7/dist/leaflet-src.js"></script>
-		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7/dist/leaflet.css">
+		<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>
+		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
+
+		<!-- Leaflet-MarkerCluster -->
+		<script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster-src.js"></script>
+		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css">
+		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css">
 
 		<!-- Leaflet-Rotate -->
 		<script src="https://unpkg.com/leaflet-rotate@0.1.4/dist/leaflet-rotate-src.js"></script>
@@ -120,6 +125,25 @@
 
 			// Display some debug info
 			L.Rotate.debug(map);
+
+			var cluster = L.markerClusterGroup({
+				spiderfyOnMaxZoom: false,
+				showCoverageOnHover: false,
+				zoomToBoundsOnClick: false
+			})
+			.on('clusterclick', (a) => a.layer.spiderfy())
+			.addTo(map);
+	
+			// populate cluster with random markers
+			for (var i = 0; i < 100; i++) {
+				var bounds = map.getBounds();
+				var southWest = bounds.getSouthWest();
+				var northEast = bounds.getNorthEast();
+				var lngSpan = northEast.lng - southWest.lng;
+				var latSpan = northEast.lat - southWest.lat;
+				var m = L.marker( L.latLng(southWest.lat + latSpan * Math.random(), southWest.lng + lngSpan * Math.random()) );
+				cluster.addLayer(m);
+			}
 		</script>
 
 		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github"

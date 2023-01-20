@@ -5,6 +5,11 @@ const mapProto = L.extend({}, L.Map.prototype);
 
 L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
+/**
+ * @TODO rechek this changes from leaflet@v1.9.3
+ * 
+ * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+ */
 L.Map.include({
 
     initialize: function(id, options) { // (HTMLElement or String, Object)
@@ -199,6 +204,8 @@ L.Map.include({
     },
 
     _handleGeolocationResponse: function(pos) {
+        if (!this._container._leaflet_id) { return; }
+
         var lat = pos.coords.latitude,
             lng = pos.coords.longitude,
             // TODO: use mapProto._handleGeolocationResponse
