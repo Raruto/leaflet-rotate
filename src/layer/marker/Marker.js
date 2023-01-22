@@ -128,15 +128,15 @@ L.Marker.include({
     },
 
     /**
+     * @FIXME temporary disabled on rotated maps for fix: https://github.com/Raruto/leaflet-rotate/issues/18
+     * 
      * @since leaflet@v1.8
      * @see https://github.com/Leaflet/Leaflet/commit/4f639a85efffa49c3e64a07dc0b6f5aa73f13449
      */
     _panOnFocus: function () {
-        /**
-         * Temporary disable this for fix: https://github.com/Raruto/leaflet-rotate/issues/18
-         * 
-         * @TODO restore it and support for `L.Marker::autoPanOnFocus` option
-         */
+        if (!this._map._rotate) {
+            return markerProto._panOnFocus.call(this)
+        }
 
         // var map = this._map;
         // if (!map) { return; }

@@ -84,7 +84,7 @@
 				bearing: 30,
 			});
 
-			// map.setBearing(30);
+			// map.setBearing(90);
 			// map.touchRotate.enable();
 
 			var layers = L.control.layers({
@@ -142,6 +142,7 @@
 				var lngSpan = northEast.lng - southWest.lng;
 				var latSpan = northEast.lat - southWest.lat;
 				var m = L.marker( L.latLng(southWest.lat + latSpan * Math.random(), southWest.lng + lngSpan * Math.random()) );
+				// m.addTo(map);
 				cluster.addLayer(m);
 			}
 		</script>

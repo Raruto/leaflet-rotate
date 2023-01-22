@@ -52,6 +52,6 @@
 		"rollup-plugin-terser": "^7.0.2"
 	},
 	"peerDependencies": {
-		"leaflet": "^1.7.0"
+		"leaflet": "^1.9.3"
 	}
 }
