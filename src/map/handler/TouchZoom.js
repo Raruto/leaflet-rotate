@@ -12,7 +12,7 @@ L.Map.mergeOptions({
     // passed `'center'`, it will zoom to the center of the view regardless of
     // where the touch events (fingers) were. Enabled for touch-capable web
     // browsers except for old Androids.
-    touchZoom: L.Browser.touch && !L.Browser.android23,
+    touchZoom: L.Browser.touch,
 
     bounceAtZoomLimits: false,
 });
