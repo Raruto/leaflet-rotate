@@ -77,15 +77,24 @@
 				layers: [esri],
 				// worldCopyJump: true,
 				rotate: true,
-				touchRotate: true,
 				rotateControl: {
 					closeOnZeroBearing: false
 				},
 				bearing: 30,
+				// compassBearing: false,
+				// trackContainerMutation: false,
+				// shiftKeyRotate: false,
+				// touchGestures: true,
+				touchRotate: true,
+				// touchZoom: true
 			});
 
 			// map.setBearing(90);
 			// map.touchRotate.enable();
+
+			// map.touchZoom.disable()
+			// map.compassBearing.disable()
+			// map.touchGestures.enable()
 
 			var layers = L.control.layers({
 				'Empty': L.tileLayer(''),

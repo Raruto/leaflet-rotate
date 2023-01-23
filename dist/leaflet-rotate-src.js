@@ -1,7 +1,7 @@
 (function (factory) {
     typeof define === 'function' && define.amd ? define(factory) :
     factory();
-}((function () { 'use strict';
+})((function () { 'use strict';
 
     /**
      * L.DomUtil
@@ -249,7 +249,7 @@
     /**
      * L.Icon
      */
-    const iconProto = L.extend({}, L.Icon.prototype);
+    L.extend({}, L.Icon.prototype);
 
     L.Icon.include({
 
@@ -1100,7 +1100,7 @@
 
             this._moved = false;
 
-            map.stop();
+            map._stop();
 
             L.DomEvent
                 .on(document, 'touchmove', this._onTouchMove, this)
@@ -1155,20 +1155,20 @@
             }
 
             if (!this._moved) {
-                map._moveStart(true);
+                map._moveStart(true, false);
                 this._moved = true;
             }
 
             L.Util.cancelAnimFrame(this._animRequest);
 
-            var moveFn = L.bind(map._move, map, this._center, this._zoom, { pinch: true, round: false }, undefined);
+            var moveFn = map._move.bind(map, this._center, this._zoom, { pinch: true, round: false }, undefined);
             this._animRequest = L.Util.requestAnimFrame(moveFn, this, true);
 
             L.DomEvent.preventDefault(e);
         },
 
         _onTouchEnd: function() {
-            if (!this._moved || !this._zooming) {
+            if (!this._moved || !(this._zooming || this._rotating)) {
                 this._zooming = false;
                 return;
             }
@@ -1178,13 +1178,13 @@
             L.Util.cancelAnimFrame(this._animRequest);
 
             L.DomEvent
-                .off(document, 'touchmove', this._onTouchMove)
-                .off(document, 'touchend touchcancel', this._onTouchEnd);
+                .off(document, 'touchmove', this._onTouchMove, this)
+                .off(document, 'touchend touchcancel', this._onTouchEnd, this);
 
             if (this.zoom) {
-                // Pinch updates GridLayers' levels only when snapZoom is off, so snapZoom becomes noUpdate.
+                // Pinch updates GridLayers' levels only when zoomSnap is off, so zoomSnap becomes noUpdate.
                 if (this._map.options.zoomAnimation) {
-                    this._map._animateZoom(this._center, this._map._limitZoom(this._zoom), true, this._map.options.snapZoom);
+                    this._map._animateZoom(this._center, this._map._limitZoom(this._zoom), true, this._map.options.zoomSnap);
                 } else {
                     this._map._resetView(this._center, this._map._limitZoom(this._zoom));
                 }
@@ -1297,10 +1297,18 @@
         // Whether the map can be zoomed by touch-dragging with two fingers. If
         // passed `'center'`, it will zoom to the center of the view regardless of
         // where the touch events (fingers) were. Enabled for touch-capable web
-        // browsers except for old Androids.
-        touchZoom: L.Browser.touch && !L.Browser.android23,
+        // browsers.
+        touchZoom: Browser.touch,
 
+        /**
+         * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`
+         */
+
+        // @option bounceAtZoomLimits: Boolean = true
+        // Set it to false if you don't want the map to zoom beyond min/max zoom
+        // and then bounce back when pinch-zooming.
         bounceAtZoomLimits: false,
+
     });
 
     L.Map.TouchZoom = L.Handler.extend({
@@ -1493,5 +1501,5 @@
         }
     });
 
-})));
+}));
 //# sourceMappingURL=leaflet-rotate-src.js.map
