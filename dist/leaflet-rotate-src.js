@@ -878,6 +878,8 @@
 
         /**
          * @since leaflet-rotate (v0.2)
+         * 
+         * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
          */
         _getNewPixelBounds: function(center, zoom) {
             center = center || this.getCenter();
@@ -901,10 +903,12 @@
 
         /**
          * @since leaflet-rotate (v0.2)
+         * 
+         * @see src\layer\vector\Renderer::_update()
          */
         _getPaddedPixelBounds: function(padding) {
-            if (!this._rotate && mapProto._getNewPixelBounds) {
-                return mapProto._getNewPixelBounds.apply(this, arguments);
+            if (!this._rotate && mapProto._getPaddedPixelBounds) {
+                return mapProto._getPaddedPixelBounds.apply(this, arguments);
             }
             var p = padding,
                 size = this.getSize(),
