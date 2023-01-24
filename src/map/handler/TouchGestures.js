@@ -1,5 +1,8 @@
-/*
+/**
  * L.Handler.TouchGestures is both TouchZoom plus TouchRotate.
+ * 
+ * @see https://github.com/fnicollet/Leaflet/commit/a77af51a6b10f308d1b9a16552091d1d0aee8834
+ * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/handler/Map.TouchZoom.js
  */
 
 // @namespace Map

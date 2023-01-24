@@ -1,4 +1,4 @@
-/*
+/**
  * L.Handler.TouchRotate is used by L.Map to add two-finger rotation gestures.
  */
 

@@ -6,17 +6,23 @@ const popupProto = L.extend({}, L.Popup.prototype);
 L.Popup.include({
 
     _animateZoom: function(e) {
-        if (!this._map._rotate) {
-            popupProto._animateZoom.call(this, e);
+        // 0. update anchor (leaflet v1.9.3)
+        popupProto._animateZoom.call(this, e);
+        // 1. subtract anchor
+        // 2. rotate element
+        // 3. restore anchor
+        if (this._map && this._map._rotate) {
+            var anchor = this._getAnchor();
+            var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
+            L.DomUtil.setPosition(this._container, this._map.rotatedPointToMapPanePoint(pos).add(anchor));
         }
-        var pos = this._map._latLngToNewLayerPoint(this._latlng, e.zoom, e.center),
-            anchor = this._getAnchor();
-
-        pos = this._map.rotatedPointToMapPanePoint(pos);
-
-        L.DomUtil.setPosition(this._container, pos.add(anchor));
     },
 
+    /**
+     * To test this use: L.Popup.mergeOptions({ keepInView: true, });
+     * 
+     * @see https://github.com/fnicollet/Leaflet/pull/21
+     */
     _adjustPan: function() {
         if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }
 

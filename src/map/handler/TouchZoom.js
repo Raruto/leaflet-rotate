@@ -1,4 +1,4 @@
-/*
+/**
  * L.Handler.TouchZoom is used by L.Map to add pinch zoom on supported mobile browsers.
  */
 
@@ -12,7 +12,7 @@ L.Map.mergeOptions({
     // passed `'center'`, it will zoom to the center of the view regardless of
     // where the touch events (fingers) were. Enabled for touch-capable web
     // browsers.
-    touchZoom: Browser.touch,
+    touchZoom: L.Browser.touch,
 
     /**
      * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`

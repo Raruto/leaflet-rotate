@@ -62,6 +62,15 @@ L.Map.include({
         if (!this._rotate) {
             return mapProto.getBounds.call(this);
         }
+
+        // SEE: https://github.com/fnicollet/Leaflet/pull/22
+        //
+        // var bounds = this.getPixelBounds(),
+        // sw = this.unproject(bounds.getBottomLeft()),
+        // ne = this.unproject(bounds.getTopRight());
+        // return new LatLngBounds(sw, ne);
+        //
+
         var size = this.getSize();
         var topleft = this.layerPointToLatLng(this.containerPointToLayerPoint([0, 0])),
             topright = this.layerPointToLatLng(this.containerPointToLayerPoint([size.x, 0])),
@@ -99,7 +108,7 @@ L.Map.include({
 
         rotatePanePos = rotatePanePos.rotateFrom(-this._bearing, this._pivot);
 
-        this._bearing = theta * L.DomUtil.DEG_TO_RAD; // TODO: mod 360
+        this._bearing = L.Util.wrapNum(theta, [0, 360]) * L.DomUtil.DEG_TO_RAD;
         this._rotatePanePos = rotatePanePos.rotateFrom(this._bearing, this._pivot);
 
         L.DomUtil.setPosition(this._rotatePane, rotatePanePos, this._bearing, this._pivot);
@@ -291,7 +300,7 @@ L.Map.include({
     _getNewPixelOrigin: function(center, zoom) {
         var viewHalf = this.getSize()._divideBy(2);
         if (!this._rotate) {
-            mapProto._getNewPixelOrigin.call(this, center, zoom);
+            return mapProto._getNewPixelOrigin.call(this, center, zoom);
         }
         return this.project(center, zoom)
             .rotate(this._bearing)
@@ -300,6 +309,50 @@ L.Map.include({
             ._add(this._getRotatePanePos())
             .rotate(-this._bearing)
             ._round();
+    },
+
+    /**
+     * @since leaflet-rotate (v0.2)
+     */
+    _getNewPixelBounds: function(center, zoom) {
+        center = center || this.getCenter();
+        zoom = zoom || this.getZoom();
+        if (!this._rotate && mapProto._getNewPixelBounds) {
+            return mapProto._getNewPixelBounds.apply(this, arguments);
+        }
+        var mapZoom = this._animatingZoom ? Math.max(this._animateToZoom, this.getZoom()) : this.getZoom(),
+            scale = this.getZoomScale(mapZoom, zoom),
+            pixelCenter = this.project(center, zoom).floor(),
+            size = this.getSize(),
+            halfSize = new L.Bounds([
+                this.containerPointToLayerPoint([0, 0]).floor(),
+                this.containerPointToLayerPoint([size.x, 0]).floor(),
+                this.containerPointToLayerPoint([0, size.y]).floor(),
+                this.containerPointToLayerPoint([size.x, size.y]).floor()
+            ]).getSize().divideBy(scale * 2);
+
+        return new L.Bounds(pixelCenter.subtract(halfSize), pixelCenter.add(halfSize));
+    },
+
+    /**
+     * @since leaflet-rotate (v0.2)
+     */
+    _getPaddedPixelBounds: function(padding) {
+        if (!this._rotate && mapProto._getNewPixelBounds) {
+            return mapProto._getNewPixelBounds.apply(this, arguments);
+        }
+        var p = padding,
+            size = this.getSize(),
+            padMin = size.multiplyBy(-p),
+            padMax = size.multiplyBy(1 + p);
+            //min = this.containerPointToLayerPoint(size.multiplyBy(-p)).round();
+
+        return new L.Bounds([
+            this.containerPointToLayerPoint([padMin.x, padMin.y]).floor(),
+            this.containerPointToLayerPoint([padMin.x, padMax.y]).floor(),
+            this.containerPointToLayerPoint([padMax.x, padMin.y]).floor(),
+            this.containerPointToLayerPoint([padMax.x, padMax.y]).floor()
+        ]);
     },
 
     _handleGeolocationResponse: function(pos) {

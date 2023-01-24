@@ -1,4 +1,4 @@
-/*
+/**
  * L.Handler.ShiftKeyRotate is used by L.Map to add shift-wheel rotation.
  */
 
