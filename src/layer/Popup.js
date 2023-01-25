@@ -1,6 +1,9 @@
 /**
- * L.Popup
+ * @external L.Popup
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/Popup.js
  */
+
 const popupProto = L.extend({}, L.Popup.prototype);
 
 L.Popup.include({
@@ -19,7 +22,7 @@ L.Popup.include({
     },
 
     /**
-     * To test this use: L.Popup.mergeOptions({ keepInView: true, });
+     * Hot fix for L.Popup.mergeOptions({ keepInView: true, });
      * 
      * @see https://github.com/fnicollet/Leaflet/pull/21
      */
@@ -42,7 +45,7 @@ L.Popup.include({
         layerPos._add(L.DomUtil.getPosition(this._container));
 
         // var containerPos = map.layerPointToContainerPoint(layerPos);
-        // TODO: use popupProto._adjustPan
+        /** @TODO use popupProto._adjustPan */
         var containerPos = layerPos._add(this._map._getMapPanePos()),
             padding = L.point(this.options.autoPanPadding),
             paddingTL = L.point(this.options.autoPanPaddingTopLeft || padding),

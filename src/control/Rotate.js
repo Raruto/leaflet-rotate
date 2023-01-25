@@ -1,11 +1,13 @@
 /**
- * L.Control.Rotate
+ * A tri-state control for map rotation, states are:
+ * 
+ * - Locked (default)
+ * - Unlocked (user can pinch-rotate)
+ * - Follow (rotation follows device orientation, if available)
+ * 
+ * @typedef L.Control.Rotate
  */
 
-// A tri-state control for map rotation. States are:
-// Locked (default)
-// Unlocked (user can pinch-rotate)
-// Follow (rotation follows device orientation, if available)
 L.Control.Rotate = L.Control.extend({
 
     options: {

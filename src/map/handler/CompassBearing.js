@@ -1,5 +1,7 @@
 /**
- * L.Map.CompassBearing will rotate the map according to a smartphone's compass.
+ * Rotates the map according to a smartphone's compass.
+ * 
+ * @typedef L.Map.CompassBearing
  */
 
 L.Map.CompassBearing = L.Handler.extend({

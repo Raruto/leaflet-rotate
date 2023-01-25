@@ -1,6 +1,9 @@
 /**
- * L.Tooltip
+ * @external L.Tooltip
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/Tooltip.js
  */
+
 const tooltipProto = L.extend({}, L.Tooltip.prototype);
 
 L.Tooltip.include({

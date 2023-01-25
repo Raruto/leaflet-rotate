@@ -1,6 +1,9 @@
 /**
- * L.DivOverlay
+ * @external L.DivOverlay
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/DivOverlay.js
  */
+
 const divOverlayProto = L.extend({}, L.DivOverlay.prototype);
 
 L.DivOverlay.include({

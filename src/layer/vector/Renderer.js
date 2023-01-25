@@ -1,6 +1,9 @@
 /**
- * L.Renderer
+ * @external L.Renderer
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Renderer.js
  */
+
 const rendererProto = L.extend({}, L.Renderer.prototype);
 
 L.Renderer.include({

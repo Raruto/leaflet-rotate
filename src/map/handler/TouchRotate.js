@@ -1,5 +1,7 @@
 /**
- * L.Handler.TouchRotate is used by L.Map to add two-finger rotation gestures.
+ * Rotates the map on two-finger (touch devices).
+ * 
+ * @typedef L.Map.TouchRotate
  */
 
 // @namespace Map

@@ -1,6 +1,9 @@
 /**
- * L.GridLayer
+ * @external L.GridLayer
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/tile/GridLayer.js
  */
+
 const gridLayerProto = L.extend({}, L.GridLayer.prototype);
 
 L.GridLayer.include({

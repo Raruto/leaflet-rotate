@@ -1,5 +1,9 @@
 /**
- * L.Handler.TouchZoom is used by L.Map to add pinch zoom on supported mobile browsers.
+ * Adds pinch zoom rotation on mobile browsers
+ * 
+ * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/handler/Map.TouchZoom.js
+ * 
+ * @external L.Map.TouchZoom
  */
 
 // @namespace Map

@@ -1,6 +1,9 @@
 /**
- * L.Canvas
+ * @external L.Canvas
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Canvas.js
  */
+
 const canvasProto = L.extend({}, L.Canvas.prototype);
 
 L.Canvas.include({
