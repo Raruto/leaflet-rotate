@@ -1,13 +1,20 @@
 /**
- * L.Map
+ * @external L.Map
+ * 
+ * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/Map.js
  */
+
 const mapProto = L.extend({}, L.Map.prototype);
 
 L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
 L.Map.include({
 
-    initialize: function(id, options) { // (HTMLElement or String, Object)
+    /**
+     * @param {(HTMLElement|String)} id html selector
+     * @param {Object} [options={}] leaflet map options
+     */
+    initialize: function(id, options) {
         if (options.rotate) {
             this._rotate = true;
             this._bearing = 0;
@@ -18,6 +25,164 @@ L.Map.include({
         }
     },
 
+    /**
+     * Given a pixel coordinate relative to the map container,
+     * returns the corresponding pixel coordinate relative to
+     * the [origin pixel](#map-getpixelorigin).
+     * 
+     * @param {L.Point} point pixel screen coordinates
+     * @returns {L.Point} transformed pixel point
+     */
+    containerPointToLayerPoint: function(point) {
+        if (!this._rotate) {
+            return mapProto.containerPointToLayerPoint.call(this, point);
+        }
+        return L.point(point)
+            .subtract(this._getMapPanePos())
+            .rotateFrom(-this._bearing, this._getRotatePanePos())
+            .subtract(this._getRotatePanePos());
+    },
+
+    /**
+     * Given a pixel coordinate relative to the [origin pixel](#map-getpixelorigin),
+     * returns the corresponding pixel coordinate relative to the map container.
+     * 
+     * @param {L.Point} point pixel screen coordinates
+     * @returns {L.Point} transformed pixel point
+     */
+    layerPointToContainerPoint: function(point) { // (Point)
+        if (!this._rotate) {
+            return mapProto.layerPointToContainerPoint.call(this, point);
+        }
+        return L.point(point)
+            .add(this._getRotatePanePos())
+            .rotateFrom(this._bearing, this._getRotatePanePos())
+            .add(this._getMapPanePos());
+    },
+
+    /**
+     * Converts a coordinate from the rotated pane reference system
+     * to the reference system of the not rotated map pane.
+     * 
+     * (rotatePane) --> (mapPane)
+     * (rotatePane) --> (norotatePane)
+     * 
+     * @param {L.Point} point pixel screen coordinates
+     * @returns {L.Point}
+     */
+    rotatedPointToMapPanePoint: function(point) {
+        return L.point(point)
+            .rotate(this._bearing)
+            ._add(this._getRotatePanePos());
+    },
+
+    /**
+     * Converts a coordinate from the not rotated map pane reference system
+     * to the reference system of the rotated pane.
+     * 
+     * (mapPane) --> (rotatePane)
+     * (norotatePane) --> (rotatePane)
+     * 
+     * @param {L.Point} point pixel screen coordinates
+     */
+    mapPanePointToRotatedPoint: function(point) {
+        return L.point(point)
+            ._subtract(this._getRotatePanePos())
+            .rotate(-this._bearing);
+    },
+
+    /**
+     * Returns geographical bounds visible in the current map view
+     * 
+     * @TODO find out  if map bounds calculated by `L.Map::getBounds()`
+     *       function should match the `rotatePane` or `norotatePane` bounds
+     * 
+     * @see https://github.com/fnicollet/Leaflet/issues/7
+     * 
+     * @returns {L.LatLngBounds}
+     */
+    getBounds: function() {
+        if (!this._rotate) {
+            return mapProto.getBounds.call(this);
+        }
+
+        // SEE: https://github.com/fnicollet/Leaflet/pull/22
+        //
+        // var bounds = this.getPixelBounds(),
+        // sw = this.unproject(bounds.getBottomLeft()),
+        // ne = this.unproject(bounds.getTopRight());
+        // return new LatLngBounds(sw, ne);
+        //
+
+        // LatLngBounds' constructor automatically
+        // extends the bounds to fit the passed points
+        var size = this.getSize();
+        return new L.LatLngBounds([
+            this.containerPointToLatLng([0, 0]),           // topleft
+            this.containerPointToLatLng([size.x, 0]),      // topright 
+            this.containerPointToLatLng([size.x, size.y]), // bottomright
+            this.containerPointToLatLng([0, size.y]),      // bottomleft
+        ]);
+    },
+
+    /**
+     * Returns the bounds of the current map view in projected pixel
+     * coordinates (sometimes useful in layer and overlay implementations).
+     * 
+     * @TODO find out if map bounds calculated by `L.Map::getPixelBounds()`
+     *       function should match the `rotatePane` or `norotatePane` bounds
+     *
+     * @see https://github.com/fnicollet/Leaflet/issues/7
+     * 
+     * @returns {L.Bounds}
+     */
+    // getPixelBounds(center, zoom) {
+    //     // const topLeftPoint = map.containerPointToLayerPoint(this._getTopLeftPoint());
+    //     const topLeftPoint = this._getTopLeftPoint(center, zoom);
+    //       return new L.Bounds(topLeftPoint, topLeftPoint.add(this.getSize()));
+    // },
+
+    /**
+     * Change map rotation
+     * 
+     * @param {number} theta map degrees
+     */
+    setBearing: function(theta) {
+        if (!L.Browser.any3d || !this._rotate) { return; }
+
+        var bearing = L.Util.wrapNum(theta, [0, 360]) * L.DomUtil.DEG_TO_RAD,
+            center = this._getPixelCenter(),
+            oldPos = this._getRotatePanePos().rotateFrom(-this._bearing, center),
+            newPos = oldPos.rotateFrom(bearing, center);
+
+        // CSS transform
+        L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
+
+        this._pivot = center;
+        this._bearing = bearing;
+        this._rotatePanePos = newPos;
+
+        this.fire('rotate');
+    },
+
+    /**
+     * Get current map rotation
+     * 
+     * @returns {number} theta map degrees
+     */
+    getBearing: function() {
+        return this._bearing * L.DomUtil.RAD_TO_DEG;
+    },
+
+    /**
+     * Creates a new [map pane](#map-pane) with the given name if it doesn't
+     * exist already, then returns it. The pane is created as a child of
+     * `container`, or as a child of the main map pane if not set.
+     * 
+     * @param {String} name leaflet pane
+     * @param {HTMLElement} [container] parent element
+     * @returns {HTMLElement} pane container
+     */
     // createPane: function(name, container) {
     //     if (!this._rotate || name == 'mapPane') {
     //         return mapProto.createPane.call(this, name, container);
@@ -31,78 +196,25 @@ L.Map.include({
     //     return mapProto.createPane.call(this, name, container || this._rotatePane);
     // },
 
-    containerPointToLayerPoint: function(point) { // (Point)
-        if (!this._rotate) {
-            return mapProto.containerPointToLayerPoint.call(this, point);
-        }
-        return L.point(point)
-            .subtract(this._getMapPanePos())
-            .rotateFrom(-this._bearing, this._getRotatePanePos())
-            .subtract(this._getRotatePanePos());
-    },
-
-    getBounds: function() {
-        if (!this._rotate) {
-            return mapProto.getBounds.call(this);
-        }
-        var size = this.getSize();
-        var topleft = this.layerPointToLatLng(this.containerPointToLayerPoint([0, 0])),
-            topright = this.layerPointToLatLng(this.containerPointToLayerPoint([size.x, 0])),
-            bottomright = this.layerPointToLatLng(this.containerPointToLayerPoint([size.x, size.y])),
-            bottomleft = this.layerPointToLatLng(this.containerPointToLayerPoint([0, size.y]));
-
-        // Use LatLngBounds' build-in constructor that automatically extends the bounds to fit the passed points
-        return new L.LatLngBounds([topleft, topright, bottomright, bottomleft]);
-    },
-
-    layerPointToContainerPoint: function(point) { // (Point)
-        if (!this._rotate) {
-            return mapProto.layerPointToContainerPoint.call(this, point);
-        }
-        return L.point(point)
-            .add(this._getRotatePanePos())
-            .rotateFrom(this._bearing, this._getRotatePanePos())
-            .add(this._getMapPanePos());
-    },
-
-    // Rotation methods
-    // setBearing will work with just the 'theta' parameter.
-    setBearing: function(theta) {
-        if (!L.Browser.any3d || !this._rotate) { return; }
-
-        var rotatePanePos = this._getRotatePanePos();
-        var halfSize = this.getSize().divideBy(2);
-        this._pivot = this._getMapPanePos().clone().multiplyBy(-1).add(halfSize);
-
-        rotatePanePos = rotatePanePos.rotateFrom(-this._bearing, this._pivot);
-
-        this._bearing = theta * L.DomUtil.DEG_TO_RAD; // TODO: mod 360
-        this._rotatePanePos = rotatePanePos.rotateFrom(this._bearing, this._pivot);
-
-        L.DomUtil.setPosition(this._rotatePane, rotatePanePos, this._bearing, this._pivot);
-
-        this.fire('rotate');
-    },
-
-    getBearing: function() {
-        return this._bearing * L.DomUtil.RAD_TO_DEG;
-    },
-
+    /**
+     * Panes are DOM elements used to control the ordering of layers on
+     * the map. You can access panes with [`map.getPane`](#map-getpane)
+     * or [`map.getPanes`](#map-getpanes) methods. New panes can be created
+     * with the [`map.createPane`](#map-createpane) method.
+     * 
+     * Every map has the following default panes that differ only in zIndex:
+     * 
+     * - mapPane     [HTMLElement = 'auto'] - Pane that contains all other map panes
+     * - tilePane    [HTMLElement = 2]      - Pane for tile layers
+     * - overlayPane [HTMLElement = 4]      - Pane for overlays like polylines and polygons
+     * - shadowPane  [HTMLElement = 5]      - Pane for overlay shadows (e.g. marker shadows)
+     * - markerPane  [HTMLElement = 6]      - Pane for marker icons
+     * - tooltipPane [HTMLElement = 650]    - Pane for tooltips.
+     * - popupPane   [HTMLElement = 700]    - Pane for popups.
+     */
     _initPanes: function() {
         var panes = this._panes = {};
         this._paneRenderers = {};
-
-        // @section
-        //
-        // Panes are DOM elements used to control the ordering of layers on the map. You
-        // can access panes with [`map.getPane`](#map-getpane) or
-        // [`map.getPanes`](#map-getpanes) methods. New panes can be created with the
-        // [`map.createPane`](#map-createpane) method.
-        //
-        // Every map has the following default panes that differ only in zIndex.
-        //
-        // @pane mapPane: HTMLElement = 'auto'
-        // Pane that contains all other map panes
 
         this._mapPane = this.createPane('mapPane', this._container);
         L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
@@ -110,44 +222,20 @@ L.Map.include({
         if (this._rotate) {
             this._rotatePane = this.createPane('rotatePane', this._mapPane);
             this._norotatePane = this.createPane('norotatePane', this._mapPane);
-
-            // @pane tilePane: HTMLElement = 2
-            // Pane for tile layers
+            // rotatePane
             this.createPane('tilePane', this._rotatePane);
-            // @pane overlayPane: HTMLElement = 4
-            // Pane for overlays like polylines and polygons
             this.createPane('overlayPane', this._rotatePane);
-
-            // @pane shadowPane: HTMLElement = 5
-            // Pane for overlay shadows (e.g. marker shadows)
+            // norotatePane
             this.createPane('shadowPane', this._norotatePane);
-            // @pane markerPane: HTMLElement = 6
-            // Pane for marker icons
             this.createPane('markerPane', this._norotatePane);
-            // @pane tooltipPane: HTMLElement = 650
-            // Pane for tooltips.
             this.createPane('tooltipPane', this._norotatePane);
-            // @pane popupPane: HTMLElement = 700
-            // Pane for popups.
             this.createPane('popupPane', this._norotatePane);
         } else {
-            // @pane tilePane: HTMLElement = 2
-            // Pane for tile layers
             this.createPane('tilePane');
-            // @pane overlayPane: HTMLElement = 4
-            // Pane for overlays like polylines and polygons
             this.createPane('overlayPane');
-            // @pane shadowPane: HTMLElement = 5
-            // Pane for overlay shadows (e.g. marker shadows)
             this.createPane('shadowPane');
-            // @pane markerPane: HTMLElement = 6
-            // Pane for marker icons
             this.createPane('markerPane');
-            // @pane tooltipPane: HTMLElement = 650
-            // Pane for tooltips.
             this.createPane('tooltipPane');
-            // @pane popupPane: HTMLElement = 700
-            // Pane for popups.
             this.createPane('popupPane');
         }
 
@@ -157,21 +245,92 @@ L.Map.include({
         }
     },
 
-    // @method rotatedPointToMapPanePoint(point: Point): Point
-    // Converts a coordinate from the rotated pane reference system
-    // to the reference system of the not rotated map pane.
-    rotatedPointToMapPanePoint: function(point) {
-        return L.point(point).rotate(this._bearing)._add(this._getRotatePanePos());
+    /**
+     * Pans the map the minimum amount to make the `latlng` visible. Use
+     * padding options to fit the display to more restricted bounds.
+     * If `latlng` is already within the (optionally padded) display bounds,
+     * the map will not be panned.
+     * 
+     * @see https://github.com/Raruto/leaflet-rotate/issues/18
+     * 
+     * @param {L.LatLng} latlng coordinates
+     * @param {Object} [options={}] padding options
+     * 
+     * @returns {L.Map} current map instance
+     */
+    panInside(latlng, options) {
+        options = options || {};
+
+        const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]),
+            paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]),
+            /** @TODO use mapProto.panInside */
+            // pixelPoint = this.project(latlng),
+            // pixelBounds = this.getPixelBounds(),
+            // pixelCenter = this.project(this.getCenter()),
+            rect = this._container.getBoundingClientRect(),
+            pixelPoint = this.latLngToContainerPoint(latlng),
+            pixelBounds = L.bounds([ L.point(rect), L.point(rect).add(this.getSize()) ]),
+            pixelCenter = pixelBounds.getCenter(),
+            //
+            paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]),
+            paddedSize = paddedBounds.getSize();
+        
+        if (!paddedBounds.contains(pixelPoint)) {
+            this._enforcingBounds = true;
+            const centerOffset = pixelPoint.subtract(paddedBounds.getCenter());
+            const offset = paddedBounds.extend(pixelPoint).getSize().subtract(paddedSize);
+            pixelCenter.x += centerOffset.x < 0 ? -offset.x : offset.x;
+            pixelCenter.y += centerOffset.y < 0 ? -offset.y : offset.y;
+            /** @TODO use mapProto.panInside */
+            // this.panTo(this.unproject(pixelCenter), options);
+            this.panTo(this.containerPointToLatLng(pixelCenter), options);
+            //
+            this._enforcingBounds = false;
+        }
+        return this;
     },
 
-    // @method mapPanePointToRotatedPoint(point: Point): Point
-    // Converts a coordinate from the not rotated map pane reference system
-    // to the reference system of the rotated pane.
-    mapPanePointToRotatedPoint: function(point) {
-        return L.point(point)._subtract(this._getRotatePanePos()).rotate(-this._bearing);
-    },
+    /**
+     * Pans the map to the closest view that would lie inside the given bounds
+     * (if it's not already), controlling the animation using the options specific,
+     * if any.
+     * 
+     * @TODO check if map bounds calculated by `L.Map::panInsideBounds()`
+     *       function should match the `rotatePane` or `norotatePane` bounds
+     *
+     * @see https://github.com/fnicollet/Leaflet/issues/7
+     * 
+     * @param {L.LatLngBounds} bounds coordinates
+     * @param {Object} [options] pan options
+     * @returns {L.Map} current map instance
+     */
+    // panInsideBounds: function (bounds, options) {
+    //     this._enforcingBounds = true;
+    //     var center = this.getCenter(),
+    //         newCenter = this._limitCenter(center, this._zoom, L.latLngBounds(bounds));
 
-    // offset of the specified place to the current center in pixels
+    //     if (!center.equals(newCenter)) {
+    //         this.panTo(newCenter, options);
+    //     }
+
+    //     this._enforcingBounds = false;
+    //     return this;
+    // },
+
+    /**
+     * Layer point of the current center
+     * 
+     * @returns {L.Point} layer center
+     */
+    // _getCenterLayerPoint: function () {
+    //    return this.containerPointToLayerPoint(this.getSize()._divideBy(2));
+    // },
+
+    /**
+     * Offset of the specified place to the current center in pixels
+     * 
+     * @param {L.LatLng} latlng map coordinates
+     */
     _getCenterOffset: function(latlng) {
         var centerOffset = mapProto._getCenterOffset.call(this, latlng);
         if (this._rotate) {
@@ -182,12 +341,13 @@ L.Map.include({
 
     _getRotatePanePos: function() {
         return this._rotatePanePos || new L.Point(0, 0);
+        // return L.DomUtil.getPosition(this._rotatePane) || new L.Point(0, 0);
     },
 
     _getNewPixelOrigin: function(center, zoom) {
         var viewHalf = this.getSize()._divideBy(2);
         if (!this._rotate) {
-            mapProto._getNewPixelOrigin.call(this, center, zoom);
+            return mapProto._getNewPixelOrigin.call(this, center, zoom);
         }
         return this.project(center, zoom)
             .rotate(this._bearing)
@@ -198,10 +358,72 @@ L.Map.include({
             ._round();
     },
 
+    /**
+     * @since leaflet-rotate (v0.2)
+     * 
+     * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
+     */
+    _getNewPixelBounds: function(center, zoom) {
+        center = center || this.getCenter();
+        zoom = zoom || this.getZoom();
+        if (!this._rotate && mapProto._getNewPixelBounds) {
+            return mapProto._getNewPixelBounds.apply(this, arguments);
+        }
+        var mapZoom = this._animatingZoom ? Math.max(this._animateToZoom, this.getZoom()) : this.getZoom(),
+            scale = this.getZoomScale(mapZoom, zoom),
+            pixelCenter = this.project(center, zoom).floor(),
+            size = this.getSize(),
+            halfSize = new L.Bounds([
+                this.containerPointToLayerPoint([0, 0]).floor(),
+                this.containerPointToLayerPoint([size.x, 0]).floor(),
+                this.containerPointToLayerPoint([0, size.y]).floor(),
+                this.containerPointToLayerPoint([size.x, size.y]).floor()
+            ]).getSize().divideBy(scale * 2);
+
+        return new L.Bounds(pixelCenter.subtract(halfSize), pixelCenter.add(halfSize));
+    },
+
+    /**
+     * @since leaflet-rotate (v0.2)
+     * 
+     * @return {L.Point} map pivot point (center)
+     */
+    _getPixelCenter: function() {
+        if (!this._rotate && mapProto._getPixelCenter) {
+            return mapProto._getPixelCenter.apply(this, arguments);
+        }
+        return this.getSize()._divideBy(2)._subtract(this._getMapPanePos());
+    },
+
+    /**
+     * @since leaflet-rotate (v0.2)
+     * 
+     * @see src\layer\vector\Renderer::_update()
+     */
+    _getPaddedPixelBounds: function(padding) {
+        if (!this._rotate && mapProto._getPaddedPixelBounds) {
+            return mapProto._getPaddedPixelBounds.apply(this, arguments);
+        }
+        var p = padding,
+            size = this.getSize(),
+            padMin = size.multiplyBy(-p),
+            padMax = size.multiplyBy(1 + p);
+            //min = this.containerPointToLayerPoint(size.multiplyBy(-p)).round();
+
+        return new L.Bounds([
+            this.containerPointToLayerPoint([padMin.x, padMin.y]).floor(),
+            this.containerPointToLayerPoint([padMin.x, padMax.y]).floor(),
+            this.containerPointToLayerPoint([padMax.x, padMin.y]).floor(),
+            this.containerPointToLayerPoint([padMax.x, padMax.y]).floor()
+        ]);
+    },
+
     _handleGeolocationResponse: function(pos) {
+        if (!this._container._leaflet_id) { return; }
+
         var lat = pos.coords.latitude,
             lng = pos.coords.longitude,
-            // TODO: use mapProto._handleGeolocationResponse
+            /** @TODO use mapProto._handleGeolocationResponse */
             hdg = pos.coords.heading,
             latlng = new L.LatLng(lat, lng),
             bounds = latlng.toBounds(pos.coords.accuracy),
@@ -216,7 +438,7 @@ L.Map.include({
             latlng: latlng,
             bounds: bounds,
             timestamp: pos.timestamp,
-            // TODO: use mapProto._handleGeolocationResponse
+            /** @TODO use mapProto._handleGeolocationResponse */
             heading: hdg
         };
 
@@ -231,5 +453,53 @@ L.Map.include({
         // went successfully.
         this.fire('locationfound', data);
     },
+
+    /**
+     * Given latlng bounds, returns the bounds in projected pixel
+     * relative to the map container.
+     * 
+     * @see https://github.com/ronikar/Leaflet/blob/5c480ef959b947c3beed7065425a5a36c486262b/src/map/Map.js#L1114-L1135
+     * 
+     * @param {L.LatLngBounds} bounds 
+     * @returns {L.Bounds}
+     */
+    // boundsToContainerBounds: function (bounds) {
+    //     if (this._rotate) {
+    //         var northWest = this.latLngToContainerPoint(bounds.getNorthWest());
+    //         var northEast = this.latLngToContainerPoint(bounds.getNorthEast());
+    //         var southWest = this.latLngToContainerPoint(bounds.getSouthWest());
+    //         var southEast = this.latLngToContainerPoint(bounds.getSouthEast());
+    //
+    //         var minX = Math.min(northWest.x, northEast.x, southEast.x, southWest.x);
+    //         var maxX = Math.max(northWest.x, northEast.x, southEast.x, southWest.x);
+    //         var minY = Math.min(northWest.y, northEast.y, southEast.y, southWest.y);
+    //         var maxY = Math.max(northWest.y, northEast.y, southEast.y, southWest.y);
+    //
+    //         return L.bounds(
+    //             L.point(minX, minY).multiplyBy(-1),
+    //             L.point(maxX, maxY).multiplyBy(-1).add(this.getSize())
+    //         );
+    //     } else {
+    //         return L.Bounds(
+    //             this.latLngToContainerPoint(bounds.getNorthWest()).multiplyBy(-1),
+    //             this.latLngToContainerPoint(bounds.getSouthEast()).multiplyBy(-1).add(this.getSize())
+    //         );
+    //     }
+    // },
+
+    /**
+     * @see https://github.com/ronikar/Leaflet/blob/5c480ef959b947c3beed7065425a5a36c486262b/src/geo/LatLngBounds.js#L253-L264
+     * 
+     * @param {L.Bounds} points 
+     * @returns {L.Bounds}
+     */
+    // toCircumscribedBounds(points) {
+    //     var minX = points.reduce(function (pv, v) { return Math.min(pv, v.x); }, points[0].x),
+    //         maxX = points.reduce(function (pv, v) { return Math.max(pv, v.x); }, points[0].x),
+    //         minY = points.reduce(function (pv, v) { return Math.min(pv, v.y); }, points[0].y),
+    //         maxY = points.reduce(function (pv, v) { return Math.max(pv, v.y); }, points[0].y);
+    //
+    //     return L.bounds(L.point(minX, minY), L.point(maxX, maxY));
+    // },
 
 });

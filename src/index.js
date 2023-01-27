@@ -1,12 +1,14 @@
 /**
- * Based on Leaflet structure (ver. 1.7)
+ * @external L
  *
- * @see https://github.com/Leaflet/Leaflet/blob/master/src/Leaflet.js
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/Leaflet.js
  */
 
 // import {version} from '../package.json';
 // export {version};
 
+// control
+// export * from './core/index';
 
 // core
 // export * from './core/index';
@@ -41,5 +43,5 @@ export * from './map/handler/TouchRotate';
 export * from './map/handler/ShiftKeyRotate';
 export * from './map/handler/TouchZoom';
 
-// control
+// custom controls
 export * from './control/Rotate';

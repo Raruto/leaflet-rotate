@@ -1,6 +1,9 @@
 /**
- * L.GridLayer
+ * @external L.GridLayer
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/tile/GridLayer.js
  */
+
 const gridLayerProto = L.extend({}, L.GridLayer.prototype);
 
 L.GridLayer.include({
@@ -21,19 +24,7 @@ L.GridLayer.include({
             return gridLayerProto._getTiledPixelBounds.call(this, center);
         }
 
-        var map = this._map,
-            mapZoom = map._animatingZoom ? Math.max(map._animateToZoom, map.getZoom()) : map.getZoom(),
-            scale = map.getZoomScale(mapZoom, this._tileZoom),
-            pixelCenter = map.project(center, this._tileZoom).floor(),
-            size = map.getSize(),
-            halfSize = new L.Bounds([
-                map.containerPointToLayerPoint([0, 0]).floor(),
-                map.containerPointToLayerPoint([size.x, 0]).floor(),
-                map.containerPointToLayerPoint([0, size.y]).floor(),
-                map.containerPointToLayerPoint([size.x, size.y]).floor()
-            ]).getSize().divideBy(scale * 2);
-
-        return new L.Bounds(pixelCenter.subtract(halfSize), pixelCenter.add(halfSize));
+        return this._map._getNewPixelBounds(center, this._tileZoom);
     },
 
 });

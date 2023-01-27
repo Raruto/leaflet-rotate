@@ -1,8 +1,8 @@
-import { terser } from "rollup-plugin-terser";
-import resolve from 'rollup-plugin-node-resolve';
-import commonJS from 'rollup-plugin-commonjs';
+import terser from "@rollup/plugin-commonjs";
+import resolve from '@rollup/plugin-node-resolve';
+import commonJS from '@rollup/plugin-commonjs';
 
-let plugin = require('../package.json');
+import plugin from '../package.json' assert { type: "json" };
 
 let input = "src/index.js";
 let output = {

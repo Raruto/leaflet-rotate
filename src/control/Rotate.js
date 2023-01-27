@@ -1,11 +1,13 @@
 /**
- * L.Control.Rotate
+ * A tri-state control for map rotation, states are:
+ * 
+ * - Locked (default)
+ * - Unlocked (user can pinch-rotate)
+ * - Follow (rotation follows device orientation, if available)
+ * 
+ * @typedef L.Control.Rotate
  */
 
-// A tri-state control for map rotation. States are:
-// Locked (default)
-// Unlocked (user can pinch-rotate)
-// Follow (rotation follows device orientation, if available)
 L.Control.Rotate = L.Control.extend({
 
     options: {
@@ -35,6 +37,7 @@ L.Control.Rotate = L.Control.extend({
         link.appendChild(arrow);
         link.href = '#';
         link.title = 'Rotate map';
+        // link.draggable = false;
 
         L.DomEvent
             .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -63,7 +66,7 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _handleMouseDown: function(e) {
-        L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
         this.dragging = true;
         this.dragstartX = e.pageX;
         this.dragstartY = e.pageY;
@@ -73,7 +76,7 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _handleMouseUp: function(e) {
-        L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
         this.dragging = false;
 
         L.DomEvent

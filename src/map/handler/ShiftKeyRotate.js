@@ -1,5 +1,8 @@
-/*
- * L.Handler.ShiftKeyRotate is used by L.Map to add shift-wheel rotation.
+
+/**
+ * Rotates the map on shift key + mouseheel scrolling (desktop).
+ * 
+ * @typedef L.Map.ShiftKeyRotate
  */
 
 // @namespace Map

@@ -1,6 +1,9 @@
 /**
- * L.DomUtil
+ * @external L.DomUtil
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/DomUtil.js
  */
+
 const domUtilProto = L.extend({}, L.DomUtil);
 
 L.extend(L.DomUtil, {

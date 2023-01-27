@@ -1,24 +1,40 @@
 /**
- * L.Popup
+ * @external L.Popup
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/Popup.js
  */
+
 const popupProto = L.extend({}, L.Popup.prototype);
 
 L.Popup.include({
 
     _animateZoom: function(e) {
-        if (!this._map._rotate) {
-            popupProto._animateZoom.call(this, e);
+        // 0. update anchor (leaflet v1.9.3)
+        popupProto._animateZoom.call(this, e);
+        // 1. subtract anchor
+        // 2. rotate element
+        // 3. restore anchor
+        if (this._map && this._map._rotate) {
+            var anchor = this._getAnchor();
+            var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
+            L.DomUtil.setPosition(this._container, this._map.rotatedPointToMapPanePoint(pos).add(anchor));
         }
-        var pos = this._map._latLngToNewLayerPoint(this._latlng, e.zoom, e.center),
-            anchor = this._getAnchor();
-
-        pos = this._map.rotatedPointToMapPanePoint(pos);
-
-        L.DomUtil.setPosition(this._container, pos.add(anchor));
     },
 
+    /**
+     * Hot fix for L.Popup.mergeOptions({ keepInView: true, });
+     * 
+     * @see https://github.com/fnicollet/Leaflet/pull/21
+     */
     _adjustPan: function() {
         if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }
+
+        // We can endlessly recurse if keepInView is set and the view resets.
+        // Let's guard against that by exiting early if we're responding to our own autopan.
+        if (this._autopanning) {
+            this._autopanning = false;
+            return;
+        }
 
         var map = this._map,
             marginBottom = parseInt(L.DomUtil.getStyle(this._container, 'marginBottom'), 10) || 0,
@@ -29,7 +45,7 @@ L.Popup.include({
         layerPos._add(L.DomUtil.getPosition(this._container));
 
         // var containerPos = map.layerPointToContainerPoint(layerPos);
-        // TODO: use popupProto._adjustPan
+        /** @TODO use popupProto._adjustPan */
         var containerPos = layerPos._add(this._map._getMapPanePos()),
             padding = L.point(this.options.autoPanPadding),
             paddingTL = L.point(this.options.autoPanPaddingTopLeft || padding),
@@ -56,6 +72,10 @@ L.Popup.include({
         // @event autopanstart: Event
         // Fired when the map starts autopanning when opening a popup.
         if (dx || dy) {
+            // Track that we're autopanning, as this function will be re-ran on moveend
+            if (this.options.keepInView) {
+                this._autopanning = true;
+            }
             map
                 .fire('autopanstart')
                 .panBy([dx, dy]);

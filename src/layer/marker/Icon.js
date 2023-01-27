@@ -1,6 +1,9 @@
 /**
- * L.Icon
+ * @external L.Icon
+ * 
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Icon.js
  */
+
 const iconProto = L.extend({}, L.Icon.prototype);
 
 L.Icon.include({
@@ -22,7 +25,7 @@ L.Icon.include({
         if (anchor) {
             img.style.marginLeft = (-anchor.x) + 'px';
             img.style.marginTop = (-anchor.y) + 'px';
-            // TODO: use iconProto._setIconStyles
+            /** @TODO use iconProto._setIconStyles */
             img.style[L.DomUtil.TRANSFORM + "Origin"] = anchor.x + "px " + anchor.y + "px 0px";
         }
 

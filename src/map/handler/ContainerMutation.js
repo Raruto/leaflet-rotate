@@ -1,5 +1,7 @@
-/*
- * L.Handler.ContainerMutation triggers `invalidateResize` when the map's DOM container mutates.
+/**
+ * Triggers `invalidateResize` when the map's DOM container mutates.
+ * 
+ * @typedef L.Map.ContainerMutation
  */
 
 // @namespace Map
@@ -17,9 +19,10 @@ L.Map.mergeOptions({
 L.Map.ContainerMutation = L.Handler.extend({
 
     addHooks: function() {
-        if (!L.Browser.mutation) {
-            return;
-        }
+        /** @TODO check again this property. Will likely be added in future releases (leaflet > v1.9.3) */
+        // if (!L.Browser.mutation) {
+        //     return;
+        // }
 
         if (!this._observer) {
             this._observer = new MutationObserver(L.Util.bind(this._onMutation, this));
@@ -35,9 +38,10 @@ L.Map.ContainerMutation = L.Handler.extend({
     },
 
     removeHooks: function() {
-        if (!L.Browser.mutation) {
-            return;
-        }
+        /** @TODO check again this property. Will likely be added in future releases (leaflet > v1.9.3) */
+        // if (!L.Browser.mutation) {
+        //     return;
+        // }
         this._observer.disconnect();
     },
 
