@@ -10,11 +10,6 @@
 		<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
 
-		<!-- Leaflet-MarkerCluster -->
-		<script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster-src.js"></script>
-		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css">
-		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css">
-
 		<!-- Leaflet-Rotate -->
 		<script src="../dist/leaflet-rotate-src.js"></script>
 
@@ -30,6 +25,10 @@
 				height: 600px;
 				border: 1px solid #ccc;
 				max-height: 50vh;
+			}
+			html, body {
+				/* margin: 0; */
+				/* padding: 0; */
 			}
 		</style>
 	</head>
@@ -63,12 +62,14 @@
 				maxZoom: 24,
 				maxNativeZoom: 18,
 				attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+				// noWrap: true
 			});
 
 			var osm = L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 				maxZoom: 24,
 				maxNativeZoom: 19,
 				attribution: '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+				// noWrap: true
 			});
 
 			var map = L.map('map', {
@@ -79,9 +80,12 @@
 				// preferCanvas: false,
 				rotate: true,
 				rotateControl: {
-					closeOnZeroBearing: false
+					closeOnZeroBearing: false,
+					// position: 'bottomleft',
 				},
 				bearing: 30,
+				// attributionControl: false,
+				// zoomControl: false,
 				// compassBearing: false,
 				// trackContainerMutation: false,
 				// shiftKeyRotate: false,
@@ -96,6 +100,10 @@
 			// map.touchZoom.disable()
 			// map.compassBearing.disable()
 			// map.touchGestures.enable()
+
+			// map.zoomControl.setPosition('bottomleft');
+			// map.rotateControl.setPosition('bottomleft');
+			// map.setMaxBounds([[-90,-180], [90,180]]);
 
 			var layers = L.control.layers({
 				'Empty': L.tileLayer(''),
@@ -135,26 +143,6 @@
 
 			// Display some debug info
 			L.Rotate.debug(map);
-
-			var cluster = L.markerClusterGroup({
-				spiderfyOnMaxZoom: false,
-				showCoverageOnHover: false,
-				zoomToBoundsOnClick: false
-			})
-			.on('clusterclick', (a) => a.layer.spiderfy())
-			.addTo(map);
-	
-			// populate cluster with random markers
-			for (var i = 0; i < 100; i++) {
-				var bounds = map.getBounds();
-				var southWest = bounds.getSouthWest();
-				var northEast = bounds.getNorthEast();
-				var lngSpan = northEast.lng - southWest.lng;
-				var latSpan = northEast.lat - southWest.lat;
-				var m = L.marker( L.latLng(southWest.lat + latSpan * Math.random(), southWest.lng + lngSpan * Math.random()) );
-				// m.addTo(map);
-				cluster.addLayer(m);
-			}
 		</script>
 
 		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github"

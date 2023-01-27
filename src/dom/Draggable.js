@@ -6,8 +6,8 @@
 
 L.Draggable.include({
 
-    updateMapBearing: function(mapBearing) {
-        this._mapBearing = mapBearing;
-    },
+    // updateMapBearing: function(mapBearing) {
+    //     this._mapBearing = mapBearing;
+    // },
 
 });

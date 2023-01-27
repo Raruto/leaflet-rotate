@@ -23,12 +23,12 @@ var markerDragProto; // retrived at runtime (see below: L.Marker::_initInteracti
 
 var MarkerDrag = {
 
-    _onDragStart: function() {
-        if (!this._marker._map._rotate) {
-            return markerDragProto._onDragStart.call(this)
-        }
-        this._draggable.updateMapBearing(this._marker._map._bearing);
-    },
+    // _onDragStart: function() {
+    //     if (!this._marker._map._rotate) {
+    //         return markerDragProto._onDragStart.call(this)
+    //     }
+    //     this._draggable.updateMapBearing(this._marker._map._bearing);
+    // },
 
     _onDrag: function(e) {
         var marker = this._marker,
@@ -90,7 +90,7 @@ L.Marker.include({
             // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
             markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
             Object.assign(this.dragging, {
-                _onDragStart: MarkerDrag._onDragStart.bind(this.dragging),
+                // _onDragStart: MarkerDrag._onDragStart.bind(this.dragging),
                 _onDrag: MarkerDrag._onDrag.bind(this.dragging),
                 _onDragEnd: MarkerDrag._onDragEnd.bind(this.dragging),
             })
@@ -126,30 +126,6 @@ L.Marker.include({
         this._zIndex = pos.y + this.options.zIndexOffset;
 
         this._resetZIndex();
-    },
-
-    /**
-     * @FIXME temporary disabled on rotated maps for fix: https://github.com/Raruto/leaflet-rotate/issues/18
-     * 
-     * @since leaflet@v1.8
-     * @see https://github.com/Leaflet/Leaflet/commit/4f639a85efffa49c3e64a07dc0b6f5aa73f13449
-     */
-    _panOnFocus: function () {
-        if (!this._map._rotate) {
-            return markerProto._panOnFocus.call(this)
-        }
-
-        // var map = this._map;
-        // if (!map) { return; }
-
-        // var iconOpts = this.options.icon.options;
-        // var size = iconOpts.iconSize ? L.point(iconOpts.iconSize) : L.point(0, 0);
-        // var anchor = iconOpts.iconAnchor ? L.point(iconOpts.iconAnchor) : L.point(0, 0);
-
-        // map.panInside(this._latlng, {
-        //     paddingTopLeft: anchor,
-        //     paddingBottomRight: size.subtract(anchor)
-        // });
     },
 
     _updateZIndex: function(offset) {

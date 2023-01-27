@@ -15,14 +15,7 @@ L.extend(L.Point.prototype, {
      * @param theta must be given in radians.
      */
     rotate: function(theta) {
-        if (!theta) { return this; }
-        var sinTheta = Math.sin(theta);
-        var cosTheta = Math.cos(theta);
-
-        return new L.Point(
-            this.x * cosTheta - this.y * sinTheta,
-            this.x * sinTheta + this.y * cosTheta
-        );
+        return this.rotateFrom(theta, new L.Point(0,0))
     },
 
     /**
