@@ -10,7 +10,7 @@ L.Popup.include({
 
     _animateZoom: function(e) {
         // 0. update anchor (leaflet v1.9.3)
-        popupProto._animateZoom.call(this, e);
+        popupProto._animateZoom.apply(this, arguments);
         // 1. subtract anchor
         // 2. rotate element
         // 3. restore anchor

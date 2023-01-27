@@ -17,6 +17,10 @@ L.Marker.mergeOptions({
     // Rotate this marker when map rotates
     rotateWithView: false,
 
+    // @option scale: Number = undefined
+    // Scale of the marker icon
+    scale: undefined,
+
 });
 
 var markerDragProto; // retrived at runtime (see below: L.Marker::_initInteraction())
@@ -25,7 +29,7 @@ var MarkerDrag = {
 
     // _onDragStart: function() {
     //     if (!this._marker._map._rotate) {
-    //         return markerDragProto._onDragStart.call(this)
+    //         return markerDragProto._onDragStart.apply(this, arguments);
     //     }
     //     this._draggable.updateMapBearing(this._marker._map._bearing);
     // },
@@ -68,7 +72,7 @@ var MarkerDrag = {
         if (this._marker._map._rotate) {
             this._marker.update();
         }
-        markerDragProto._onDragEnd.call(this, e);
+        markerDragProto._onDragEnd.apply(this, arguments);
     },
 
 };
@@ -76,16 +80,16 @@ var MarkerDrag = {
 L.Marker.include({
 
     getEvents: function() {
-        return L.extend(markerProto.getEvents.call(this), { rotate: this.update });
+        return L.extend(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
     },
 
     onAdd: function(map) {
-        markerProto.onAdd.call(this, map);
+        markerProto.onAdd.apply(this, arguments);
         map.on('rotate', this.update, this);
     },
 
     _initInteraction: function() {
-        var ret = markerProto._initInteraction.call(this);
+        var ret = markerProto._initInteraction.apply(this, arguments);
         if (this.dragging && this.dragging.enabled() && this._map && this._map._rotate) {
             // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
             markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
@@ -115,12 +119,12 @@ L.Marker.include({
 
         /** @TODO use markerProto._setPos */
         if (this._icon) {
-            L.DomUtil.setPosition(this._icon, pos, bearing, pos);
+            L.DomUtil.setPosition(this._icon, pos, bearing, pos, this.options.scale);
         }
 
         /** @TODO use markerProto._setPos */
         if (this._shadow) {
-            L.DomUtil.setPosition(this._shadow, pos, bearing, pos);
+            L.DomUtil.setPosition(this._shadow, pos, bearing, pos, this.options.scale);
         }
 
         this._zIndex = pos.y + this.options.zIndexOffset;
@@ -130,7 +134,7 @@ L.Marker.include({
 
     _updateZIndex: function(offset) {
         if (!this._map._rotate) {
-            return markerProto._updateZIndex.call(this, offset)
+            return markerProto._updateZIndex.apply(this, arguments);
         }
         this._icon.style.zIndex = Math.round(this._zIndex + offset);
     },

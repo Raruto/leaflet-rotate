@@ -13,7 +13,7 @@ L.extend(L.DomUtil, {
 
         if (!bearing) {
             offset = pos._round();
-            return domUtilProto.setTransform.call(this, el, offset, scale);
+            return domUtilProto.setTransform.apply(this, arguments);
         }
 
         pos = pos.rotateFrom(bearing, pivot);
@@ -24,9 +24,9 @@ L.extend(L.DomUtil, {
             ' rotate(' + bearing + 'rad)';
     },
 
-    setPosition: function(el, point, bearing, pivot) { // (HTMLElement, Point[, Boolean])
+    setPosition: function(el, point, bearing, pivot, scale) { // (HTMLElement, Point[, Boolean])
         if (!bearing) {
-            return domUtilProto.setPosition.call(this, el, point);
+            return domUtilProto.setPosition.apply(this, arguments);
         }
 
         /*eslint-disable */
@@ -34,7 +34,7 @@ L.extend(L.DomUtil, {
         /*eslint-enable */
 
         if (L.Browser.any3d) {
-            L.DomUtil.setTransform(el, point, undefined, bearing, pivot);
+            L.DomUtil.setTransform(el, point, scale, bearing, pivot);
         } else {
             el.style.left = point.x + 'px';
             el.style.top = point.y + 'px';

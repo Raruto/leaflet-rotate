@@ -10,7 +10,7 @@ L.Tooltip.include({
 
     _animateZoom: function(e) {
         if (!this._map._rotate) {
-            return tooltipProto._animateZoom.call(this, e);
+            return tooltipProto._animateZoom.apply(this, arguments);
         }
         var pos = this._map._latLngToNewLayerPoint(this._latlng, e.zoom, e.center);
 
@@ -20,7 +20,7 @@ L.Tooltip.include({
 
     _updatePosition: function() {
         if (!this._map._rotate) {
-            return tooltipProto._updatePosition.call(this);
+            return tooltipProto._updatePosition.apply(this, arguments);
         }
         var pos = this._map.latLngToLayerPoint(this._latlng);
 

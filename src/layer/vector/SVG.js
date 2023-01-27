@@ -9,7 +9,7 @@ const svgProto = L.extend({}, L.SVG.prototype);
 L.SVG.include({
 
     // _update: function() {
-    //     svgProto._update.call(this);
+    //     svgProto._update.apply(this, arguments);
     //     if (this._map._rotate) {
     //         this.fire('update');
     //     }

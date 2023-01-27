@@ -9,12 +9,12 @@ const rendererProto = L.extend({}, L.Renderer.prototype);
 L.Renderer.include({
 
     // onAdd: function() {
-    //     rendererProto.onAdd.call(this);
+    //     rendererProto.onAdd.apply(this, arguments);
     //     // this._map.on('rotate', this._update, this);
     // },
 
     // onRemove: function() {
-    //     rendererProto.onRemove.call(this);
+    //     rendererProto.onRemove.apply(this, arguments);
     //     // this._map.off('rotate', this._update, this);
     // },
 
@@ -25,7 +25,7 @@ L.Renderer.include({
      */
     _updateTransform: function(center, zoom) {
         if (!this._map._rotate) {
-            return rendererProto._updateTransform.call(this, center, zoom);
+            return rendererProto._updateTransform.apply(this, arguments);
         }
         var scale = this._map.getZoomScale(zoom, this._zoom),
             offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
@@ -38,7 +38,7 @@ L.Renderer.include({
 
     _update: function() {
         if (!this._map._rotate) {
-            return rendererProto._update.call(this);
+            return rendererProto._update.apply(this, arguments);
         }
         // Update pixel bounds of renderer container (for positioning/sizing/clipping later)
         // Subclasses are responsible of firing the 'update' event.

@@ -9,7 +9,7 @@ const gridLayerProto = L.extend({}, L.GridLayer.prototype);
 L.GridLayer.include({
 
     getEvents: function() {
-        var events = gridLayerProto.getEvents.call(this);
+        var events = gridLayerProto.getEvents.apply(this, arguments);
         if (this._map._rotate && !this.options.updateWhenIdle) {
             if (!this._onRotate) {
                 this._onRotate = L.Util.throttle(this._onMoveEnd, this.options.updateInterval, this);
@@ -21,7 +21,7 @@ L.GridLayer.include({
 
     _getTiledPixelBounds: function(center) {
         if (!this._map._rotate) {
-            return gridLayerProto._getTiledPixelBounds.call(this, center);
+            return gridLayerProto._getTiledPixelBounds.apply(this, arguments);
         }
 
         return this._map._getNewPixelBounds(center, this._tileZoom);

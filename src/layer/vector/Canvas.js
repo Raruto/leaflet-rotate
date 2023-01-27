@@ -9,18 +9,18 @@ const canvasProto = L.extend({}, L.Canvas.prototype);
 L.Canvas.include({
 
     // onAdd: function() {
-    //     canvasProto.onAdd.call(this);
+    //     canvasProto.onAdd.apply(this, arguments);
     //     // When rotating the canvas itself, it is cleared by some weird reason, so redraw.
     //     this._map.on('rotate', this._redraw, this);
     // },
 
     // onRemove: function() {
-    //     canvasProto.onRemove.call(this);
+    //     canvasProto.onRemove.apply(this, arguments);
     //     this._map.off('rotate', this._redraw, this);
     // },
 
     // _update: function() {
-    //     canvasProto._update.call(this);
+    //     canvasProto._update.apply(this, arguments);
     //     // Tell paths to redraw themselves
     //     this.fire('update')
     // },
