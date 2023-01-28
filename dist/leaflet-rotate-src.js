@@ -1589,10 +1589,6 @@
         touchZoom: L.Browser.touch,
 
         /**
-         * 
-         */
-
-        /**
          * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`
          * 
          * Set it to false if you don't want the map to
