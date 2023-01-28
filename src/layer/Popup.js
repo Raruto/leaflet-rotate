@@ -8,12 +8,12 @@ const popupProto = L.extend({}, L.Popup.prototype);
 
 L.Popup.include({
 
+    /**
+     * 0. update element anchor point (popupProto v1.9.3)
+     * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
+     */
     _animateZoom: function(e) {
-        // 0. update anchor (leaflet v1.9.3)
         popupProto._animateZoom.apply(this, arguments);
-        // 1. subtract anchor
-        // 2. rotate element
-        // 3. restore anchor
         if (this._map && this._map._rotate) {
             var anchor = this._getAnchor();
             var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
@@ -22,7 +22,7 @@ L.Popup.include({
     },
 
     /**
-     * Hot fix for L.Popup.mergeOptions({ keepInView: true, });
+     * Fix for L.popup({ keepInView = true })
      * 
      * @see https://github.com/fnicollet/Leaflet/pull/21
      */
@@ -44,8 +44,8 @@ L.Popup.include({
 
         layerPos._add(L.DomUtil.getPosition(this._container));
 
-        // var containerPos = map.layerPointToContainerPoint(layerPos);
         /** @TODO use popupProto._adjustPan */
+        // var containerPos = map.layerPointToContainerPoint(layerPos);
         var containerPos = layerPos._add(this._map._getMapPanePos()),
             padding = L.point(this.options.autoPanPadding),
             paddingTL = L.point(this.options.autoPanPaddingTopLeft || padding),

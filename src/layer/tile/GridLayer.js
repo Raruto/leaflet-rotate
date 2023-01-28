@@ -8,6 +8,12 @@ const gridLayerProto = L.extend({}, L.GridLayer.prototype);
 
 L.GridLayer.include({
 
+    /**
+     * Redraw L.TileLayer bounds after the map is
+     * moved by just calling `map.setBearing(theta)`
+     * 
+     * @listens L.Map~rotate
+     */
     getEvents: function() {
         var events = gridLayerProto.getEvents.apply(this, arguments);
         if (this._map._rotate && !this.options.updateWhenIdle) {

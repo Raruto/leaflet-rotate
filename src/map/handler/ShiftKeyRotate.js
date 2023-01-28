@@ -1,17 +1,16 @@
 
 /**
- * Rotates the map on shift key + mouseheel scrolling (desktop).
+ * Rotates the map on shift key + mousewheel scrolling (desktop).
  * 
  * @typedef L.Map.ShiftKeyRotate
  */
 
-// @namespace Map
-// @section Interaction Options
 L.Map.mergeOptions({
 
-    // @section ShiftKey interaction options
-    // @option shiftKeyRotate: Boolean|String = *
-    // Whether the map can be rotated with a shit-wheel rotation
+    /**
+     * Whether the map can be rotated with shift + wheel scroll
+     * @type {Boolean}
+     */
     shiftKeyRotate: true,
 
 });
@@ -41,12 +40,14 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
 });
 
-// @section Handlers
-// @property touchZoom: Handler
-// Touch rotate handler.
+/**
+ * Add ShiftKey handler to L.Map (enabled unless `shiftKeyRotate` is unset).
+ * 
+ * @property {L.Map.ShiftKeyRotate} shiftKeyRotate
+ */
 L.Map.addInitHook('addHandler', 'shiftKeyRotate', L.Map.ShiftKeyRotate);
 
-// decrease "scrollWheelZoom" handler priority over "shiftKeyRotate" handler
+// decrease `scrollWheelZoom` handler priority over `shiftKeyRotate` handler
 L.Map.addInitHook(function() {
     if (this.scrollWheelZoom.enabled() && this.shiftKeyRotate.enabled()) {
         this.scrollWheelZoom.disable();

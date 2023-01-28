@@ -3,22 +3,33 @@
  * @external L.Handler.MarkerDrag
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.js
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.Drag.js
+ * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
  */
 
 const markerProto = L.extend({}, L.Marker.prototype);
 
 L.Marker.mergeOptions({
 
-    // @option rotation: Number = 0
-    // Rotation of this marker in rad
+    /**
+     * Rotation of this marker in rad
+     * 
+     * @type {Number}
+     */
     rotation: 0,
 
-    // @option rotateWithView: Boolean = false
-    // Rotate this marker when map rotates
+    /**
+     * Rotate this marker when map rotates
+     * 
+     * @type {Boolean}
+     */
     rotateWithView: false,
 
-    // @option scale: Number = undefined
-    // Scale of the marker icon
+    /**
+     * Scale of the marker icon
+     * 
+     * @type {Number}
+     */
     scale: undefined,
 
 });
@@ -79,13 +90,14 @@ var MarkerDrag = {
 
 L.Marker.include({
 
+    /**
+     * Update L.Marker anchor position after the map
+     * is moved by calling `map.setBearing(theta)`
+     * 
+     * @listens L.Map~rotate
+     */
     getEvents: function() {
         return L.extend(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
-    },
-
-    onAdd: function(map) {
-        markerProto.onAdd.apply(this, arguments);
-        map.on('rotate', this.update, this);
     },
 
     _initInteraction: function() {
@@ -132,12 +144,12 @@ L.Marker.include({
         this._resetZIndex();
     },
 
-    _updateZIndex: function(offset) {
-        if (!this._map._rotate) {
-            return markerProto._updateZIndex.apply(this, arguments);
-        }
-        this._icon.style.zIndex = Math.round(this._zIndex + offset);
-    },
+    // _updateZIndex: function(offset) {
+    //     if (!this._map._rotate) {
+    //         return markerProto._updateZIndex.apply(this, arguments);
+    //     }
+    //     this._icon.style.zIndex = Math.round(this._zIndex + offset);
+    // },
 
     setRotation: function(rotation) {
         this.options.rotation = rotation;

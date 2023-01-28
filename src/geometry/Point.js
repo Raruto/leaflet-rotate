@@ -26,6 +26,11 @@ L.extend(L.Point.prototype, {
      * 3. add (pivot.x, pivot.y) back
      * 
      * same as `this.subtract(pivot).rotate(theta).add(pivot)`
+     * 
+     * @param {Number} theta 
+     * @param {L.Point} pivot 
+     * 
+     * @returns {L.Point}
      */
     rotateFrom: function(theta, pivot) {
         if (!theta) { return this; }

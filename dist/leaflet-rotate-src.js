@@ -13,6 +13,18 @@
 
     L.extend(L.DomUtil, {
 
+        /**
+         * Resets the 3D CSS transform of `el` so it is
+         * translated by `offset` pixels and optionally
+         * scaled by `scale`. Does not have an effect if
+         * the browser doesn't support 3D CSS transforms.
+         * 
+         * @param {HTMLElement} el 
+         * @param {L.Point} offset 
+         * @param {Number} scale
+         * @param {Number} bearing 
+         * @param {L.Point} pivot 
+         */
         setTransform: function(el, offset, scale, bearing, pivot) {
             var pos = offset || new L.Point(0, 0);
 
@@ -29,7 +41,19 @@
                 ' rotate(' + bearing + 'rad)';
         },
 
-        setPosition: function(el, point, bearing, pivot, scale) { // (HTMLElement, Point[, Boolean])
+        /**
+         * Sets the position of `el` to coordinates specified by
+         * `position`, using CSS translate or top/left positioning
+         * depending on the browser (used by Leaflet internally
+         * to position its layers).
+         * 
+         * @param {HTMLElement} el 
+         * @param {L.Point} point 
+         * @param {Number} bearing
+         * @param {L.Point} pivot 
+         * @param {Number} scale 
+         */
+        setPosition: function(el, point, bearing, pivot, scale) {
             if (!bearing) {
                 return domUtilProto.setPosition.apply(this, arguments);
             }
@@ -46,8 +70,14 @@
             }
         },
 
-        // Constants for rotation
+        /**
+         * @constant radians = degrees × π/180°
+         */
         DEG_TO_RAD: Math.PI / 180,
+
+        /**
+         * @constant degrees = radians × 180°/π
+         */
         RAD_TO_DEG: 180 / Math.PI,
 
     });
@@ -58,8 +88,15 @@
      * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
      */
 
+    /**
+     * A class for making DOM elements draggable (including touch support).
+     * Used internally for map and marker dragging. Only works for elements
+     * that were positioned with [`L.DomUtil.setPosition`](#domutil-setposition).
+     */
+
     L.Draggable.include({
 
+        /** @TODO */
         // updateMapBearing: function(mapBearing) {
         //     this._mapBearing = mapBearing;
         // },
@@ -94,6 +131,11 @@
          * 3. add (pivot.x, pivot.y) back
          * 
          * same as `this.subtract(pivot).rotate(theta).add(pivot)`
+         * 
+         * @param {Number} theta 
+         * @param {L.Point} pivot 
+         * 
+         * @returns {L.Point}
          */
         rotateFrom: function(theta, pivot) {
             if (!theta) { return this; }
@@ -122,16 +164,23 @@
 
     L.DivOverlay.include({
 
+        /**
+         * Update L.Popup and L.Tooltip anchor positions after
+         * the map is moved by calling `map.setBearing(theta)`
+         * 
+         * @listens L.Map~rotate
+         */
         getEvents: function() {
             return L.extend(divOverlayProto.getEvents.apply(this, arguments), { rotate: this._updatePosition });
         },
 
+        /**
+         * 0. update element anchor point (divOverlayProto v1.9.3)
+         * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
+         */
         _updatePosition: function() {
-            // 0. update anchor (leaflet v1.9.3)
+            if (!this._map) { return; }
             divOverlayProto._updatePosition.apply(this, arguments);
-            // 1. subtract anchor
-            // 2. rotate element
-            // 3. restore anchor
             if (this._map && this._map._rotate && this._zoomAnimated) {
                 var anchor = this._getAnchor();
                 var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
@@ -152,12 +201,12 @@
 
     L.Popup.include({
 
+        /**
+         * 0. update element anchor point (popupProto v1.9.3)
+         * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
+         */
         _animateZoom: function(e) {
-            // 0. update anchor (leaflet v1.9.3)
             popupProto._animateZoom.apply(this, arguments);
-            // 1. subtract anchor
-            // 2. rotate element
-            // 3. restore anchor
             if (this._map && this._map._rotate) {
                 var anchor = this._getAnchor();
                 var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
@@ -166,7 +215,7 @@
         },
 
         /**
-         * Hot fix for L.Popup.mergeOptions({ keepInView: true, });
+         * Fix for L.popup({ keepInView = true })
          * 
          * @see https://github.com/fnicollet/Leaflet/pull/21
          */
@@ -188,8 +237,8 @@
 
             layerPos._add(L.DomUtil.getPosition(this._container));
 
-            // var containerPos = map.layerPointToContainerPoint(layerPos);
             /** @TODO use popupProto._adjustPan */
+            // var containerPos = map.layerPointToContainerPoint(layerPos);
             var containerPos = layerPos._add(this._map._getMapPanePos()),
                 padding = L.point(this.options.autoPanPadding),
                 paddingTL = L.point(this.options.autoPanPaddingTopLeft || padding),
@@ -304,22 +353,33 @@
      * @external L.Handler.MarkerDrag
      * 
      * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.js
+     * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.Drag.js
+     * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
      */
 
     const markerProto = L.extend({}, L.Marker.prototype);
 
     L.Marker.mergeOptions({
 
-        // @option rotation: Number = 0
-        // Rotation of this marker in rad
+        /**
+         * Rotation of this marker in rad
+         * 
+         * @type {Number}
+         */
         rotation: 0,
 
-        // @option rotateWithView: Boolean = false
-        // Rotate this marker when map rotates
+        /**
+         * Rotate this marker when map rotates
+         * 
+         * @type {Boolean}
+         */
         rotateWithView: false,
 
-        // @option scale: Number = undefined
-        // Scale of the marker icon
+        /**
+         * Scale of the marker icon
+         * 
+         * @type {Number}
+         */
         scale: undefined,
 
     });
@@ -380,13 +440,14 @@
 
     L.Marker.include({
 
+        /**
+         * Update L.Marker anchor position after the map
+         * is moved by calling `map.setBearing(theta)`
+         * 
+         * @listens L.Map~rotate
+         */
         getEvents: function() {
             return L.extend(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
-        },
-
-        onAdd: function(map) {
-            markerProto.onAdd.apply(this, arguments);
-            map.on('rotate', this.update, this);
         },
 
         _initInteraction: function() {
@@ -433,12 +494,12 @@
             this._resetZIndex();
         },
 
-        _updateZIndex: function(offset) {
-            if (!this._map._rotate) {
-                return markerProto._updateZIndex.apply(this, arguments);
-            }
-            this._icon.style.zIndex = Math.round(this._zIndex + offset);
-        },
+        // _updateZIndex: function(offset) {
+        //     if (!this._map._rotate) {
+        //         return markerProto._updateZIndex.apply(this, arguments);
+        //     }
+        //     this._icon.style.zIndex = Math.round(this._zIndex + offset);
+        // },
 
         setRotation: function(rotation) {
             this.options.rotation = rotation;
@@ -457,6 +518,12 @@
 
     L.GridLayer.include({
 
+        /**
+         * Redraw L.TileLayer bounds after the map is
+         * moved by just calling `map.setBearing(theta)`
+         * 
+         * @listens L.Map~rotate
+         */
         getEvents: function() {
             var events = gridLayerProto.getEvents.apply(this, arguments);
             if (this._map._rotate && !this.options.updateWhenIdle) {
@@ -479,35 +546,6 @@
     });
 
     /**
-     * @external L.Canvas
-     * 
-     * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Canvas.js
-     */
-
-    L.extend({}, L.Canvas.prototype);
-
-    L.Canvas.include({
-
-        // onAdd: function() {
-        //     canvasProto.onAdd.apply(this, arguments);
-        //     // When rotating the canvas itself, it is cleared by some weird reason, so redraw.
-        //     this._map.on('rotate', this._redraw, this);
-        // },
-
-        // onRemove: function() {
-        //     canvasProto.onRemove.apply(this, arguments);
-        //     this._map.off('rotate', this._redraw, this);
-        // },
-
-        // _update: function() {
-        //     canvasProto._update.apply(this, arguments);
-        //     // Tell paths to redraw themselves
-        //     this.fire('update')
-        // },
-
-    });
-
-    /**
      * @external L.Renderer
      * 
      * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Renderer.js
@@ -517,15 +555,15 @@
 
     L.Renderer.include({
 
-        // onAdd: function() {
-        //     rendererProto.onAdd.apply(this, arguments);
-        //     // this._map.on('rotate', this._update, this);
-        // },
-
-        // onRemove: function() {
-        //     rendererProto.onRemove.apply(this, arguments);
-        //     // this._map.off('rotate', this._update, this);
-        // },
+        /**
+         * Redraw L.Canvas and L.SVG renderer bounds after the
+         * map is moved by just calling `map.setBearing(theta)`
+         * 
+         * @listens L.Map~rotate
+         */
+        getEvents: function() {
+            return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update });
+        },
 
         /**
          * @TODO rechek this changes from leaflet@v1.9.3
@@ -556,25 +594,6 @@
             this._center = this._map.getCenter();
             this._zoom = this._map.getZoom();
         },
-
-    });
-
-    /**
-     * @external L.SVG
-     * 
-     * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/SVG.js
-     */
-
-    L.extend({}, L.SVG.prototype);
-
-    L.SVG.include({
-
-        // _update: function() {
-        //     svgProto._update.apply(this, arguments);
-        //     if (this._map._rotate) {
-        //         this.fire('update');
-        //     }
-        // },
 
     });
 
@@ -1213,9 +1232,11 @@
 
     });
 
-    // @section Handlers
-    // @property compassBearing: Handler
-    // Compass bearing handler.
+    /**
+     * Add Compass bearing handler to L.Map (disabled unless `window.DeviceOrientationEvent` is set).
+     * 
+     * @property {L.Map.CompassBearing} compassBearing
+     */
     L.Map.addInitHook('addHandler', 'compassBearing', L.Map.CompassBearing);
 
     /**
@@ -1224,14 +1245,23 @@
      * @typedef L.Map.ContainerMutation
      */
 
-    // @namespace Map
-    // @section Interaction Options
+    /**
+     * @TODO check again this file after leaflet v1.9.3 (eg. L.Browser.mutation).
+     * Mutation Observer support will likely be added by default in next releases.
+     */
+
     L.Map.mergeOptions({
 
-        // @option trackContainerMutation: Boolean = false
-        // Whether the map uses [mutation observers](https://developer.mozilla.org/docs/Web/API/MutationObserver)
-        // to detect changes in its container and trigger `invalidateSize`. Disabled
-        // by default due to support not being available in all web browsers.
+        /**
+         * Whether the map uses mutation observers to
+         * detect changes in its container and trigger
+         * `invalidateSize`. Disabled by default due to
+         * support not being available in all web browsers.
+         *
+         * @type {Boolean}
+         * 
+         * @see https://developer.mozilla.org/docs/Web/API/MutationObserver
+         */
         trackContainerMutation: false
 
     });
@@ -1239,15 +1269,10 @@
     L.Map.ContainerMutation = L.Handler.extend({
 
         addHooks: function() {
-            /** @TODO check again this property. Will likely be added in future releases (leaflet > v1.9.3) */
-            // if (!L.Browser.mutation) {
-            //     return;
-            // }
-
+            // if (!L.Browser.mutation) { return; }
             if (!this._observer) {
-                this._observer = new MutationObserver(L.Util.bind(this._onMutation, this));
+                this._observer = new MutationObserver(L.Util.bind(this._map.invalidateSize, this._map));
             }
-
             this._observer.observe(this._map.getContainer(), {
                 childList: false,
                 attributes: true,
@@ -1258,22 +1283,17 @@
         },
 
         removeHooks: function() {
-            /** @TODO check again this property. Will likely be added in future releases (leaflet > v1.9.3) */
-            // if (!L.Browser.mutation) {
-            //     return;
-            // }
+            // if (!L.Browser.mutation) { return; }
             this._observer.disconnect();
-        },
-
-        _onMutation: function() {
-            this._map.invalidateSize();
         },
 
     });
 
-    // @section Handlers
-    // @property containerMutation: Handler
-    // Container mutation handler (disabled unless [`trackContainerMutation`](#map-trackcontainermutation) is set).
+    /**
+     * Add Container mutation handler to L.Map (disabled unless `trackContainerMutation` is set).
+     * 
+     * @property {L.Map.ContainerMutation} trackContainerMutation
+     */
     L.Map.addInitHook('addHandler', 'trackContainerMutation', L.Map.ContainerMutation);
 
     /**
@@ -1285,13 +1305,15 @@
      * @typedef L.Map.TouchGestures
      */
 
-    // @namespace Map
-    // @section Interaction Options
     L.Map.mergeOptions({
 
-        // @option bounceAtZoomLimits: Boolean = true
-        // Set it to false if you don't want the map to zoom beyond min/max zoom
-        // and then bounce back when pinch-zooming.
+        /**
+         * Set it to false if you don't want the map to
+         * zoom beyond min/max zoom and then bounce back
+         * when pinch-zooming.
+         * 
+         * @type {Boolean}
+         */
         bounceAtZoomLimits: true,
 
     });
@@ -1370,8 +1392,14 @@
                 var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
                 if (vector.y < 0) { bearingDelta += 180; }
                 if (bearingDelta) {
-                    /// TODO: The pivot should be the last touch point, but zoomAnimation manages to
-                    ///   overwrite the rotate pane position. Maybe related to #3529.
+                    /**
+                     * @TODO the pivot should be the last touch point,
+                     * but zoomAnimation manages to overwrite the rotate
+                     * pane position. Maybe related to #3529.
+                     * 
+                     * @see https://github.com/Leaflet/Leaflet/pull/3529
+                     * @see https://github.com/fnicollet/Leaflet/commit/a77af51a6b10f308d1b9a16552091d1d0aee8834
+                     */
                     map.setBearing(this._startBearing - bearingDelta);
                 }
             }
@@ -1439,9 +1467,11 @@
 
     });
 
-    // @section Handlers
-    // @property touchGestures: Handler
-    // Touch gestures handler.
+    /**
+     * Add Touch Gestures handler (enabled unless `touchGestures` is unset).
+     * 
+     * @property {L.Map.TouchGestures} touchGestures
+     */
     L.Map.addInitHook('addHandler', 'touchGestures', L.Map.TouchGestures);
 
     /**
@@ -1450,13 +1480,13 @@
      * @typedef L.Map.TouchRotate
      */
 
-    // @namespace Map
-    // @section Interaction Options
     L.Map.mergeOptions({
 
-        // @section Touch interaction options
-        // @option touchRotate: Boolean|String = *
-        // Whether the map can be rotated with a two-finger rotation gesture
+        /**
+         * Whether the map can be rotated with a two-finger rotation gesture
+         * 
+         * @type {Boolean}
+         */
         touchRotate: false,
 
     });
@@ -1474,24 +1504,25 @@
 
     });
 
-    // @section Handlers
-    // @property touchZoom: Handler
-    // Touch rotate handler.
+    /**
+     * Add Touch Rotate handler (disabled unless `touchGestures` is set).
+     * 
+     * @property {L.Map.TouchGestures} touchGestures
+     */
     L.Map.addInitHook('addHandler', 'touchRotate', L.Map.TouchRotate);
 
     /**
-     * Rotates the map on shift key + mouseheel scrolling (desktop).
+     * Rotates the map on shift key + mousewheel scrolling (desktop).
      * 
      * @typedef L.Map.ShiftKeyRotate
      */
 
-    // @namespace Map
-    // @section Interaction Options
     L.Map.mergeOptions({
 
-        // @section ShiftKey interaction options
-        // @option shiftKeyRotate: Boolean|String = *
-        // Whether the map can be rotated with a shit-wheel rotation
+        /**
+         * Whether the map can be rotated with shift + wheel scroll
+         * @type {Boolean}
+         */
         shiftKeyRotate: true,
 
     });
@@ -1521,12 +1552,14 @@
 
     });
 
-    // @section Handlers
-    // @property touchZoom: Handler
-    // Touch rotate handler.
+    /**
+     * Add ShiftKey handler to L.Map (enabled unless `shiftKeyRotate` is unset).
+     * 
+     * @property {L.Map.ShiftKeyRotate} shiftKeyRotate
+     */
     L.Map.addInitHook('addHandler', 'shiftKeyRotate', L.Map.ShiftKeyRotate);
 
-    // decrease "scrollWheelZoom" handler priority over "shiftKeyRotate" handler
+    // decrease `scrollWheelZoom` handler priority over `shiftKeyRotate` handler
     L.Map.addInitHook(function() {
         if (this.scrollWheelZoom.enabled() && this.shiftKeyRotate.enabled()) {
             this.scrollWheelZoom.disable();
@@ -1542,25 +1575,32 @@
      * @external L.Map.TouchZoom
      */
 
-    // @namespace Map
-    // @section Interaction Options
     L.Map.mergeOptions({
 
-        // @section Touch interaction options
-        // @option touchZoom: Boolean|String = *
-        // Whether the map can be zoomed by touch-dragging with two fingers. If
-        // passed `'center'`, it will zoom to the center of the view regardless of
-        // where the touch events (fingers) were. Enabled for touch-capable web
-        // browsers.
+        /**
+         * Whether the map can be zoomed by touch-dragging
+         * with two fingers. If passed `'center'`, it will
+         * zoom to the center of the view regardless of
+         * where the touch events (fingers) were. Enabled
+         * for touch-capable web browsers.
+         * 
+         * @type {(Boolean|String)}
+         */
         touchZoom: L.Browser.touch,
 
         /**
-         * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`
+         * 
          */
 
-        // @option bounceAtZoomLimits: Boolean = true
-        // Set it to false if you don't want the map to zoom beyond min/max zoom
-        // and then bounce back when pinch-zooming.
+        /**
+         * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`
+         * 
+         * Set it to false if you don't want the map to
+         * zoom beyond min/max zoom and then bounce back
+         * when pinch-zooming.
+         * 
+         * @type {Boolean}
+         */
         bounceAtZoomLimits: false,
 
     });
@@ -1580,9 +1620,11 @@
 
     });
 
-    // @section Handlers
-    // @property touchZoom: Handler
-    // Touch zoom handler.
+    /**
+     * Add Touch Zoom handler (disabled unless `L.Browser.touch` is set).
+     * 
+     * @property {L.Map.TouchGestures} touchGestures
+     */
     L.Map.addInitHook('addHandler', 'touchZoom', L.Map.TouchZoom);
 
     /**

@@ -7,13 +7,15 @@
  * @typedef L.Map.TouchGestures
  */
 
-// @namespace Map
-// @section Interaction Options
 L.Map.mergeOptions({
 
-    // @option bounceAtZoomLimits: Boolean = true
-    // Set it to false if you don't want the map to zoom beyond min/max zoom
-    // and then bounce back when pinch-zooming.
+    /**
+     * Set it to false if you don't want the map to
+     * zoom beyond min/max zoom and then bounce back
+     * when pinch-zooming.
+     * 
+     * @type {Boolean}
+     */
     bounceAtZoomLimits: true,
 
 });
@@ -92,8 +94,14 @@ L.Map.TouchGestures = L.Handler.extend({
             var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
             if (vector.y < 0) { bearingDelta += 180; }
             if (bearingDelta) {
-                /// TODO: The pivot should be the last touch point, but zoomAnimation manages to
-                ///   overwrite the rotate pane position. Maybe related to #3529.
+                /**
+                 * @TODO the pivot should be the last touch point,
+                 * but zoomAnimation manages to overwrite the rotate
+                 * pane position. Maybe related to #3529.
+                 * 
+                 * @see https://github.com/Leaflet/Leaflet/pull/3529
+                 * @see https://github.com/fnicollet/Leaflet/commit/a77af51a6b10f308d1b9a16552091d1d0aee8834
+                 */
                 map.setBearing(this._startBearing - bearingDelta);
             }
         }
@@ -161,7 +169,9 @@ L.Map.TouchGestures = L.Handler.extend({
 
 });
 
-// @section Handlers
-// @property touchGestures: Handler
-// Touch gestures handler.
+/**
+ * Add Touch Gestures handler (enabled unless `touchGestures` is unset).
+ * 
+ * @property {L.Map.TouchGestures} touchGestures
+ */
 L.Map.addInitHook('addHandler', 'touchGestures', L.Map.TouchGestures);

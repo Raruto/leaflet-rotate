@@ -4,13 +4,13 @@
  * @typedef L.Map.TouchRotate
  */
 
-// @namespace Map
-// @section Interaction Options
 L.Map.mergeOptions({
 
-    // @section Touch interaction options
-    // @option touchRotate: Boolean|String = *
-    // Whether the map can be rotated with a two-finger rotation gesture
+    /**
+     * Whether the map can be rotated with a two-finger rotation gesture
+     * 
+     * @type {Boolean}
+     */
     touchRotate: false,
 
 });
@@ -28,7 +28,9 @@ L.Map.TouchRotate = L.Handler.extend({
 
 });
 
-// @section Handlers
-// @property touchZoom: Handler
-// Touch rotate handler.
+/**
+ * Add Touch Rotate handler (disabled unless `touchGestures` is set).
+ * 
+ * @property {L.Map.TouchGestures} touchGestures
+ */
 L.Map.addInitHook('addHandler', 'touchRotate', L.Map.TouchRotate);

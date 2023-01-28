@@ -8,15 +8,15 @@ const rendererProto = L.extend({}, L.Renderer.prototype);
 
 L.Renderer.include({
 
-    // onAdd: function() {
-    //     rendererProto.onAdd.apply(this, arguments);
-    //     // this._map.on('rotate', this._update, this);
-    // },
-
-    // onRemove: function() {
-    //     rendererProto.onRemove.apply(this, arguments);
-    //     // this._map.off('rotate', this._update, this);
-    // },
+    /**
+     * Redraw L.Canvas and L.SVG renderer bounds after the
+     * map is moved by just calling `map.setBearing(theta)`
+     * 
+     * @listens L.Map~rotate
+     */
+    getEvents: function() {
+        return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update });
+    },
 
     /**
      * @TODO rechek this changes from leaflet@v1.9.3

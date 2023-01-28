@@ -31,7 +31,9 @@ L.Map.CompassBearing = L.Handler.extend({
 
 });
 
-// @section Handlers
-// @property compassBearing: Handler
-// Compass bearing handler.
+/**
+ * Add Compass bearing handler to L.Map (disabled unless `window.DeviceOrientationEvent` is set).
+ * 
+ * @property {L.Map.CompassBearing} compassBearing
+ */
 L.Map.addInitHook('addHandler', 'compassBearing', L.Map.CompassBearing);
