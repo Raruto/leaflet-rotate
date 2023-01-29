@@ -473,11 +473,16 @@ L.Map.include({
         // return L.DomUtil.getPosition(this._rotatePane) || new L.Point(0, 0);
     },
 
+    // _latLngToNewLayerPoint(latlng, zoom, center) {
+    //    const topLeft = this._getNewPixelOrigin(center, zoom);
+    //    return this.project(latlng, zoom)._subtract(topLeft);
+    //},
+
     _getNewPixelOrigin: function(center, zoom) {
-        var viewHalf = this.getSize()._divideBy(2);
         if (!this._rotate) {
             return mapProto._getNewPixelOrigin.apply(this, arguments);
         }
+        var viewHalf = this.getSize()._divideBy(2);
         return this.project(center, zoom)
             .rotate(this._bearing)
             ._subtract(viewHalf)
