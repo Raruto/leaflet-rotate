@@ -8,7 +8,7 @@ L.Map.CompassBearing = L.Handler.extend({
 
     initialize: function(map) {
         this._map = map;
-        this._throttled = L.Util.throttle(this._onDeviceOrientation, 1000, this);
+        this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
     },
 
     addHooks: function() {
@@ -24,8 +24,17 @@ L.Map.CompassBearing = L.Handler.extend({
     },
 
     _onDeviceOrientation: function(event) {
-        if (event.alpha !== null && window.orientation !== undefined) {
-            this._map.setBearing(event.alpha - window.orientation);
+        if ((event.alpha !== null || event.webkitCompassHeading !== null) && window.orientation !== undefined) {
+            var angle = 0;
+            // iOS
+            if(event.webkitCompassHeading) {
+                angle = 360 - e.webkitCompassHeading;
+            }
+            // Android
+            else if(event.alpha)  {
+                angle = event.alpha;
+            }
+            this._map.setBearing(Math.round(angle - window.orientation));
         }
     },
 

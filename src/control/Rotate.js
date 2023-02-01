@@ -16,8 +16,6 @@ L.Control.Rotate = L.Control.extend({
     },
 
     onAdd: function(map) {
-        this._onDeviceOrientation = L.Util.throttle(this._unthrottledOnDeviceOrientation, 100, this);
-
         var container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
 
         // this.button = L.Control.Zoom.prototype._createButton.call(this, 'R', 'leaflet-control-rotate', 'leaflet-control-rotate', container, this._toggleLock);
