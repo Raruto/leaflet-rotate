@@ -35,7 +35,6 @@ L.Control.Rotate = L.Control.extend({
         link.appendChild(arrow);
         link.href = '#';
         link.title = 'Rotate map';
-        // link.draggable = false;
 
         L.DomEvent
             .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -64,7 +63,7 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _handleMouseDown: function(e) {
-        L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e);
         this.dragging = true;
         this.dragstartX = e.pageX;
         this.dragstartY = e.pageY;
@@ -74,7 +73,7 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _handleMouseUp: function(e) {
-        L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
+        L.DomEvent.stop(e);
         this.dragging = false;
 
         L.DomEvent
@@ -89,64 +88,64 @@ L.Control.Rotate = L.Control.extend({
     },
 
     _cycleState: function(ev) {
+        if (!this._map) {
+            return;
+        }
+
         var map = this._map;
 
-        if (!map) { return; }
-
+        // Touch mode
         if (!map.touchRotate.enabled() && !map.compassBearing.enabled()) {
-            // Go from disabled to touch
             map.touchRotate.enable();
+        }
+        
+        // Compass mode
+        else if (!map.compassBearing.enabled()) {
+            map.touchRotate.disable();
+            map.compassBearing.enable();
+        }
 
-            // console.log('state is now: touch rotate');
-        } else {
-
-            if (!map.compassBearing.enabled()) {
-                // Go from touch to compass
-                map.touchRotate.disable();
-                map.compassBearing.enable();
-
-                // console.log('state is now: compass');
-
-                // It is possible that compass is not supported. If so,
-                // the hangler will automatically go from compass to disabled.
-            } else {
-                // Go from compass to disabled
-                map.compassBearing.disable();
-
-                // console.log('state is now: locked');
-
-                map.setBearing(0);
-                if (this.options.closeOnZeroBearing) {
-                    map.touchRotate.enable();
-                }
+        // Locked mode
+        else {
+            map.compassBearing.disable();
+            map.setBearing(0);
+            if (this.options.closeOnZeroBearing) {
+                map.touchRotate.enable();
             }
         }
         this._restyle();
     },
 
     _restyle: function() {
-        if (this._map.options.rotate) {
+        if (!this._map.options.rotate) {
+            L.DomUtil.addClass(this._link, 'leaflet-disabled');
+        } else {
             var map = this._map;
             var bearing = map.getBearing();
-            if (this.options.closeOnZeroBearing && bearing) {
+
+            this._arrow.style.transform = 'rotate(' + bearing + 'deg)';
+
+            if (bearing && this.options.closeOnZeroBearing) {
                 this._container.style.display = 'block';
             }
 
-            var cssTransform = 'rotate(' + bearing + 'deg)';
-            this._arrow.style.transform = cssTransform;
-
+            // Compass mode
             if (map.compassBearing.enabled()) {
                 this._link.style.backgroundColor = 'orange';
-            } else if (map.touchRotate.enabled()) {
+            }
+            
+            // Touch mode
+            else if (map.touchRotate.enabled()) {
                 this._link.style.backgroundColor = null;
-            } else {
+            }
+
+            // Locked mode
+            else {
                 this._link.style.backgroundColor = 'grey';
-                if (this.options.closeOnZeroBearing && map.getBearing() === 0) {
+                if (0 === bearing && this.options.closeOnZeroBearing) {
                     this._container.style.display = 'none';
                 }
             }
-        } else {
-            L.DomUtil.addClass(this._link, 'leaflet-disabled');
         }
     },
 

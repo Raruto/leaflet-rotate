@@ -20,6 +20,10 @@ L.Map.CompassBearing = L.Handler.extend({
     addHooks: function() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
             L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
+        } else {
+            // L.Map.CompassBearing handler will be automatically
+            // disabled if device orientation is not supported.
+            this.disable();
         }
     },
 
