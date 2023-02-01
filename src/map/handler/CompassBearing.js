@@ -8,34 +8,51 @@ L.Map.CompassBearing = L.Handler.extend({
 
     initialize: function(map) {
         this._map = map;
+        /** @see https://caniuse.com/?search=DeviceOrientation */
+        if ('ondeviceorientationabsolute' in window) {
+            this.__deviceOrientationEvent = 'deviceorientationabsolute';
+        } else if('ondeviceorientationabsolute' in window) {
+            this.__deviceOrientationEvent = 'deviceorientation';
+        }
         this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
     },
 
     addHooks: function() {
-        if (this._map._rotate && window.DeviceOrientationEvent) {
-            L.DomEvent.on(window, 'deviceorientation', this._throttled, this);
+        if (this._map._rotate && this.__deviceOrientationEvent) {
+            L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
         }
     },
 
     removeHooks: function() {
-        if (this._map._rotate && window.DeviceOrientationEvent) {
-            L.DomEvent.off(window, 'deviceorientation', this._throttled, this);
+        if (this._map._rotate && this.__deviceOrientationEvent) {
+            L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
         }
     },
 
-    _onDeviceOrientation: function(event) {
-        if ((event.alpha !== null || event.webkitCompassHeading !== null) && window.orientation !== undefined) {
-            var angle = 0;
-            // iOS
-            if(event.webkitCompassHeading) {
-                angle = 360 - e.webkitCompassHeading;
-            }
-            // Android
-            else if(event.alpha)  {
-                angle = event.alpha;
-            }
-            this._map.setBearing(Math.round(angle - window.orientation));
+    /**
+     * `DeviceOrientationEvent.absolute` - Indicates whether the device is providing absolute
+     *                                     orientation values (relatives to Magnetic North) or
+     *                                     using some arbitrary frame determined by the device.
+     * 
+     * `DeviceOrientationEvent.alpha`    - Returns the rotation of the device around the Z axis;
+     *                                     that is, the number of degrees by which the device is
+     *                                     being twisted around the center of the screen.
+     * 
+     * `window.orientation`              - Returns the screen orientation in degrees (in 90-degree increments)
+     *                                     of the viewport relative to the device's natural orientation.
+     *                                     Its only possible values are -90, 0, 90, and 180. Positive
+     *                                     values are counterclockwise; negative values are clockwise.
+     * 
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/absolute
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/alpha
+     * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
+     */
+    _onDeviceOrientation: function(e) {
+        var deviceOrientation = 0;
+        if (e.absolute && 'undefined' !== typeof window.orientation) {
+            deviceOrientation = window.orientation;
         }
+        this._map.setBearing((e.webkitCompassHeading || e.alpha) - deviceOrientation);
     },
 
 });
