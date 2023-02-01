@@ -25,7 +25,7 @@ L.Map.CompassBearing = L.Handler.extend({
 
     removeHooks: function() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
-            L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
+            L.DomEvent.off(window, this.__deviceOrientationEvent, this._throttled, this);
         }
     },
 
