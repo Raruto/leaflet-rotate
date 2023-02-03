@@ -11,7 +11,7 @@ L.Map.CompassBearing = L.Handler.extend({
         /** @see https://caniuse.com/?search=DeviceOrientation */
         if ('ondeviceorientationabsolute' in window) {
             this.__deviceOrientationEvent = 'deviceorientationabsolute';
-        } else if('ondeviceorientationabsolute' in window) {
+        } else if('ondeviceorientation' in window) {
             this.__deviceOrientationEvent = 'deviceorientation';
         }
         this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
