@@ -15,7 +15,7 @@ L.Renderer.include({
      * @listens L.Map~rotate
      */
     getEvents: function() {
-        return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update })
+        return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update });
     },
 
     /**
