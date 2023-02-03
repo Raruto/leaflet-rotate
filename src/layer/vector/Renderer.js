@@ -18,7 +18,46 @@ L.Renderer.include({
         return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update })
     },
 
-    /**
+    onAdd() {
+		if (!this._container) {
+			this._initContainer(); // defined by renderer implementations
+
+			// always keep transform-origin as 0 0
+			this._container.classList.add('leaflet-zoom-animated');
+		}
+
+		this.getPane().appendChild(this._container);
+		this._update();
+		this.on('update', this._updatePaths, this);
+	},
+
+	onRemove() {
+		this.off('update', this._updatePaths, this);
+		this._destroyContainer();
+	},
+
+    getEvents() {
+        const events = {
+            viewreset: this._reset,
+            zoom: this._onZoom,
+            moveend: this._update,
+            zoomend: this._onZoomEnd
+        };
+        if (this._zoomAnimated) {
+            events.zoomanim = this._onAnimZoom;
+        }
+        return events;
+    },
+
+    _onAnimZoom(ev) {
+        this._updateTransform(ev.center, ev.zoom);
+    },
+
+	_onZoom() {
+        this._updateTransform(this._map.getCenter(), this._map.getZoom());
+	},
+
+        /**
      * @FIXME layer drifts on `map.setZoom()` (eg. zoom during animation)
      * 
      * the main cause seems to be related to `this._updateTransform(path._center, path._zoom))`
@@ -46,49 +85,31 @@ L.Renderer.include({
          */
         var scale = this._map.getZoomScale(zoom, this._zoom),
             offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
-        console.log(center, zoom, scale, offset);
-        if (L.Browser.any3d) {
-            L.DomUtil.setTransform(this._container, offset, scale);
-        } else {
-            L.DomUtil.setPosition(this._container, offset);
+
+        L.DomUtil.setTransform(this._container, offset, scale);
+        
+    },
+
+    _reset() {
+        this._update();
+        this._updateTransform(this._center, this._zoom);
+
+        for (const id in this._layers) {
+            this._layers[id]._reset();
+        }
+    },
+    
+    _onZoomEnd() {
+        for (const id in this._layers) {
+            this._layers[id]._project();
         }
     },
 
-    // getEvents() {
-    //     const events = {
-    //         viewreset: this._reset,
-    //         zoom: this._onZoom,
-    //         moveend: this._update,
-    //         zoomend: this._onZoomEnd
-    //     };
-    //     if (this._zoomAnimated) {
-    //         events.zoomanim = this._onAnimZoom;
-    //     }
-    //     return events;
-    // },
-
-    // _onAnimZoom(ev) {
-    //     this._updateTransform(ev.center, ev.zoom);
-    // },
-
-	// _onZoom() {
-    //     this._updateTransform(this._map.getCenter(), this._map.getZoom());
-	// },
-
-    // _onZoomEnd() {
-    //     for (const id in this._layers) {
-    //         this._layers[id]._project();
-    //     }
-    // },
-
-    // _reset() {
-    //     this._update();
-    //     this._updateTransform(this._center, this._zoom);
-
-    //     for (const id in this._layers) {
-    //         this._layers[id]._reset();
-    //     }
-    // },
+    _updatePaths() {
+		for (const id in this._layers) {
+			this._layers[id]._update();
+		}
+	},
 
     _update: function() {
         if (!this._map._rotate) {
