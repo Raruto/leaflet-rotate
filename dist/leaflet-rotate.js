@@ -566,6 +566,33 @@
         },
 
         /**
+         * Fix for `map.flyTo()` when `false === map.options.zoomAnimation`
+         * 
+         * @see https://github.com/Leaflet/Leaflet/pull/8794
+         */
+        onAdd: function() {
+            rendererProto.onAdd.apply(this, arguments);
+            if (L.version <= "1.9.3") {
+                // always keep transform-origin as 0 0
+                this._container.classList.add('leaflet-zoom-animated');
+            }
+        },
+
+        /**
+         * @FIXME layer drifts on `map.setZoom()` (eg. zoom during animation)
+         * 
+         * the main cause seems to be related to `this._updateTransform(path._center, path._zoom))`
+         * and `this._topLeft = this._map.layerPointToLatLng(this._bounds.min);`
+         * 
+         * @example
+         *   map.setZoom(2);
+         *   path._renderer._update();
+         *   path._renderer._updateTransform(path._renderer._center, path._renderer._zoom);
+         * 
+         * @see https://github.com/Leaflet/Leaflet/pull/8794
+         * @see https://github.com/Leaflet/Leaflet/pull/8103
+         * @see https://github.com/Leaflet/Leaflet/issues/7466
+         * 
          * @TODO rechek this changes from leaflet@v1.9.3
          * 
          * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
@@ -574,14 +601,57 @@
             if (!this._map._rotate) {
                 return rendererProto._updateTransform.apply(this, arguments);
             }
+            /**
+             * @FIXME see path._renderer._reset();
+             */
             var scale = this._map.getZoomScale(zoom, this._zoom),
                 offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
-            if (L.Browser.any3d) {
-                L.DomUtil.setTransform(this._container, offset, scale);
-            } else {
-                L.DomUtil.setPosition(this._container, offset);
-            }
+
+            L.DomUtil.setTransform(this._container, offset, scale);
+            
         },
+
+        // getEvents() {
+        //     const events = {
+        //         viewreset: this._reset,
+        //         zoom: this._onZoom,
+        //         moveend: this._update,
+        //         zoomend: this._onZoomEnd
+        //     };
+        //     if (this._zoomAnimated) {
+        //         events.zoomanim = this._onAnimZoom;
+        //     }
+        //     return events;
+        // },
+
+        // _onAnimZoom(ev) {
+        //     this._updateTransform(ev.center, ev.zoom);
+        // },
+
+    	// _onZoom() {
+        //     this._updateTransform(this._map.getCenter(), this._map.getZoom());
+    	// },
+
+        // _onZoomEnd() {
+        //     for (const id in this._layers) {
+        //         this._layers[id]._project();
+        //     }
+        // },
+
+        // _reset() {
+        //     this._update();
+        //     this._updateTransform(this._center, this._zoom);
+
+        //     for (const id in this._layers) {
+        //         this._layers[id]._reset();
+        //     }
+        // },
+
+        // _updatePaths() {
+        //     for (const id in this._layers) {
+        //         this._layers[id]._update();
+        //     }
+        // },
 
         _update: function() {
             if (!this._map._rotate) {
@@ -1072,11 +1142,16 @@
             // return L.DomUtil.getPosition(this._rotatePane) || new L.Point(0, 0);
         },
 
+        // _latLngToNewLayerPoint(latlng, zoom, center) {
+        //    const topLeft = this._getNewPixelOrigin(center, zoom);
+        //    return this.project(latlng, zoom)._subtract(topLeft);
+        //},
+
         _getNewPixelOrigin: function(center, zoom) {
-            var viewHalf = this.getSize()._divideBy(2);
             if (!this._rotate) {
                 return mapProto._getNewPixelOrigin.apply(this, arguments);
             }
+            var viewHalf = this.getSize()._divideBy(2);
             return this.project(center, zoom)
                 .rotate(this._bearing)
                 ._subtract(viewHalf)
@@ -1209,25 +1284,64 @@
 
         initialize: function(map) {
             this._map = map;
-            this._throttled = L.Util.throttle(this._onDeviceOrientation, 1000, this);
+            /** @see https://caniuse.com/?search=DeviceOrientation */
+            if ('ondeviceorientationabsolute' in window) {
+                this.__deviceOrientationEvent = 'deviceorientationabsolute';
+            } else if('ondeviceorientation' in window) {
+                this.__deviceOrientationEvent = 'deviceorientation';
+            }
+            this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
         },
 
         addHooks: function() {
-            if (this._map._rotate && window.DeviceOrientationEvent) {
-                L.DomEvent.on(window, 'deviceorientation', this._throttled, this);
+            if (this._map._rotate && this.__deviceOrientationEvent) {
+                L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
+            } else {
+                // L.Map.CompassBearing handler will be automatically
+                // disabled if device orientation is not supported.
+                this.disable();
             }
         },
 
         removeHooks: function() {
-            if (this._map._rotate && window.DeviceOrientationEvent) {
-                L.DomEvent.off(window, 'deviceorientation', this._throttled, this);
+            if (this._map._rotate && this.__deviceOrientationEvent) {
+                L.DomEvent.off(window, this.__deviceOrientationEvent, this._throttled, this);
             }
         },
 
-        _onDeviceOrientation: function(event) {
-            if (event.alpha !== null && window.orientation !== undefined) {
-                this._map.setBearing(event.alpha - window.orientation);
+        /**
+         * `DeviceOrientationEvent.absolute` - Indicates whether the device is providing absolute
+         *                                     orientation values (relatives to Magnetic North) or
+         *                                     using some arbitrary frame determined by the device.
+         * 
+         * `DeviceOrientationEvent.alpha`    - Returns the rotation of the device around the Z axis;
+         *                                     that is, the number of degrees by which the device is
+         *                                     being twisted around the center of the screen.
+         * 
+         * `window.orientation`              - Returns the screen orientation in degrees (in 90-degree increments)
+         *                                     of the viewport relative to the device's natural orientation.
+         *                                     Its only possible values are -90, 0, 90, and 180. Positive
+         *                                     values are counterclockwise; negative values are clockwise.
+         * 
+         * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/absolute
+         * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/alpha
+         * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
+         */
+        _onDeviceOrientation: function(e) {
+            var angle = e.webkitCompassHeading || e.alpha;
+            var deviceOrientation = 0;
+
+            // Safari iOS
+            if (!e.absolute && e.webkitCompassHeading) {
+                angle = 360 - angle;
             }
+
+            // Older browsers
+            if (!e.absolute && 'undefined' !== typeof window.orientation) {
+                deviceOrientation = window.orientation;
+            }
+
+            this._map.setBearing(angle - deviceOrientation);
         },
 
     });
@@ -1641,8 +1755,6 @@
         },
 
         onAdd: function(map) {
-            this._onDeviceOrientation = L.Util.throttle(this._unthrottledOnDeviceOrientation, 100, this);
-
             var container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
 
             // this.button = L.Control.Zoom.prototype._createButton.call(this, 'R', 'leaflet-control-rotate', 'leaflet-control-rotate', container, this._toggleLock);
@@ -1662,7 +1774,6 @@
             link.appendChild(arrow);
             link.href = '#';
             link.title = 'Rotate map';
-            // link.draggable = false;
 
             L.DomEvent
                 .on(link, 'dblclick', L.DomEvent.stopPropagation)
@@ -1677,7 +1788,7 @@
 
             this._restyle();
 
-            map.on('rotate', this._restyle.bind(this));
+            map.on('rotate', this._restyle, this);
 
             // State flag
             this._follow = false;
@@ -1689,9 +1800,13 @@
 
             return container;
         },
+        
+        onRemove: function(map) {
+            map.off('rotate', this._restyle, this);
+        },
 
         _handleMouseDown: function(e) {
-            L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e);
             this.dragging = true;
             this.dragstartX = e.pageX;
             this.dragstartY = e.pageY;
@@ -1701,7 +1816,7 @@
         },
 
         _handleMouseUp: function(e) {
-            L.DomEvent.stop(e); // L.DomEvent.stopPropagation(e);
+            L.DomEvent.stop(e);
             this.dragging = false;
 
             L.DomEvent
@@ -1716,64 +1831,64 @@
         },
 
         _cycleState: function(ev) {
+            if (!this._map) {
+                return;
+            }
+
             var map = this._map;
 
-            if (!map) { return; }
-
+            // Touch mode
             if (!map.touchRotate.enabled() && !map.compassBearing.enabled()) {
-                // Go from disabled to touch
                 map.touchRotate.enable();
+            }
+            
+            // Compass mode
+            else if (!map.compassBearing.enabled()) {
+                map.touchRotate.disable();
+                map.compassBearing.enable();
+            }
 
-                // console.log('state is now: touch rotate');
-            } else {
-
-                if (!map.compassBearing.enabled()) {
-                    // Go from touch to compass
-                    map.touchRotate.disable();
-                    map.compassBearing.enable();
-
-                    // console.log('state is now: compass');
-
-                    // It is possible that compass is not supported. If so,
-                    // the hangler will automatically go from compass to disabled.
-                } else {
-                    // Go from compass to disabled
-                    map.compassBearing.disable();
-
-                    // console.log('state is now: locked');
-
-                    map.setBearing(0);
-                    if (this.options.closeOnZeroBearing) {
-                        map.touchRotate.enable();
-                    }
+            // Locked mode
+            else {
+                map.compassBearing.disable();
+                map.setBearing(0);
+                if (this.options.closeOnZeroBearing) {
+                    map.touchRotate.enable();
                 }
             }
             this._restyle();
         },
 
         _restyle: function() {
-            if (this._map.options.rotate) {
+            if (!this._map.options.rotate) {
+                L.DomUtil.addClass(this._link, 'leaflet-disabled');
+            } else {
                 var map = this._map;
                 var bearing = map.getBearing();
-                if (this.options.closeOnZeroBearing && bearing) {
+
+                this._arrow.style.transform = 'rotate(' + bearing + 'deg)';
+
+                if (bearing && this.options.closeOnZeroBearing) {
                     this._container.style.display = 'block';
                 }
 
-                var cssTransform = 'rotate(' + bearing + 'deg)';
-                this._arrow.style.transform = cssTransform;
-
+                // Compass mode
                 if (map.compassBearing.enabled()) {
                     this._link.style.backgroundColor = 'orange';
-                } else if (map.touchRotate.enabled()) {
+                }
+                
+                // Touch mode
+                else if (map.touchRotate.enabled()) {
                     this._link.style.backgroundColor = null;
-                } else {
+                }
+
+                // Locked mode
+                else {
                     this._link.style.backgroundColor = 'grey';
-                    if (this.options.closeOnZeroBearing && map.getBearing() === 0) {
+                    if (0 === bearing && this.options.closeOnZeroBearing) {
                         this._container.style.display = 'none';
                     }
                 }
-            } else {
-                L.DomUtil.addClass(this._link, 'leaflet-disabled');
             }
         },
 
