@@ -15,7 +15,20 @@ L.Renderer.include({
      * @listens L.Map~rotate
      */
     getEvents: function() {
-        return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update })
+        return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update });
+    },
+
+    /**
+     * Fix for `map.flyTo()` when `false === map.options.zoomAnimation`
+     * 
+     * @see https://github.com/Leaflet/Leaflet/pull/8794
+     */
+    onAdd: function() {
+        rendererProto.onAdd.apply(this, arguments);
+        if (L.version <= "1.9.3") {
+            // always keep transform-origin as 0 0
+            this._container.classList.add('leaflet-zoom-animated');
+        }
     },
 
     /**
@@ -46,12 +59,9 @@ L.Renderer.include({
          */
         var scale = this._map.getZoomScale(zoom, this._zoom),
             offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
-        console.log(center, zoom, scale, offset);
-        if (L.Browser.any3d) {
-            L.DomUtil.setTransform(this._container, offset, scale);
-        } else {
-            L.DomUtil.setPosition(this._container, offset);
-        }
+
+        L.DomUtil.setTransform(this._container, offset, scale);
+        
     },
 
     // getEvents() {
@@ -87,6 +97,12 @@ L.Renderer.include({
 
     //     for (const id in this._layers) {
     //         this._layers[id]._reset();
+    //     }
+    // },
+
+    // _updatePaths() {
+    //     for (const id in this._layers) {
+    //         this._layers[id]._update();
     //     }
     // },
 
