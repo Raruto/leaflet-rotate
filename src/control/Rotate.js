@@ -52,7 +52,7 @@ L.Control.Rotate = L.Control.extend({
 
         this._restyle();
 
-        map.on('rotate', this._restyle.bind(this));
+        map.on('rotate', this._restyle, this);
 
         // State flag
         this._follow = false;
@@ -63,6 +63,10 @@ L.Control.Rotate = L.Control.extend({
         }
 
         return container;
+    },
+    
+    onRemove: function(map) {
+        map.off('rotate', this._restyle, this);
     },
 
     _handleMouseDown: function(e) {
