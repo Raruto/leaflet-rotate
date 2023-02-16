@@ -421,13 +421,12 @@ L.Map.include({
         let zoom = this.getZoom() || 0;
         const min = this.getMinZoom(),
                 max = this.getMaxZoom(),
-                /** @TODO use mapProto.getBoundsZoom */
-                // nw = bounds.getNorthWest(),
-                // se = bounds.getSouthEast(),
-                // size = this.getSize().subtract(padding),
-                // boundsSize = L.bounds(this.project(se, zoom), this.project(nw, zoom)).getSize(),
+                nw = bounds.getNorthWest(),
+                ne = bounds.getNorthEast(),
+                se = bounds.getSouthEast(),
+                sw = bounds.getSouthWest(),
+                boundsSize = L.bounds([this.project(se, zoom), this.project(nw, zoom), this.project(ne, zoom), this.project(sw, zoom)]).getSize(),
                 size = this.getSize().subtract(padding),
-                boundsSize = this.mapBoundsToContainerBounds(bounds).getSize(),
                 snap = this.options.zoomSnap,
                 scalex = size.x / boundsSize.x,
                 scaley = size.y / boundsSize.y,
