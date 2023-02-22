@@ -96,6 +96,21 @@ L.Map.include({
     },
 
     /**
+     * Overrides leaflet function to return float values instead of
+     * rounded ones
+     * 
+     * @param {L.LatLon}
+     * @returns {L.Point}
+     */
+	latLngToLayerPoint(latlng) {
+        if (!this._rotate && mapProto.latLngToLayerPoint) {
+            return mapProto.latLngToLayerPoint.apply(this, arguments);
+        }
+		const projectedPoint = this.project(L.latLng(latlng));
+		return projectedPoint._subtract(this.getPixelOrigin());
+	},
+
+    /**
      * Given latlng bounds, returns the bounds in projected pixel
      * relative to the map container.
      * 
