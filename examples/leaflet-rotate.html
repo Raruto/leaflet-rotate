@@ -11,13 +11,13 @@
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
 
 		<!-- Leaflet-Rotate -->
-		<script src="https://unpkg.com/leaflet-rotate@0.2.3/dist/leaflet-rotate-src.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.2.4/dist/leaflet-rotate-src.js"></script>
 
 		<!-- include some miscellaneous -->
-		<script src="https://unpkg.com/leaflet-rotate@0.2.3/misc/route.js"></script>
-		<script src="https://unpkg.com/leaflet-rotate@0.2.3/misc/places.js"></script>
-		<script src="https://unpkg.com/leaflet-rotate@0.2.3/misc/loremIpsum.js"></script>
-		<script src="https://unpkg.com/leaflet-rotate@0.2.3/lib/debug.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.2.4/misc/route.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.2.4/misc/places.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.2.4/misc/loremIpsum.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.2.4/lib/debug.js"></script>
 
 		<style>
 			#map {
@@ -54,6 +54,10 @@
 				<button onclick="map.flyTo(places['San Francisco'], 10);">San Francisco</button>
 				<button onclick="map.flyTo(places['Washington'], 10);">Washington</button>
 				<button onclick="map.flyTo(places['Trondheim'], 10);">Trondheim</button>
+			</p>
+			<p>
+				<strong>Fit bounds (z = 0): </strong>
+				<button onclick="map.setZoom(0, {animate: false}) && setTimeout(() => map.fitBounds(rectangle.getBounds(), { animate: false }), 1000);" title="DEBUG: map.setZoom(0) && map.getBoundsZoom(rectangle.getBounds())">RECTANGLE</button>
 			</p>
 		</div>
 
@@ -140,6 +144,13 @@
 				[48, -3],
 				[50, -4],
 				[52, 4]
+			]).addTo(map);
+
+			const rectangle = L.rectangle([
+				[60.81123, 25.71632],
+				[60.81028, 25.73166],
+				[60.7997, 25.72892],
+				[60.80061, 25.71362]
 			]).addTo(map);
 
 			// Display some debug info
