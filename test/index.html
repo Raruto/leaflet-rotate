@@ -55,6 +55,10 @@
 				<button onclick="map.flyTo(places['Washington'], 10);">Washington</button>
 				<button onclick="map.flyTo(places['Trondheim'], 10);">Trondheim</button>
 			</p>
+			<p>
+				<strong>Fit bounds (z = 0): </strong>
+				<button onclick="map.setZoom(0, {animate: false}) && setTimeout(() => map.fitBounds(rectangle.getBounds(), { animate: false }), 1000);" title="DEBUG: map.setZoom(0) && map.getBoundsZoom(rectangle.getBounds())">RECTANGLE</button>
+			</p>
 		</div>
 
 		<script>
@@ -143,8 +147,16 @@
 				[52, 4]
 			]).addTo(map);
 
+			const rectangle = L.rectangle([
+				[60.81123, 25.71632],
+				[60.81028, 25.73166],
+				[60.7997, 25.72892],
+				[60.80061, 25.71362]
+			]).addTo(map);
+
 			// Display some debug info
 			L.Rotate.debug(map);
+
 		</script>
 
 		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github"
