@@ -119,7 +119,7 @@ L.Map.include({
         if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
             return mapProto.mapBoundsToContainerBounds.apply(this, arguments);
         }
-        // same as `this.latLngToContainerPoint(latlng)` but with a floating precision
+        // same as `this.latLngToContainerPoint(latlng)` but with floating point precision
         const origin = this.getPixelOrigin().add(this._getMapPanePos());
         const nw = this.project(bounds.getNorthWest())._subtract(origin),
               ne = this.project(bounds.getNorthEast())._subtract(origin),
