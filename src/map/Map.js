@@ -95,20 +95,14 @@ L.Map.include({
             .rotate(-this._bearing);
     },
 
-    /**
-     * Overrides leaflet function to return float values instead of
-     * rounded ones
-     * 
-     * @param {L.LatLon}
-     * @returns {L.Point}
-     */
-	latLngToLayerPoint(latlng) {
-        if (!this._rotate && mapProto.latLngToLayerPoint) {
-            return mapProto.latLngToLayerPoint.apply(this, arguments);
-        }
-		const projectedPoint = this.project(L.latLng(latlng));
-		return projectedPoint._subtract(this.getPixelOrigin());
-	},
+    // latLngToLayerPoint: function (latlng) {
+    //     var projectedPoint = this.project(L.latLng(latlng))._round();
+    //     return projectedPoint._subtract(this.getPixelOrigin());
+    // },
+
+    // latLngToContainerPoint: function (latlng) {
+	// 	return this.layerPointToContainerPoint(this.latLngToLayerPoint(toLatLng(latlng)));
+	// },
 
     /**
      * Given latlng bounds, returns the bounds in projected pixel
@@ -125,51 +119,12 @@ L.Map.include({
         if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
             return mapProto.mapBoundsToContainerBounds.apply(this, arguments);
         }
-        const nw = this.latLngToContainerPoint(bounds.getNorthWest()),
-            ne = this.latLngToContainerPoint(bounds.getNorthEast()),
-            sw = this.latLngToContainerPoint(bounds.getSouthWest()),
-            se = this.latLngToContainerPoint(bounds.getSouthEast());
-        return L.bounds([
-            L.point(Math.min(nw.x, ne.x, se.x, sw.x), Math.min(nw.y, ne.y, se.y, sw.y)), // [ minX, minY ]
-            L.point(Math.max(nw.x, ne.x, se.x, sw.x), Math.max(nw.y, ne.y, se.y, sw.y))  // [ maxX, maxY ]
-        ]);
-    },
-
-	
-    /**
-     * @param {L.LatLon}
-     * @returns {L.Point}
-     */
-	latLngToLayerFloatingPoint(latlng) {
-		const projectedPoint = this.project(L.latLng(latlng));
-		return projectedPoint._subtract(this.getPixelOrigin());
-	},
-
-    /**
-     * @param {L.LatLon}
-     * @returns {L.Point}
-     */
-	latLngToContainerFloatingPoint(latlng) {
-		return this.layerPointToContainerPoint(this.latLngToLayerFloatingPoint(L.latLng(latlng)));
-	},
-
-    /**
-     * Same as mapBoundsToContainerBounds but return floats value.
-     * 
-     * @see https://github.com/ronikar/Leaflet/blob/5c480ef959b947c3beed7065425a5a36c486262b/src/map/Map.js#L1114-L1135
-     * 
-     * @param {L.LatLngBounds} bounds
-     * @returns {L.Bounds}
-     * 
-     */
-    mapBoundsToContainerFloatingBounds: function (bounds) {
-        if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
-            return mapProto.mapBoundsToContainerBounds.apply(this, arguments);
-        }
-        const nw = this.latLngToContainerFloatingPoint(bounds.getNorthWest()),
-            ne = this.latLngToContainerFloatingPoint(bounds.getNorthEast()),
-            sw = this.latLngToContainerFloatingPoint(bounds.getSouthWest()),
-            se = this.latLngToContainerFloatingPoint(bounds.getSouthEast());
+        // same as `this.latLngToContainerPoint(latlng)` but with a floating precision
+        const origin = this.getPixelOrigin().add(this._getMapPanePos());
+        const nw = this.project(bounds.getNorthWest())._subtract(origin),
+              ne = this.project(bounds.getNorthEast())._subtract(origin),
+              sw = this.project(bounds.getSouthWest())._subtract(origin),
+              se = this.project(bounds.getSouthEast())._subtract(origin);
         return L.bounds([
             L.point(Math.min(nw.x, ne.x, se.x, sw.x), Math.min(nw.y, ne.y, se.y, sw.y)), // [ minX, minY ]
             L.point(Math.max(nw.x, ne.x, se.x, sw.x), Math.max(nw.y, ne.y, se.y, sw.y))  // [ maxX, maxY ]
@@ -483,7 +438,7 @@ L.Map.include({
                 // size = this.getSize().subtract(padding),
                 // boundsSize = L.bounds(this.project(se, zoom), this.project(nw, zoom)).getSize(),
                 size = this.getSize().subtract(padding),
-                boundsSize = this.mapBoundsToContainerFloatingBounds(bounds).getSize(),
+                boundsSize = this.mapBoundsToContainerBounds(bounds).getSize(),
                 snap = this.options.zoomSnap,
                 scalex = size.x / boundsSize.x,
                 scaley = size.y / boundsSize.y,
