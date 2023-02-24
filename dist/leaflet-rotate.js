@@ -764,6 +764,15 @@
                 .rotate(-this._bearing);
         },
 
+        // latLngToLayerPoint: function (latlng) {
+        //     var projectedPoint = this.project(L.latLng(latlng))._round();
+        //     return projectedPoint._subtract(this.getPixelOrigin());
+        // },
+
+        // latLngToContainerPoint: function (latlng) {
+    	// 	return this.layerPointToContainerPoint(this.latLngToLayerPoint(toLatLng(latlng)));
+    	// },
+
         /**
          * Given latlng bounds, returns the bounds in projected pixel
          * relative to the map container.
@@ -779,10 +788,12 @@
             if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
                 return mapProto.mapBoundsToContainerBounds.apply(this, arguments);
             }
-            const nw = this.latLngToContainerPoint(bounds.getNorthWest()),
-                ne = this.latLngToContainerPoint(bounds.getNorthEast()),
-                sw = this.latLngToContainerPoint(bounds.getSouthWest()),
-                se = this.latLngToContainerPoint(bounds.getSouthEast());
+            // same as `this.latLngToContainerPoint(latlng)` but with floating point precision
+            const origin = this.getPixelOrigin().add(this._getMapPanePos());
+            const nw = this.project(bounds.getNorthWest())._subtract(origin),
+                  ne = this.project(bounds.getNorthEast())._subtract(origin),
+                  sw = this.project(bounds.getSouthWest())._subtract(origin),
+                  se = this.project(bounds.getSouthEast())._subtract(origin);
             return L.bounds([
                 L.point(Math.min(nw.x, ne.x, se.x, sw.x), Math.min(nw.y, ne.y, se.y, sw.y)), // [ minX, minY ]
                 L.point(Math.max(nw.x, ne.x, se.x, sw.x), Math.max(nw.y, ne.y, se.y, sw.y))  // [ maxX, maxY ]
