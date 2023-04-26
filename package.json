@@ -7,10 +7,11 @@
 	"browser": "dist/leaflet-rotate.js",
 	"module": "src/index.js",
 	"scripts": {
-		"test": "echo \"Error: no test specified\" && exit 1",
+		"test": "uvu . ^(examples)?(src)?\\.*\\.spec\\.js$",
 		"build": "rollup -c build/rollup.config.js",
-		"dev": "rollup -c build/rollup.config.js --watch",
-		"watch": "npm run dev",
+		"watch": "rollup -c build/rollup.config.js --watch",
+		"dev": "npm-run-all --print-label --parallel serve watch",
+		"serve": "http-server",
 		"version": "npm run build && git add -A dist"
 	},
 	"repository": {
@@ -51,7 +52,11 @@
 		"rollup": "^3.20.6",
 		"@rollup/plugin-commonjs": "^24.1.0",
 		"@rollup/plugin-node-resolve": "^15.0.2",
-		"@rollup/plugin-terser": "^0.4.1"
+		"@rollup/plugin-terser": "^0.4.1",
+		"http-server": "^14.1.1",
+		"npm-run-all": "^4.1.5",
+		"playwright": "^1.32.3",
+		"uvu": "^0.5.6"
 	},
 	"peerDependencies": {
 		"leaflet": "^1.9.3"

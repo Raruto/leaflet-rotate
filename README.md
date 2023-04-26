@@ -19,13 +19,29 @@ _For a working example see the following [demo](https://raruto.github.io/leaflet
     </p>
 </blockquote>
 
+### Build Guide
+
+Within your local development environment:
+
+```shell
+git clone git@github.com:Raruto/leaflet-rotate.git
+cd ./leaflet-rotate
+
+npm i         # install dependencies
+npm run dev   # start dev server at: http://localhost:8080
+npm run build # generate "dist" files (once)
+npm run test  # test all "*.spec.js" files (once)
+```
+
+After that you can start developing inside the `src` and `test` folders (eg. open "http://localhost:8080/test" in your browser to preview changes).
+
 ---
 
 **Side notes:**
 
-Be aware that this is a proof of concept that shows how to alter the core leaflet library and make rotation feature usable as a standalone plugin. Check out fnicollet's [rotate-master](https://github.com/fnicollet/Leaflet/tree/rotate-master) branch if you prefer to use a reliable all-in-one solution.
+Be aware that this library overrides notable parts of leaflet core via the [L.Class.include()](https://leafletjs.com/examples/extending/extending-1-classes.html) function in order to make the rotate feature usable as a standalone plug-in.
 
-Latest changes to this project have been updated comparing on the following: [https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master](https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master) (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
+Initial changes to this project have been apported by comparing the following branches: [https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master](https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master) (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
 
 ---
 

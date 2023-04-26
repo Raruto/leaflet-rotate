@@ -310,6 +310,10 @@ L.Map.include({
      * @returns {L.Map} current map instance
      */
     panInside(latlng, options) {
+        if (!this._rotate || Math.abs(this._bearing).toFixed(1) < 0.1) {
+            return mapProto.panInside.apply(this, arguments);
+        }
+
         options = options || {};
 
         const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]),
