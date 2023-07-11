@@ -103,4 +103,21 @@ test('pan inside marker', async ({ page }) => {
 
 });
 
+test('draggable marker drag/dragEnd should have only one listener', async ({ page }) => {
+  const { dragListeners, dragEndListeners } = await page.evaluate(() => new Promise((resolve, reject) => {
+    let dragListeners, dragEndListeners;
+
+    const draggableMarker = markers.find((m) => m.dragging.enabled());
+    if (!draggableMarker) { reject('No draggable marker on test page'); }
+
+    dragListeners = draggableMarker.dragging._draggable._events.drag;
+    dragEndListeners = draggableMarker.dragging._draggable._events.dragend;
+
+    resolve({ dragListeners, dragEndListeners });
+  }));
+
+  assert.is(dragListeners.length, 1);
+  assert.is(dragEndListeners.length, 1);
+});
+
 test.run();
