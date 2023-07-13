@@ -103,17 +103,21 @@ test('pan inside marker', async ({ page }) => {
 
 });
 
+/**
+ * @see https://github.com/Raruto/leaflet-rotate/pull/34
+ */
 test('draggable marker drag/dragEnd should have only one listener', async ({ page }) => {
   const { dragListeners, dragEndListeners } = await page.evaluate(() => new Promise((resolve, reject) => {
-    let dragListeners, dragEndListeners;
-
     const draggableMarker = markers.find((m) => m.dragging.enabled());
-    if (!draggableMarker) { reject('No draggable marker on test page'); }
 
-    dragListeners = draggableMarker.dragging._draggable._events.drag;
-    dragEndListeners = draggableMarker.dragging._draggable._events.dragend;
-
-    resolve({ dragListeners, dragEndListeners });
+    if (!draggableMarker) {
+      reject('No draggable marker on test page');
+    } else {
+      resolve({
+        dragListeners:    draggableMarker.dragging._draggable._events.drag,
+        dragEndListeners: draggableMarker.dragging._draggable._events.dragend,
+      });
+    }
   }));
 
   assert.is(dragListeners.length, 1);
