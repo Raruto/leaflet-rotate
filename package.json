@@ -1,13 +1,13 @@
 {
 	"name": "leaflet-rotate",
-	"version": "0.2.7",
+	"version": "0.2.8",
 	"description": "A Leaflet plugin that allows to add rotation functionality to map tiles",
 	"type": "module",
 	"main": "dist/leaflet-rotate.js",
 	"browser": "dist/leaflet-rotate.js",
 	"module": "src/index.js",
 	"scripts": {
-		"test": "uvu . \"(examples|src)[\\\\\/].*\\.spec\\.js$\"",
+		"test": "uvu . \"(examples|src)[\\\\/].*\\.spec\\.js$\"",
 		"build": "rollup -c build/rollup.config.js",
 		"watch": "rollup -c build/rollup.config.js --watch",
 		"dev": "npm-run-all --print-label --parallel serve watch",
