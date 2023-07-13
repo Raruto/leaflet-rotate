@@ -455,12 +455,12 @@
             if (this.dragging && this.dragging.enabled() && this._map && this._map._rotate) {
                 // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
                 markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
+                this.dragging.disable();
                 Object.assign(this.dragging, {
                     // _onDragStart: MarkerDrag._onDragStart.bind(this.dragging),
                     _onDrag: MarkerDrag._onDrag.bind(this.dragging),
                     _onDragEnd: MarkerDrag._onDragEnd.bind(this.dragging),
                 });
-                this.dragging.disable();
                 this.dragging.enable();
             }
             return ret;
