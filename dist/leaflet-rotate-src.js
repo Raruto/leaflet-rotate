@@ -1454,8 +1454,6 @@
 
     });
 
-    const angleThreshold = 10;
-
     L.Map.TouchGestures = L.Handler.extend({
 
         initialize: function(map) {
@@ -1533,7 +1531,7 @@
                 if (vector.y < 0) { bearingDelta += 180; }
                 
                 if(!this._passedAngleThreshold) {
-                    this._passedAngleThreshold = bearingDelta > angleThreshold;
+                    this._passedAngleThreshold = map.options.minBearingThreshold === undefined || bearingDelta > map.options.minBearingThreshold;
                 }
                 if (this._passedAngleThreshold) {
                     /**
