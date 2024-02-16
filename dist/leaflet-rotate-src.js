@@ -1475,10 +1475,9 @@
 
             if (!e.touches || e.touches.length !== 2 || map._animatingZoom || this._zooming || this._rotating) { return; }
 
-            
             var p1 = map.mouseEventToContainerPoint(e.touches[0]),
-            p2 = map.mouseEventToContainerPoint(e.touches[1]),
-            vector = p1.subtract(p2);
+                p2 = map.mouseEventToContainerPoint(e.touches[1]),
+                vector = p1.subtract(p2);
             
             this._passedAngleThreshold = false;
             this._centerPoint = map.getSize()._divideBy(2);
