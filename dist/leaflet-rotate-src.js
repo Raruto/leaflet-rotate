@@ -1454,6 +1454,8 @@
 
     });
 
+    const angleThreshold = 10;
+
     L.Map.TouchGestures = L.Handler.extend({
 
         initialize: function(map) {
@@ -1475,10 +1477,12 @@
 
             if (!e.touches || e.touches.length !== 2 || map._animatingZoom || this._zooming || this._rotating) { return; }
 
+            
             var p1 = map.mouseEventToContainerPoint(e.touches[0]),
-                p2 = map.mouseEventToContainerPoint(e.touches[1]),
-                vector = p1.subtract(p2);
-
+            p2 = map.mouseEventToContainerPoint(e.touches[1]),
+            vector = p1.subtract(p2);
+            
+            this._passedAngleThreshold = false;
             this._centerPoint = map.getSize()._divideBy(2);
             this._startLatLng = map.containerPointToLatLng(this._centerPoint);
 
@@ -1527,7 +1531,11 @@
                 var theta = Math.atan(vector.x / vector.y);
                 var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
                 if (vector.y < 0) { bearingDelta += 180; }
-                if (bearingDelta) {
+                
+                if(!this._passedAngleThreshold) {
+                    this._passedAngleThreshold = bearingDelta > angleThreshold;
+                }
+                if (this._passedAngleThreshold) {
                     /**
                      * @TODO the pivot should be the last touch point,
                      * but zoomAnimation manages to overwrite the rotate

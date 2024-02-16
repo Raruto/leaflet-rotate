@@ -20,11 +20,7 @@ L.Map.mergeOptions({
 
 });
 
-const angleThreshold = 30;
-
-function getAngle(p1, p2) {
-    return Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
-}
+const angleThreshold = 10;
 
 L.Map.TouchGestures = L.Handler.extend({
 
@@ -52,7 +48,6 @@ L.Map.TouchGestures = L.Handler.extend({
         p2 = map.mouseEventToContainerPoint(e.touches[1]),
         vector = p1.subtract(p2);
         
-        this._startAngle = getAngle(p1, p2);
         this._passedAngleThreshold = false;
         this._centerPoint = map.getSize()._divideBy(2);
         this._startLatLng = map.containerPointToLatLng(this._centerPoint);
@@ -96,18 +91,17 @@ L.Map.TouchGestures = L.Handler.extend({
             p2 = map.mouseEventToContainerPoint(e.touches[1]),
             vector = p1.subtract(p2),
             scale = p1.distanceTo(p2) / this._startDist,
-            angle = getAngle(p1, p2),
             delta;
 
-        if(!this._passedAngleThreshold) {
-            this._passedAngleThreshold = Math.abs(angle - this._startAngle) > angleThreshold;
-        }
-
-        if (this._rotating && this._passedAngleThreshold) {
+        if (this._rotating) {
             var theta = Math.atan(vector.x / vector.y);
             var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
             if (vector.y < 0) { bearingDelta += 180; }
-            if (bearingDelta) {
+            
+            if(!this._passedAngleThreshold) {
+                this._passedAngleThreshold = bearingDelta > angleThreshold;
+            }
+            if (this._passedAngleThreshold) {
                 /**
                  * @TODO the pivot should be the last touch point,
                  * but zoomAnimation manages to overwrite the rotate
