@@ -1478,7 +1478,7 @@
             var p1 = map.mouseEventToContainerPoint(e.touches[0]),
                 p2 = map.mouseEventToContainerPoint(e.touches[1]),
                 vector = p1.subtract(p2);
-            
+
             this._passedAngleThreshold = false;
             this._centerPoint = map.getSize()._divideBy(2);
             this._startLatLng = map.containerPointToLatLng(this._centerPoint);
