@@ -94,7 +94,7 @@ L.Map.TouchGestures = L.Handler.extend({
             var theta = Math.atan(vector.x / vector.y);
             var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
             if (vector.y < 0) { bearingDelta += 180; }
-            
+
             if(!this._passedAngleThreshold) {
                 this._passedAngleThreshold = map.options.minBearingThreshold === undefined || bearingDelta > map.options.minBearingThreshold;
             }
