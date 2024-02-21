@@ -1867,7 +1867,11 @@
             // Compass mode
             else if (!map.compassBearing.enabled()) {
                 map.touchRotate.disable();
-                map.compassBearing.enable();
+                (
+                    DeviceOrientationEvent && DeviceOrientationEvent.requestPermission
+                        ? DeviceOrientationEvent.requestPermission() // iOS compass
+                        : Promise.resolve('granted')                 // others
+                ).then(state => "granted" === state && map.compassBearing.enable());
             }
 
             // Locked mode
