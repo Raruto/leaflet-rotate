@@ -1452,6 +1452,15 @@
          */
         bounceAtZoomLimits: true,
 
+        /**
+         * Set a minimum bearing value (rotate threshold) to
+         * prevent map from rotating when user just wants to
+         * zoom.  
+         * 
+         * @type { number | undefined }
+         */
+        touchRotateIntertia: undefined
+
     });
 
     L.Map.TouchGestures = L.Handler.extend({
@@ -1479,7 +1488,6 @@
                 p2 = map.mouseEventToContainerPoint(e.touches[1]),
                 vector = p1.subtract(p2);
 
-            this._passedAngleThreshold = false;
             this._centerPoint = map.getSize()._divideBy(2);
             this._startLatLng = map.containerPointToLatLng(this._centerPoint);
 
@@ -1522,17 +1530,16 @@
                 p2 = map.mouseEventToContainerPoint(e.touches[1]),
                 vector = p1.subtract(p2),
                 scale = p1.distanceTo(p2) / this._startDist,
+                inertia = map.options.touchRotateIntertia;
                 delta;
 
             if (this._rotating) {
                 var theta = Math.atan(vector.x / vector.y);
                 var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
                 if (vector.y < 0) { bearingDelta += 180; }
+                if (inertia && bearingDelta > inertia) { bearingDelta = 0; }
 
-                if(!this._passedAngleThreshold) {
-                    this._passedAngleThreshold = map.options.minBearingThreshold === undefined || bearingDelta > map.options.minBearingThreshold;
-                }
-                if (this._passedAngleThreshold) {
+                if (bearingDelta) {
                     /**
                      * @TODO the pivot should be the last touch point,
                      * but zoomAnimation manages to overwrite the rotate
