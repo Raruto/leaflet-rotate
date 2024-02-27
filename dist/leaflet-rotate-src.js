@@ -1530,7 +1530,7 @@
                 p2 = map.mouseEventToContainerPoint(e.touches[1]),
                 vector = p1.subtract(p2),
                 scale = p1.distanceTo(p2) / this._startDist,
-                inertia = map.options.touchRotateIntertia;
+                inertia = map.options.touchRotateIntertia,
                 delta;
 
             if (this._rotating) {
