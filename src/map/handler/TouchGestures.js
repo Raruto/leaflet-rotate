@@ -21,7 +21,9 @@ L.Map.mergeOptions({
     /**
      * Set a minimum bearing value (rotate threshold) to
      * prevent map from rotating when user just wants to
-     * zoom.  
+     * zoom.
+     * 
+     * Recommended value: 25
      * 
      * @type { number | undefined }
      */
