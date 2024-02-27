@@ -103,11 +103,13 @@ L.Map.TouchGestures = L.Handler.extend({
         if (this._rotating) {
             var theta = Math.atan(vector.x / vector.y);
             var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
+            if (inertia) {
+                if (!this._inertiaOvercomedAt && Math.abs(bearingDelta) >= inertia) {
+                    this._inertiaOvercomedAt = bearingDelta;
+                }
+            }
             if (vector.y < 0) { bearingDelta += 180; }
             if (inertia) {
-                if (!this._inertiaOvercomedAt && Math.abs(bearingDelta) % 180 >= inertia) {
-                    this._inertiaOvercomedAt = bearingDelta >= 0 ? inertia : -inertia;
-                }
                 if (this._inertiaOvercomedAt) {
                     bearingDelta -= this._inertiaOvercomedAt;
                 } else {
