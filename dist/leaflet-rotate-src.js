@@ -1511,6 +1511,7 @@
                 this._rotating = false;
             }
 
+            this._inertiaOvercomedAt = null;
             this._moved = false;
 
             map._stop();
@@ -1537,7 +1538,16 @@
                 var theta = Math.atan(vector.x / vector.y);
                 var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
                 if (vector.y < 0) { bearingDelta += 180; }
-                if (inertia && bearingDelta <= inertia) { bearingDelta = 0; }
+                if (inertia) {
+                    if (Math.abs(bearingDelta) >= inertia) {
+                        this._inertiaOvercomedAt = bearingDelta >= 0 ? inertia : -inertia;
+                    }
+                    if (this._inertiaOvercomedAt) {
+                        bearingDelta -= this._inertiaOvercomedAt;
+                    } else {
+                        bearingDelta = 0; 
+                    }
+                }
 
                 if (bearingDelta) {
                     /**
