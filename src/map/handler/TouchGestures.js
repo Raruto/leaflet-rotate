@@ -105,7 +105,7 @@ L.Map.TouchGestures = L.Handler.extend({
             var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
             if (vector.y < 0) { bearingDelta += 180; }
             if (inertia) {
-                if (Math.abs(bearingDelta) >= inertia) {
+                if (!this._inertiaOvercomedAt && Math.abs(bearingDelta) % 180 >= inertia) {
                     this._inertiaOvercomedAt = bearingDelta >= 0 ? inertia : -inertia;
                 }
                 if (this._inertiaOvercomedAt) {
