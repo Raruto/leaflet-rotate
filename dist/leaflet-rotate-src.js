@@ -1540,7 +1540,12 @@
                 var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
 
                 if (vector.y < 0) { bearingDelta += 180; }
-                if (inertia)      { bearingDelta = Math.abs(this._startBearing - bearingDelta) >= inertia ? (bearingDelta - this._startBearing) : 0; }
+
+                // prevent map rotation when bearingDelta < touchRotateIntertia
+                if (inertia) {
+                    this._inertia = this._inertia || (Math.abs(this._startBearing - bearingDelta) >= inertia && bearingDelta);
+                    bearingDelta  = this._inertia ? bearingDelta - this._inertia : 0; // 0 = no rotation 
+                }
 
                 if (bearingDelta) {
                     /**
@@ -1600,6 +1605,7 @@
 
             this._zooming = false;
             this._rotating = false;
+            this._inertia = false;
             L.Util.cancelAnimFrame(this._animRequest);
 
             L.DomEvent
