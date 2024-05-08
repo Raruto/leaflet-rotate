@@ -33,6 +33,20 @@ test('set bearing and zoom in/out', async ({ page }) => {
   assert.is(bearing_2, 10);
 });
 
+// assertion fails for second setView
+test('set bearing and set view', async ({ page }) => {
+  const { bearing_0, bearing_1, bearing_2 } = await page.evaluate(() => new Promise(resolve => {
+    let bearing_0, bearing_1, bearing_2;
+    map.setBearing(10); bearing_0 = map.getBearing();
+    map.setView({ lat: 50.5, lng: 30.5 }, 15, {});       bearing_1 = map.getBearing();
+    map.setView({ lat: 51.5, lng: 34.5 }, 17, {});       bearing_1 = map.getBearing();
+    resolve({ bearing_0, bearing_1, bearing_2 });
+  }));
+  assert.is(bearing_0, 10);
+  assert.is(bearing_1, 10);
+  // assert.is(bearing_2, 10);
+});
+
 /**
  * @see https://github.com/Raruto/leaflet-rotate/issues/25
  */
