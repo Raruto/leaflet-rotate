@@ -39,7 +39,7 @@ test('set bearing and set view', async ({ page }) => {
     let bearing_0, bearing_1, bearing_2;
     map.setBearing(10); bearing_0 = map.getBearing();
     map.setView({ lat: 50.5, lng: 30.5 }, 15, {});       bearing_1 = map.getBearing();
-    map.setView({ lat: 51.5, lng: 34.5 }, 17, {});       bearing_1 = map.getBearing();
+    map.setView({ lat: 51.5, lng: 34.5 }, 17, {});       bearing_2 = map.getBearing();
     resolve({ bearing_0, bearing_1, bearing_2 });
   }));
   assert.is(bearing_0, 10);
