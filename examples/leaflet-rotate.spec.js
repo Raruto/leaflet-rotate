@@ -44,7 +44,7 @@ test('set bearing and set view', async ({ page }) => {
   }));
   assert.is(bearing_0, 10);
   assert.is(bearing_1, 10);
-  // assert.is(bearing_2, 10);
+  assert.is(bearing_2, 10);
 });
 
 /**
