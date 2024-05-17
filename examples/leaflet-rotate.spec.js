@@ -33,7 +33,6 @@ test('set bearing and zoom in/out', async ({ page }) => {
   assert.is(bearing_2, 10);
 });
 
-// assertion fails for second setView
 test('set bearing and set view', async ({ page }) => {
   const { bearing_0, bearing_1, bearing_2 } = await page.evaluate(() => new Promise(resolve => {
     let bearing_0, bearing_1, bearing_2;
