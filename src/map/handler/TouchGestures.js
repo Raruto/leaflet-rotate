@@ -18,6 +18,17 @@ L.Map.mergeOptions({
      */
     bounceAtZoomLimits: true,
 
+    /**
+     * Set a minimum bearing value (rotate threshold) to
+     * prevent map from rotating when user just wants to
+     * zoom.
+     * 
+     * Recommended value: 25
+     * 
+     * @type { number | undefined }
+     */
+    touchRotateIntertia: undefined
+
 });
 
 L.Map.TouchGestures = L.Handler.extend({
@@ -87,12 +98,21 @@ L.Map.TouchGestures = L.Handler.extend({
             p2 = map.mouseEventToContainerPoint(e.touches[1]),
             vector = p1.subtract(p2),
             scale = p1.distanceTo(p2) / this._startDist,
+            inertia = map.options.touchRotateIntertia,
             delta;
 
         if (this._rotating) {
             var theta = Math.atan(vector.x / vector.y);
             var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
+
             if (vector.y < 0) { bearingDelta += 180; }
+
+            // prevent map rotation when bearingDelta < touchRotateIntertia
+            if (inertia) {
+                this._inertia = this._inertia || (Math.abs(this._startBearing - bearingDelta) >= inertia && bearingDelta);
+                bearingDelta  = this._inertia ? bearingDelta - this._inertia : 0; // 0 = no rotation 
+            }
+
             if (bearingDelta) {
                 /**
                  * @TODO the pivot should be the last touch point,
@@ -151,6 +171,7 @@ L.Map.TouchGestures = L.Handler.extend({
 
         this._zooming = false;
         this._rotating = false;
+        this._inertia = false;
         L.Util.cancelAnimFrame(this._animRequest);
 
         L.DomEvent
