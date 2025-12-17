@@ -991,9 +991,8 @@
                 // pixelPoint = this.project(latlng),
                 // pixelBounds = this.getPixelBounds(),
                 // pixelCenter = this.project(this.getCenter()),
-                rect = this._container.getBoundingClientRect(),
                 pixelPoint = this.latLngToContainerPoint(latlng),
-                pixelBounds = L.bounds([ L.point(rect), L.point(rect).add(this.getSize()) ]),
+                pixelBounds = L.bounds([L.point(0, 0), this.getSize()]),
                 pixelCenter = pixelBounds.getCenter(),
                 //
                 paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]),
