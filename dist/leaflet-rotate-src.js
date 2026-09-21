@@ -991,9 +991,12 @@
                 // pixelPoint = this.project(latlng),
                 // pixelBounds = this.getPixelBounds(),
                 // pixelCenter = this.project(this.getCenter()),
-                rect = this._container.getBoundingClientRect(),
                 pixelPoint = this.latLngToContainerPoint(latlng),
-                pixelBounds = L.bounds([ L.point(rect), L.point(rect).add(this.getSize()) ]),
+                // Container points are relative to the map container. Keep the
+                // bounds in that same coordinate space: using getBoundingClientRect
+                // mixes viewport coordinates with container coordinates and causes
+                // unexpected panning whenever the map is offset on the page.
+                pixelBounds = L.bounds([ L.point(0, 0), this.getSize() ]),
                 pixelCenter = pixelBounds.getCenter(),
                 //
                 paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]),

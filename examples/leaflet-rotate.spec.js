@@ -116,6 +116,26 @@ test('pan inside marker', async ({ page }) => {
 
 });
 
+test('pan inside uses container coordinates when map is offset', async ({ page }) => {
+  const moveCount = await page.evaluate(() => new Promise(resolve => {
+    const container = map.getContainer();
+    container.style.width = '400px';
+    container.style.marginLeft = '200px';
+    map.invalidateSize({ animate: false });
+    map.setView(markers[4].getLatLng(), 30, { animate: false });
+    map.setBearing(50);
+
+    const pointInsideViewport = map.containerPointToLatLng([100, map.getSize().y / 2]);
+    let moveCount = 0;
+    map.on('move', () => { moveCount += 1; });
+    map.panInside(pointInsideViewport, { padding: [20, 20], animate: false });
+
+    resolve(moveCount);
+  }));
+
+  assert.is(moveCount, 0);
+});
+
 /**
  * @see https://github.com/Raruto/leaflet-rotate/pull/34
  */
