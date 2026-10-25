@@ -4,21 +4,21 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Icon.js
  */
 
-const iconProto = L.extend({}, L.Icon.prototype);
+const iconProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Icon.prototype));
 
 L.Icon.include({
 
-    _setIconStyles: function(img, name) {
-        var options = this.options;
-        var sizeOption = options[name + 'Size'];
+    _setIconStyles(img, name) {
+        const options = this.options;
+        let sizeOption = options[name + 'Size'];
 
         if (typeof sizeOption === 'number') {
             sizeOption = [sizeOption, sizeOption];
         }
 
-        var size = L.point(sizeOption),
-            anchor = L.point(name === 'shadow' && options.shadowAnchor || options.iconAnchor ||
-                size && size.divideBy(2, true));
+        const size = sizeOption ? new L.Point(...(Array.isArray(sizeOption) ? sizeOption : [sizeOption.x, sizeOption.y])) : null,
+            anchorOption = name === 'shadow' && options.shadowAnchor || options.iconAnchor || size && size.divideBy(2, true),
+            anchor = anchorOption ? new L.Point(...(Array.isArray(anchorOption) ? anchorOption : [anchorOption.x, anchorOption.y])) : null;
 
         img.className = 'leaflet-marker-' + name + ' ' + (options.className || '');
 
@@ -26,7 +26,7 @@ L.Icon.include({
             img.style.marginLeft = (-anchor.x) + 'px';
             img.style.marginTop = (-anchor.y) + 'px';
             /** @TODO use iconProto._setIconStyles */
-            img.style[L.DomUtil.TRANSFORM + "Origin"] = anchor.x + "px " + anchor.y + "px 0px";
+            img.style.transformOrigin = anchor.x + "px " + anchor.y + "px 0px";
         }
 
         if (size) {

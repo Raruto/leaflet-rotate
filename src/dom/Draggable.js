@@ -13,7 +13,7 @@
 L.Draggable.include({
 
     /** @TODO */
-    // updateMapBearing: function(mapBearing) {
+    // updateMapBearing(mapBearing) {
     //     this._mapBearing = mapBearing;
     // },
 

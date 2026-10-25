@@ -74,7 +74,7 @@ Then('the bearing reaches 90 degrees gradually', function () {
 When('I fit the same bounds twice', async function () {
   this.zooms = await this.page.evaluate(() => {
     const bounds = [[60.81123, 25.71632], [60.81028, 25.73166], [60.7997, 25.72892], [60.80061, 25.71362]];
-    L.rectangle(bounds).addTo(map);
+    new L.Rectangle(bounds).addTo(map);
     map.setZoom(0, { animate: false });
     map.fitBounds(bounds, { animate: false });
     const first = map.getZoom();
@@ -148,8 +148,8 @@ When('I rotate and zoom two fingers over a vector path', async function () {
   this.gesturePathPositions = await this.page.evaluate(() => {
     map.options.zoomAnimation = true;
     map.setView([55, 10], 6, { animate: false });
-    const location = L.latLng(55.1, 10.1);
-    const path = L.circleMarker(location, { radius: 8 }).addTo(map);
+    const location = new L.LatLng(55.1, 10.1);
+    const path = new L.CircleMarker(location, { radius: 8 }).addTo(map);
     const container = map.getContainer();
     const center = map.getSize().divideBy(2);
     const initial = map.getBearing(),

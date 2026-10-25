@@ -7,7 +7,7 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
  */
 
-const markerProto = L.extend({}, L.Marker.prototype);
+const markerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Marker.prototype));
 
 L.Marker.mergeOptions({
 
@@ -41,23 +41,23 @@ L.Marker.mergeOptions({
 
 });
 
-var markerDragProto; // retrived at runtime (see below: L.Marker::_initInteraction())
+let markerDragProto; // retrived at runtime (see below: L.Marker::_initInteraction())
 
-var MarkerDrag = {
+const MarkerDrag = {
 
-    // _onDragStart: function() {
+    // _onDragStart() {
     //     if (!this._marker._map._rotate) {
     //         return markerDragProto._onDragStart.apply(this, arguments);
     //     }
     //     this._draggable.updateMapBearing(this._marker._map._bearing);
     // },
 
-    _onDrag: function(e) {
-        var marker = this._marker,
+    _onDrag(e) {
+        const marker = this._marker,
             /** @TODO use markerDragProto._onDrag */
             rotated_marker = marker.options.rotation || marker.options.rotateWithView,
-            shadow = marker._shadow,
-            iconPos = L.DomUtil.getPosition(marker._icon);
+            shadow = marker._shadow;
+        let iconPos = L.DomUtil.getPosition(marker._icon);
 
         /** @TODO use markerDragProto._onDrag */
         // update shadow position
@@ -70,7 +70,7 @@ var MarkerDrag = {
             // Reverse calculation from mapPane coordinates to rotatePane coordinates
             iconPos = marker._map.mapPanePointToRotatedPoint(iconPos);
         }
-        var latlng = marker._map.layerPointToLatLng(iconPos);
+        const latlng = marker._map.layerPointToLatLng(iconPos);
 
         marker._latlng = latlng;
         e.latlng = latlng;
@@ -86,7 +86,7 @@ var MarkerDrag = {
             .fire('drag', e);
     },
 
-    _onDragEnd: function(e) {
+    _onDragEnd(e) {
         if (this._marker._map._rotate) {
             this._marker.update();
         }
@@ -103,12 +103,12 @@ L.Marker.include({
      * 
      * @listens L.Map~rotate
      */
-    getEvents: function() {
-        return L.extend(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
+    getEvents() {
+        return Object.assign(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
     },
 
-    _initInteraction: function() {
-        var ret = markerProto._initInteraction.apply(this, arguments);
+    _initInteraction() {
+        const ret = markerProto._initInteraction.apply(this, arguments);
         if (this.dragging && this.dragging.enabled() && this._map && this._map._rotate) {
             // L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable
             markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
@@ -123,7 +123,7 @@ L.Marker.include({
         return ret;
     },
 
-    _setPos: function(pos) {
+    _setPos(pos) {
 
         /** @TODO use markerProto._setPos */
         if (this._map._rotate) {
@@ -131,7 +131,7 @@ L.Marker.include({
         }
 
         /** @TODO use markerProto._setPos */
-        var bearing = this.options.rotation || 0;
+        let bearing = this.options.rotation || 0;
         if (this.options.rotateWithView) {
             bearing += this._map._bearing;
         }
@@ -158,14 +158,14 @@ L.Marker.include({
         this._resetZIndex();
     },
 
-    // _updateZIndex: function(offset) {
+    // _updateZIndex(offset) {
     //     if (!this._map._rotate) {
     //         return markerProto._updateZIndex.apply(this, arguments);
     //     }
     //     this._icon.style.zIndex = Math.round(this._zIndex + offset);
     // },
 
-    setRotation: function(rotation) {
+    setRotation(rotation) {
         this.options.rotation = rotation;
         this.update();
     },

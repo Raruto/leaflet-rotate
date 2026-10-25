@@ -4,7 +4,9 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/DivOverlay.js
  */
 
-const divOverlayProto = L.extend({}, L.DivOverlay.prototype);
+import { toPoint } from '../geometry/Point';
+
+const divOverlayProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.DivOverlay.prototype));
 
 L.DivOverlay.include({
 
@@ -14,24 +16,24 @@ L.DivOverlay.include({
      * 
      * @listens L.Map~rotate
      */
-    getEvents: function() {
-        return L.extend(divOverlayProto.getEvents.apply(this, arguments), { rotate: this._updatePosition });
+    getEvents() {
+        return Object.assign(divOverlayProto.getEvents.apply(this, arguments), { rotate: this._updatePosition });
     },
 
     /**
      * 0. update element anchor point (divOverlayProto v1.9.3)
      * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
      */
-    _updatePosition: function() {
+    _updatePosition() {
         if (!this._map) { return; }
         divOverlayProto._updatePosition.apply(this, arguments);
         if (this._map._rotate && this._zoomAnimated) {
-            var anchor = this._getAnchor();
-            var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
+            const anchor = this._getAnchor();
+            const pos = L.DomUtil.getPosition(this._container).subtract(anchor);
             L.DomUtil.setPosition(this._container, this._map.rotatedPointToMapPanePoint(pos).add(anchor));
         } else if (this._map._rotate) {
-            var mapPanePoint = this._map.rotatedPointToMapPanePoint(this._map.latLngToLayerPoint(this._latlng)),
-                offset = L.point(this.options.offset),
+            const mapPanePoint = this._map.rotatedPointToMapPanePoint(this._map.latLngToLayerPoint(this._latlng)),
+                offset = toPoint(this.options.offset || [0, 0]),
                 anchor = this._getAnchor();
 
             this._containerLeft = -Math.round(this._containerWidth / 2) + mapPanePoint.x + offset.x + anchor.x;

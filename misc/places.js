@@ -1,4 +1,4 @@
-var places = {
+globalThis.places = {
   'Kyiv': [50.5, 30.5],
   'London': [51.51, -0.12],
   'San Francisco': [37.77, -122.42],

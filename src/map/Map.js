@@ -4,13 +4,15 @@
  * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/Map.js
  */
 
-const mapProto = L.extend({}, L.Map.prototype);
+import { toPoint } from '../geometry/Point';
+
+const mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
 
 L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
 L.Map.include({
 
-    _animateZoomNoDelay: function(center, zoom) {
+    _animateZoomNoDelay(center, zoom) {
         if (!this._mapPane) { return; }
 
         this._animatingZoom = true;
@@ -24,7 +26,7 @@ L.Map.include({
      * @param {(HTMLElement|String)} id html selector
      * @param {Object} [options={}] leaflet map options
      */
-    initialize: function(id, options) {
+    initialize(id, options) {
         if (options.rotate) {
             this._rotate = true;
             this._bearing = 0;
@@ -43,11 +45,11 @@ L.Map.include({
      * @param {L.Point} point pixel screen coordinates
      * @returns {L.Point} transformed pixel point
      */
-    containerPointToLayerPoint: function(point) {
+    containerPointToLayerPoint(point) {
         if (!this._rotate) {
             return mapProto.containerPointToLayerPoint.apply(this, arguments);
         }
-        return L.point(point)
+        return toPoint(point)
             .subtract(this._getMapPanePos())
             .rotateFrom(-this._bearing, this._getRotatePanePos())
             .subtract(this._getRotatePanePos());
@@ -60,11 +62,11 @@ L.Map.include({
      * @param {L.Point} point pixel screen coordinates
      * @returns {L.Point} transformed pixel point
      */
-    layerPointToContainerPoint: function(point) {
+    layerPointToContainerPoint(point) {
         if (!this._rotate) {
             return mapProto.layerPointToContainerPoint.apply(this, arguments);
         }
-        return L.point(point)
+        return toPoint(point)
             .add(this._getRotatePanePos())
             .rotateFrom(this._bearing, this._getRotatePanePos())
             .add(this._getMapPanePos());
@@ -82,8 +84,8 @@ L.Map.include({
      * 
      * @since leaflet-rotate (v0.1)
      */
-    rotatedPointToMapPanePoint: function(point) {
-        return L.point(point)
+    rotatedPointToMapPanePoint(point) {
+        return toPoint(point)
             .rotate(this._bearing)
             ._add(this._getRotatePanePos());
     },
@@ -99,18 +101,18 @@ L.Map.include({
      * 
      * @since leaflet-rotate (v0.1)
      */
-    mapPanePointToRotatedPoint: function(point) {
-        return L.point(point)
+    mapPanePointToRotatedPoint(point) {
+        return toPoint(point)
             ._subtract(this._getRotatePanePos())
             .rotate(-this._bearing);
     },
 
-    // latLngToLayerPoint: function (latlng) {
-    //     var projectedPoint = this.project(L.latLng(latlng))._round();
+    // latLngToLayerPoint(latlng) {
+    //     const projectedPoint = this.project(L.latLng(latlng))._round();
     //     return projectedPoint._subtract(this.getPixelOrigin());
     // },
 
-    // latLngToContainerPoint: function (latlng) {
+    // latLngToContainerPoint(latlng) {
 	// 	return this.layerPointToContainerPoint(this.latLngToLayerPoint(toLatLng(latlng)));
 	// },
 
@@ -125,7 +127,7 @@ L.Map.include({
      * 
      * @since leaflet-rotate (v0.2)
      */
-    mapBoundsToContainerBounds: function (bounds) {
+    mapBoundsToContainerBounds(bounds) {
         if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
             return mapProto.mapBoundsToContainerBounds.apply(this, arguments);
         }
@@ -142,9 +144,9 @@ L.Map.include({
               sw = this.layerPointToContainerPoint(this.project(bounds.getSouthWest())._subtract(origin)),
               se = this.layerPointToContainerPoint(this.project(bounds.getSouthEast())._subtract(origin));
 
-        return L.bounds([
-            L.point(Math.min(nw.x, ne.x, se.x, sw.x), Math.min(nw.y, ne.y, se.y, sw.y)), // [ minX, minY ]
-            L.point(Math.max(nw.x, ne.x, se.x, sw.x), Math.max(nw.y, ne.y, se.y, sw.y))  // [ maxX, maxY ]
+        return new L.Bounds([
+            new L.Point(Math.min(nw.x, ne.x, se.x, sw.x), Math.min(nw.y, ne.y, se.y, sw.y)), // [ minX, minY ]
+            new L.Point(Math.max(nw.x, ne.x, se.x, sw.x), Math.max(nw.y, ne.y, se.y, sw.y))  // [ maxX, maxY ]
         ]);
     },
 
@@ -158,14 +160,14 @@ L.Map.include({
      * 
      * @returns {L.LatLngBounds}
      */
-    getBounds: function() {
+    getBounds() {
         if (!this._rotate) {
             return mapProto.getBounds.apply(this, arguments);
         }
 
         // SEE: https://github.com/fnicollet/Leaflet/pull/22
         //
-        // var bounds = this.getPixelBounds(),
+        // const bounds = this.getPixelBounds(),
         // sw = this.unproject(bounds.getBottomLeft()),
         // ne = this.unproject(bounds.getTopRight());
         // return new LatLngBounds(sw, ne);
@@ -173,7 +175,7 @@ L.Map.include({
 
         // LatLngBounds' constructor automatically
         // extends the bounds to fit the passed points
-        var size = this.getSize();
+        const size = this.getSize();
         return new L.LatLngBounds([
             this.containerPointToLatLng([0, 0]),           // topleft
             this.containerPointToLatLng([size.x, 0]),      // topright 
@@ -210,56 +212,56 @@ L.Map.include({
      * 
      * @since leaflet-rotate (v0.1)
      */
-    setBearing: function(theta, options) {
-        if (!L.Browser.any3d || !this._rotate) { return; }
+    setBearing(theta, options) {
+        if (!this._rotate) { return; }
 
         if (options && options.animate) {
             this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
-            var animationId = this._bearingAnimationId;
+            const animationId = this._bearingAnimationId;
             if (this._bearingAnimationFrame) {
-                L.Util.cancelAnimFrame(this._bearingAnimationFrame);
+                cancelAnimationFrame(this._bearingAnimationFrame);
             }
 
-            var startBearing = this.getBearing(),
+            const startBearing = this.getBearing(),
                 endBearing = L.Util.wrapNum(theta, [0, 360]),
                 delta = ((endBearing - startBearing + 540) % 360) - 180,
                 duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1000,
                 easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2),
                 startTime = performance.now();
 
-            var animate = function() {
+            const animate = function() {
                 if (!this._mapPane) {
                     delete this._bearingAnimationFrame;
                     return;
                 }
 
-                var progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
+                const progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
                     eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
 
                 this._setBearing(progress === 1 ? endBearing : startBearing + delta * eased);
                 if (this._bearingAnimationId !== animationId) { return; }
                 if (progress < 1) {
-                    this._bearingAnimationFrame = L.Util.requestAnimFrame(animate, this);
+                    this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
                 } else {
                     delete this._bearingAnimationFrame;
                 }
             };
 
-            this._bearingAnimationFrame = L.Util.requestAnimFrame(animate, this);
+            this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
             return;
         }
 
         this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
         if (this._bearingAnimationFrame) {
-            L.Util.cancelAnimFrame(this._bearingAnimationFrame);
+            cancelAnimationFrame(this._bearingAnimationFrame);
             delete this._bearingAnimationFrame;
         }
 
         this._setBearing(theta);
     },
 
-    _setBearing: function(theta) {
-        var bearing = L.Util.wrapNum(theta, [0, 360]) * L.DomUtil.DEG_TO_RAD,
+    _setBearing(theta) {
+        const bearing = L.Util.wrapNum(theta, [0, 360]) * (Math.PI / 180),
             center = this._getPixelCenter(),
             oldPos = this._getRotatePanePos().rotateFrom(-this._bearing, center),
             newPos = oldPos.rotateFrom(bearing, center);
@@ -281,8 +283,8 @@ L.Map.include({
      * 
      * @since leaflet-rotate (v0.1)
      */
-    getBearing: function() {
-        return this._bearing * L.DomUtil.RAD_TO_DEG;
+    getBearing() {
+        return this._bearing * (180 / Math.PI);
     },
 
     /**
@@ -294,7 +296,7 @@ L.Map.include({
      * @param {HTMLElement} [container] parent element
      * @returns {HTMLElement} pane container
      */
-    // createPane: function(name, container) {
+    // createPane(name, container) {
     //     if (!this._rotate || name == 'mapPane') {
     //         return mapProto.createPane.apply(this, arguments);
     //     }
@@ -323,8 +325,8 @@ L.Map.include({
      * - tooltipPane [HTMLElement = 650]    - Pane for tooltips.
      * - popupPane   [HTMLElement = 700]    - Pane for popups.
      */
-    _initPanes: function() {
-        var panes = this._panes = {};
+    _initPanes() {
+        const panes = this._panes = {};
         this._paneRenderers = {};
 
         this._mapPane = this.createPane('mapPane', this._container);
@@ -333,6 +335,9 @@ L.Map.include({
         if (this._rotate) {
             this._rotatePane = this.createPane('rotatePane', this._mapPane);
             this._norotatePane = this.createPane('norotatePane', this._mapPane);
+            if (L.version.startsWith('2.')) {
+                this._rotatePane.style.transformOrigin = '0 0';
+            }
             // rotatePane
             this.createPane('tilePane', this._rotatePane);
             this.createPane('overlayPane', this._rotatePane);
@@ -351,8 +356,8 @@ L.Map.include({
         }
 
         if (!this.options.markerZoomAnimation) {
-            L.DomUtil.addClass(panes.markerPane, 'leaflet-zoom-hide');
-            L.DomUtil.addClass(panes.shadowPane, 'leaflet-zoom-hide');
+            panes.markerPane.classList.add('leaflet-zoom-hide');
+            panes.shadowPane.classList.add('leaflet-zoom-hide');
         }
     },
 
@@ -376,17 +381,17 @@ L.Map.include({
 
         options = options || {};
 
-        const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]),
-            paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]),
+        const paddingTL = toPoint(options.paddingTopLeft || options.padding || [0, 0]),
+            paddingBR = toPoint(options.paddingBottomRight || options.padding || [0, 0]),
             /** @TODO use mapProto.panInside */
             // pixelPoint = this.project(latlng),
             // pixelBounds = this.getPixelBounds(),
             // pixelCenter = this.project(this.getCenter()),
             pixelPoint = this.latLngToContainerPoint(latlng),
-            pixelBounds = L.bounds([L.point(0, 0), this.getSize()]),
+            pixelBounds = new L.Bounds([new L.Point(0, 0), this.getSize()]),
             pixelCenter = pixelBounds.getCenter(),
             //
-            paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]),
+            paddedBounds = new L.Bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]),
             paddedSize = paddedBounds.getSize();
         
         if (!paddedBounds.contains(pixelPoint)) {
@@ -418,9 +423,9 @@ L.Map.include({
      * @param {Object} [options] pan options
      * @returns {L.Map} current map instance
      */
-    // panInsideBounds: function (bounds, options) {
+    // panInsideBounds(bounds, options) {
     //     this._enforcingBounds = true;
-    //     var center = this.getCenter(),
+    //     const center = this.getCenter(),
     //         newCenter = this._limitCenter(center, this._zoom, L.latLngBounds(bounds));
     //
     //     if (!center.equals(newCenter)) {
@@ -496,8 +501,8 @@ L.Map.include({
             return mapProto.getBoundsZoom.apply(this, arguments);
         }
 
-        bounds = L.latLngBounds(bounds);
-        padding = L.point(padding || [0, 0]);
+        bounds = bounds instanceof L.LatLngBounds ? bounds : new L.LatLngBounds(bounds);
+        padding = toPoint(padding || [0, 0]);
 
         let zoom = this.getZoom() || 0;
         const min = this.getMinZoom(),
@@ -529,7 +534,7 @@ L.Map.include({
      * 
      * @returns {L.Point} layer center
      */
-    // _getCenterLayerPoint: function () {
+    // _getCenterLayerPoint() {
     //    return this.containerPointToLayerPoint(this.getSize()._divideBy(2));
     // },
 
@@ -538,8 +543,8 @@ L.Map.include({
      * 
      * @param {L.LatLng} latlng map coordinates
      */
-    _getCenterOffset: function(latlng) {
-        var centerOffset = mapProto._getCenterOffset.apply(this, arguments);
+    _getCenterOffset(latlng) {
+        let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
         if (this._rotate) {
             centerOffset = centerOffset.rotate(this._bearing);
         }
@@ -549,7 +554,7 @@ L.Map.include({
     /**
      * @since leaflet-rotate (v0.1)
      */
-    _getRotatePanePos: function() {
+    _getRotatePanePos() {
         return this._rotatePanePos || new L.Point(0, 0);
         // return L.DomUtil.getPosition(this._rotatePane) || new L.Point(0, 0);
     },
@@ -559,11 +564,11 @@ L.Map.include({
     //    return this.project(latlng, zoom)._subtract(topLeft);
     //},
 
-    _getNewPixelOrigin: function(center, zoom) {
-        if (!this._rotate) {
+    _getNewPixelOrigin(center, zoom) {
+        if (!this._rotate || L.version.startsWith('2.')) {
             return mapProto._getNewPixelOrigin.apply(this, arguments);
         }
-        var viewHalf = this.getSize()._divideBy(2);
+        const viewHalf = this.getSize()._divideBy(2);
         return this.project(center, zoom)
             .rotate(this._bearing)
             ._subtract(viewHalf)
@@ -578,13 +583,13 @@ L.Map.include({
      * 
      * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
      */
-    _getNewPixelBounds: function(center, zoom) {
+    _getNewPixelBounds(center, zoom) {
         center = center || this.getCenter();
         zoom = zoom || this.getZoom();
         if (!this._rotate && mapProto._getNewPixelBounds) {
             return mapProto._getNewPixelBounds.apply(this, arguments);
         }
-        var mapZoom = this._animatingZoom ? Math.max(this._animateToZoom, this.getZoom()) : this.getZoom(),
+        const mapZoom = this._animatingZoom ? Math.max(this._animateToZoom, this.getZoom()) : this.getZoom(),
             scale = this.getZoomScale(mapZoom, zoom),
             pixelCenter = this.project(center, zoom).floor(),
             size = this.getSize(),
@@ -603,7 +608,7 @@ L.Map.include({
      * 
      * @return {L.Point} map pivot point (center)
      */
-    _getPixelCenter: function() {
+    _getPixelCenter() {
         if (!this._rotate && mapProto._getPixelCenter) {
             return mapProto._getPixelCenter.apply(this, arguments);
         }
@@ -615,11 +620,11 @@ L.Map.include({
      * 
      * @see src\layer\vector\Renderer::_update()
      */
-    _getPaddedPixelBounds: function(padding) {
+    _getPaddedPixelBounds(padding) {
         if (!this._rotate && mapProto._getPaddedPixelBounds) {
             return mapProto._getPaddedPixelBounds.apply(this, arguments);
         }
-        var p = padding,
+        const p = padding,
             size = this.getSize(),
             padMin = size.multiplyBy(-p),
             padMax = size.multiplyBy(1 + p);
@@ -633,10 +638,10 @@ L.Map.include({
         ]);
     },
 
-    _handleGeolocationResponse: function(pos) {
+    _handleGeolocationResponse(pos) {
         if (!this._container._leaflet_id) { return; }
 
-        var lat = pos.coords.latitude,
+        const lat = pos.coords.latitude,
             lng = pos.coords.longitude,
             /** @TODO use mapProto._handleGeolocationResponse */
             hdg = pos.coords.heading,
@@ -645,11 +650,11 @@ L.Map.include({
             options = this._locateOptions;
 
         if (options.setView) {
-            var zoom = this.getBoundsZoom(bounds);
+            const zoom = this.getBoundsZoom(bounds);
             this.setView(latlng, options.maxZoom ? Math.min(zoom, options.maxZoom) : zoom);
         }
 
-        var data = {
+        const data = {
             latlng: latlng,
             bounds: bounds,
             timestamp: pos.timestamp,
@@ -657,7 +662,7 @@ L.Map.include({
             heading: hdg
         };
 
-        for (var i in pos.coords) {
+        for (const i in pos.coords) {
             if (typeof pos.coords[i] === 'number') {
                 data[i] = pos.coords[i];
             }
@@ -676,7 +681,7 @@ L.Map.include({
      * @returns {L.Bounds}
      */
     // toCircumscribedBounds(points) {
-    //     var minX = points.reduce(function (pv, v) { return Math.min(pv, v.x); }, points[0].x),
+    //     const minX = points.reduce(function (pv, v) { return Math.min(pv, v.x); }, points[0].x),
     //         maxX = points.reduce(function (pv, v) { return Math.max(pv, v.x); }, points[0].x),
     //         minY = points.reduce(function (pv, v) { return Math.min(pv, v.y); }, points[0].y),
     //         maxY = points.reduce(function (pv, v) { return Math.max(pv, v.y); }, points[0].y);

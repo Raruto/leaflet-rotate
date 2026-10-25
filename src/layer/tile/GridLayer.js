@@ -4,7 +4,7 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/tile/GridLayer.js
  */
 
-const gridLayerProto = L.extend({}, L.GridLayer.prototype);
+const gridLayerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.GridLayer.prototype));
 
 L.GridLayer.include({
 
@@ -14,8 +14,8 @@ L.GridLayer.include({
      * 
      * @listens L.Map~rotate
      */
-    getEvents: function() {
-        var events = gridLayerProto.getEvents.apply(this, arguments);
+    getEvents() {
+        const events = gridLayerProto.getEvents.apply(this, arguments);
         if (this._map._rotate && !this.options.updateWhenIdle) {
             if (!this._onRotate) {
                 this._onRotate = L.Util.throttle(this._onMoveEnd, this.options.updateInterval, this);
@@ -25,7 +25,7 @@ L.GridLayer.include({
         return events;
     },
 
-    _getTiledPixelBounds: function(center) {
+    _getTiledPixelBounds(center) {
         if (!this._map._rotate) {
             return gridLayerProto._getTiledPixelBounds.apply(this, arguments);
         }

@@ -64,7 +64,7 @@ When('I rotate a map with the default rotate control', async function () {
     const container = document.createElement('div');
     container.style.cssText = 'width: 400px; height: 300px';
     document.body.append(container);
-    const testMap = L.map(container, {
+    const testMap = new L.Map(container, {
       center: [55, 10],
       zoom: 6,
       rotate: true,
@@ -166,7 +166,7 @@ When('I apply compass heading readings', async function () {
     const container = document.createElement('div');
     container.style.cssText = 'width: 400px; height: 300px';
     document.body.append(container);
-    const absoluteMap = L.map(container, {
+    const absoluteMap = new L.Map(container, {
       center: [55, 10],
       zoom: 6,
       rotate: true,
@@ -217,7 +217,7 @@ When('I use shift-wheel rotation with the handler disabled', async function () {
     const container = document.createElement('div');
     container.style.cssText = 'width: 400px; height: 300px';
     document.body.append(container);
-    const testMap = L.map(container, {
+    const testMap = new L.Map(container, {
       center: [55, 10],
       zoom: 6,
       rotate: true,
@@ -288,13 +288,30 @@ When('I inspect debugger geometry after resizing and moving the map', async func
     map.panBy([20, 15], { animate: false });
     map.setZoom(6, { animate: false });
     window.debugMouseEvent = null;
-    map.once('mousemove', event => {
-      window.debugMouseEvent = {
-        latlng: [event.latlng.lng, event.latlng.lat],
-        layerPoint: [event.layerPoint.x, event.layerPoint.y],
-        containerPoint: [event.containerPoint.x, event.containerPoint.y],
-      };
-    });
+    if (L.version.startsWith('2.')) {
+      map.getContainer().addEventListener('mousemove', event => {
+        const rect = map.getContainer().getBoundingClientRect();
+        const containerPoint = new L.Point(
+          event.clientX - rect.left - map.getContainer().clientLeft,
+          event.clientY - rect.top - map.getContainer().clientTop,
+        );
+        const latlng = map.containerPointToLatLng(containerPoint);
+        const layerPoint = map.containerPointToLayerPoint(containerPoint);
+        window.debugMouseEvent = {
+          latlng: [latlng.lng, latlng.lat],
+          layerPoint: [layerPoint.x, layerPoint.y],
+          containerPoint: [containerPoint.x, containerPoint.y],
+        };
+      }, { once: true });
+    } else {
+      map.once('mousemove', event => {
+        window.debugMouseEvent = {
+          latlng: [event.latlng.lng, event.latlng.lat],
+          layerPoint: [event.layerPoint.x, event.layerPoint.y],
+          containerPoint: [event.containerPoint.x, event.containerPoint.y],
+        };
+      });
+    }
   });
 
   const bounds = await this.page.locator('#map').boundingBox();
@@ -383,9 +400,9 @@ When('I rotate the example markers from the debugger', async function () {
 When('I select {string} from the example page', async function (place) {
   await this.page.getByRole('button', { name: place, exact: true }).click();
   await this.page.waitForFunction(name =>
-    map.getZoom() === 10 && map.getCenter().distanceTo(L.latLng(places[name])) < 1, place);
+    map.getZoom() === 10 && map.getCenter().distanceTo(new L.LatLng(...places[name])) < 1, place);
   this.destination = await this.page.evaluate(name => ({
-    distance: map.getCenter().distanceTo(L.latLng(places[name])),
+    distance: map.getCenter().distanceTo(new L.LatLng(...places[name])),
     zoom: map.getZoom(),
   }), place);
 });

@@ -7,6 +7,16 @@
  * @typedef L.Map.TouchGestures
  */
 
+function touchToContainerPoint(map, touch) {
+    const container = map.getContainer(),
+        rect = container.getBoundingClientRect();
+
+    return new L.Point(
+        touch.clientX - rect.left - container.clientLeft,
+        touch.clientY - rect.top - container.clientTop,
+    );
+}
+
 L.Map.mergeOptions({
 
     /**
@@ -22,27 +32,27 @@ L.Map.mergeOptions({
 
 L.Map.TouchGestures = L.Handler.extend({
 
-    initialize: function(map) {
+    initialize(map) {
         this._map = map;
         this.rotate = !!this._map.options.touchRotate;
         this.zoom = !!this._map.options.touchZoom;
     },
 
-    addHooks: function() {
+    addHooks() {
         L.DomEvent.on(this._map._container, 'touchstart', this._onTouchStart, this);
     },
 
-    removeHooks: function() {
+    removeHooks() {
         L.DomEvent.off(this._map._container, 'touchstart', this._onTouchStart, this);
     },
 
-    _onTouchStart: function(e) {
-        var map = this._map;
+    _onTouchStart(e) {
+        const map = this._map;
 
         if (!e.touches || e.touches.length !== 2 || map._animatingZoom || this._zooming || this._rotating) { return; }
 
-        var p1 = map.mouseEventToContainerPoint(e.touches[0]),
-            p2 = map.mouseEventToContainerPoint(e.touches[1]),
+        const p1 = touchToContainerPoint(map, e.touches[0]),
+            p2 = touchToContainerPoint(map, e.touches[1]),
             vector = p1.subtract(p2);
 
         this._centerPoint = map.getSize()._divideBy(2);
@@ -79,19 +89,19 @@ L.Map.TouchGestures = L.Handler.extend({
         L.DomEvent.preventDefault(e);
     },
 
-    _onTouchMove: function(e) {
+    _onTouchMove(e) {
         if (!e.touches || e.touches.length !== 2 || !(this._zooming || this._rotating)) { return; }
 
-        var map = this._map,
-            p1 = map.mouseEventToContainerPoint(e.touches[0]),
-            p2 = map.mouseEventToContainerPoint(e.touches[1]),
+        const map = this._map,
+            p1 = touchToContainerPoint(map, e.touches[0]),
+            p2 = touchToContainerPoint(map, e.touches[1]),
             vector = p1.subtract(p2),
-            scale = p1.distanceTo(p2) / this._startDist,
-            delta;
+            scale = p1.distanceTo(p2) / this._startDist;
+        let delta;
 
         if (this._rotating) {
-            var theta = Math.atan(vector.x / vector.y);
-            var bearingDelta = (theta - this._startTheta) * L.DomUtil.RAD_TO_DEG;
+            const theta = Math.atan(vector.x / vector.y);
+            let bearingDelta = (theta - this._startTheta) * (180 / Math.PI);
             if (vector.y < 0) { bearingDelta += 180; }
             if (bearingDelta) {
                 /**
@@ -123,7 +133,7 @@ L.Map.TouchGestures = L.Handler.extend({
                 delta = p1._add(p2)._divideBy(2)._subtract(this._centerPoint);
                 if (scale === 1 && delta.x === 0 && delta.y === 0) { return; }
 
-                var alpha = -map.getBearing() * L.DomUtil.DEG_TO_RAD;
+                const alpha = -map.getBearing() * (Math.PI / 180);
 
                 this._center = map.unproject(map.project(this._pinchStartLatLng).subtract(delta.rotate(alpha)));
             }
@@ -135,10 +145,8 @@ L.Map.TouchGestures = L.Handler.extend({
             this._moved = true;
         }
 
-        L.Util.cancelAnimFrame(this._animRequest);
-
-        var moveFn = map._move.bind(map, this._center, this._zoom, { pinch: true, round: false }, undefined);
-        this._animRequest = L.Util.requestAnimFrame(moveFn, this, true);
+        const moveFn = map._move.bind(map, this._center, this._zoom, { pinch: true, round: false }, undefined);
+        moveFn();
 
         if (this.zoom) {
             if (map.options.zoomAnimation) {
@@ -151,7 +159,7 @@ L.Map.TouchGestures = L.Handler.extend({
         L.DomEvent.preventDefault(e);
     },
 
-    _onTouchEnd: function() {
+    _onTouchEnd() {
         if (!this._moved || !(this._zooming || this._rotating)) {
             this._zooming = false;
             return;
@@ -159,8 +167,6 @@ L.Map.TouchGestures = L.Handler.extend({
 
         this._zooming = false;
         this._rotating = false;
-        L.Util.cancelAnimFrame(this._animRequest);
-
         L.DomEvent
             .off(document, 'touchmove', this._onTouchMove, this)
             .off(document, 'touchend touchcancel', this._onTouchEnd, this);

@@ -6,7 +6,7 @@
 
 L.Map.CompassBearing = L.Handler.extend({
 
-    initialize: function(map) {
+    initialize(map) {
         this._map = map;
         /** @see https://caniuse.com/?search=DeviceOrientation */
         if ('ondeviceorientationabsolute' in window) {
@@ -17,7 +17,7 @@ L.Map.CompassBearing = L.Handler.extend({
         this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
     },
 
-    addHooks: function() {
+    addHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
             L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
         } else {
@@ -27,7 +27,7 @@ L.Map.CompassBearing = L.Handler.extend({
         }
     },
 
-    removeHooks: function() {
+    removeHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
             L.DomEvent.off(window, this.__deviceOrientationEvent, this._throttled, this);
         }
@@ -51,9 +51,9 @@ L.Map.CompassBearing = L.Handler.extend({
      * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/alpha
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
      */
-    _onDeviceOrientation: function(e) {
-         var angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
-        var deviceOrientation = 0;
+    _onDeviceOrientation(e) {
+        let angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
+        let deviceOrientation = 0;
 
          if (!Number.isFinite(angle)) { return; }
 

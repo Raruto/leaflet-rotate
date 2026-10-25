@@ -27,7 +27,7 @@ L.Map.mergeOptions({
 
 L.Map.ContainerMutation = L.Handler.extend({
 
-    addHooks: function() {
+    addHooks() {
         // if (!L.Browser.mutation) { return; }
         if (!this._observer) {
             this._observer = new MutationObserver(L.Util.bind(this._map.invalidateSize, this._map));
@@ -41,7 +41,7 @@ L.Map.ContainerMutation = L.Handler.extend({
         });
     },
 
-    removeHooks: function() {
+    removeHooks() {
         // if (!L.Browser.mutation) { return; }
         this._observer.disconnect();
     },

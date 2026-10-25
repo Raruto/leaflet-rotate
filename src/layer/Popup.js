@@ -4,7 +4,9 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/Popup.js
  */
 
-const popupProto = L.extend({}, L.Popup.prototype);
+import { toPoint } from '../geometry/Point';
+
+const popupProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Popup.prototype));
 
 L.Popup.include({
 
@@ -12,11 +14,11 @@ L.Popup.include({
      * 0. update element anchor point (popupProto v1.9.3)
      * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
      */
-    _animateZoom: function(e) {
+    _animateZoom(e) {
         popupProto._animateZoom.apply(this, arguments);
         if (this._map && this._map._rotate) {
-            var anchor = this._getAnchor();
-            var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
+            const anchor = this._getAnchor();
+            const pos = L.DomUtil.getPosition(this._container).subtract(anchor);
             L.DomUtil.setPosition(this._container, this._map.rotatedPointToMapPanePoint(pos).add(anchor));
         }
     },
@@ -26,7 +28,7 @@ L.Popup.include({
      * 
      * @see https://github.com/fnicollet/Leaflet/pull/21
      */
-    _adjustPan: function() {
+    _adjustPan() {
         if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }
 
         // We can endlessly recurse if keepInView is set and the view resets.
@@ -36,8 +38,8 @@ L.Popup.include({
             return;
         }
 
-        var map = this._map,
-            marginBottom = parseInt(L.DomUtil.getStyle(this._container, 'marginBottom'), 10) || 0,
+        const map = this._map,
+            marginBottom = parseInt(getComputedStyle(this._container).marginBottom, 10) || 0,
             containerHeight = this._container.offsetHeight + marginBottom,
             containerWidth = this._containerWidth,
             layerPos = new L.Point(this._containerLeft, -containerHeight - this._containerBottom);
@@ -46,12 +48,12 @@ L.Popup.include({
 
         /** @TODO use popupProto._adjustPan */
         // var containerPos = map.layerPointToContainerPoint(layerPos);
-        var containerPos = layerPos._add(this._map._getMapPanePos()),
-            padding = L.point(this.options.autoPanPadding),
-            paddingTL = L.point(this.options.autoPanPaddingTopLeft || padding),
-            paddingBR = L.point(this.options.autoPanPaddingBottomRight || padding),
-            size = map.getSize(),
-            dx = 0,
+        const containerPos = layerPos._add(this._map._getMapPanePos()),
+            padding = toPoint(this.options.autoPanPadding || [0, 0]),
+            paddingTL = toPoint(this.options.autoPanPaddingTopLeft || padding),
+            paddingBR = toPoint(this.options.autoPanPaddingBottomRight || padding),
+            size = map.getSize();
+        let dx = 0,
             dy = 0;
 
         if (containerPos.x + containerWidth + paddingBR.x > size.x) { // right
