@@ -63,7 +63,7 @@ Given('the example page is open', async function () {
   const version = process.env.LEAFLET_VERSION;
   await this.page.goto(`${baseUrl}/examples/leaflet-rotate.html`);
   await this.page.waitForLoadState('domcontentloaded');
-  await this.page.waitForFunction(() => window.map && window.path && typeof window.map.getBearing === 'function');
+  await this.page.waitForFunction(() => typeof map !== 'undefined' && typeof path !== 'undefined' && typeof map.getBearing === 'function');
 
   const result = await this.page.evaluate(() => {
     const domUtilTest = document.createElement('div');
