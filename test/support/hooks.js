@@ -29,7 +29,8 @@ Before(async function () {
     const version = process.env.LEAFLET_VERSION;
     let body = (await response.text())
       .replace(/https:\/\/unpkg\.com\/leaflet-rotate@(.*?)\//g, '../')
-      .replace(/leaflet-rotate@(.*?)\//g, '../');
+      .replace(/leaflet-rotate@(.*?)\//g, '../')
+      .replace(/\bconst (map|esri|osm|markers|path|circle|polygon|rectangle) =/g, 'const $1 = window.$1 =');
     if (version === '2') {
       body = body
         .replace('<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>', `<script>
@@ -63,7 +64,7 @@ Given('the example page is open', async function () {
   const version = process.env.LEAFLET_VERSION;
   await this.page.goto(`${baseUrl}/examples/leaflet-rotate.html`);
   await this.page.waitForLoadState('domcontentloaded');
-  await this.page.waitForFunction(() => typeof map !== 'undefined' && typeof path !== 'undefined' && typeof map.getBearing === 'function');
+  await this.page.waitForFunction(() => window.map && window.path && typeof window.map.getBearing === 'function');
 
   const result = await this.page.evaluate(() => {
     const domUtilTest = document.createElement('div');
