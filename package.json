@@ -48,8 +48,8 @@
 	"homepage": "https://github.com/Raruto/leaflet-rotate#readme",
 	"devDependencies": {
 		"@cucumber/cucumber": "^10.3.1",
-		"esbuild": "^0.25.0",
-		"playwright": "^1.32.3"
+		"esbuild": "^0.28.2",
+		"playwright": "^1.64.1"
 	},
 	"peerDependencies": {
 		"leaflet": "^1.9.3"
