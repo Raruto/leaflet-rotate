@@ -212,6 +212,50 @@ Then('valid compass readings update bearing and invalid readings are ignored', f
   assert.ok(Math.abs(absoluteEventBearing - 60) < 1e-6);
 });
 
+When('I use shift-wheel rotation with the handler disabled', async function () {
+  this.shiftWheelDisabled = await this.page.evaluate(async () => {
+    const container = document.createElement('div');
+    container.style.cssText = 'width: 400px; height: 300px';
+    document.body.append(container);
+    const testMap = L.map(container, {
+      center: [55, 10],
+      zoom: 6,
+      rotate: true,
+      rotateControl: false,
+      shiftKeyRotate: false,
+      zoomControl: false,
+      zoomAnimation: false,
+    });
+    const initialZoom = testMap.getZoom();
+    const initialBearing = testMap.getBearing();
+    container.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      deltaY: -60,
+      shiftKey: true,
+    }));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const result = {
+      handlerDisabled: !testMap.shiftKeyRotate.enabled(),
+      wheelZoomEnabled: testMap.scrollWheelZoom.enabled(),
+      zoomChanged: testMap.getZoom() > initialZoom,
+      bearingUnchanged: testMap.getBearing() === initialBearing,
+    };
+    testMap.remove();
+    container.remove();
+    return result;
+  });
+});
+
+Then('shift-wheel input zooms without changing the map bearing', function () {
+  assert.deepEqual(this.shiftWheelDisabled, {
+    handlerDisabled: true,
+    wheelZoomEnabled: true,
+    zoomChanged: true,
+    bearingUnchanged: true,
+  });
+});
+
 When('I change the debugger bounds padding from the keyboard', async function () {
   await this.page.evaluate(() => {
     map.setView([55, 10], 6, { animate: false });
