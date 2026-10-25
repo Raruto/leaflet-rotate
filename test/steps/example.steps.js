@@ -59,6 +59,159 @@ Then('every debugger rotation control matches the map bearing', function () {
   });
 });
 
+When('I rotate a map with the default rotate control', async function () {
+  this.rotateControlVisibility = await this.page.evaluate(() => {
+    const container = document.createElement('div');
+    container.style.cssText = 'width: 400px; height: 300px';
+    document.body.append(container);
+    const testMap = L.map(container, {
+      center: [55, 10],
+      zoom: 6,
+      rotate: true,
+      zoomControl: false,
+    });
+    const control = container.querySelector('.leaflet-control-rotate');
+    const displayAtZero = getComputedStyle(control).display;
+    testMap.setBearing(30);
+    const displayWhenRotated = getComputedStyle(control).display;
+    testMap.setBearing(0);
+    const displayAfterReset = getComputedStyle(control).display;
+    testMap.remove();
+    container.remove();
+    return [displayAtZero, displayWhenRotated, displayAfterReset];
+  });
+});
+
+Then('the default rotate control visibility follows the bearing', function () {
+  assert.deepEqual(this.rotateControlVisibility, ['none', 'block', 'none']);
+});
+
+When('I drag the rotate control', async function () {
+  this.controlBearing = await this.page.evaluate(() => {
+    map.setBearing(0);
+    const link = map.rotateControl._link;
+    link.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }));
+    document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 135, clientY: 100 }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 135, clientY: 100 }));
+    return map.getBearing();
+  });
+});
+
+Then('the map bearing follows the control drag', function () {
+  assert.equal(this.controlBearing, 35);
+});
+
+When('I activate compass mode on a permission-based device', async function () {
+  this.permissionRequests = await this.page.evaluate(async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'DeviceOrientationEvent');
+    window.permissionRequests = 0;
+    Object.defineProperty(window, 'DeviceOrientationEvent', {
+      configurable: true,
+      value: class {
+        static requestPermission() {
+          window.permissionRequests++;
+          return Promise.resolve('denied');
+        }
+      },
+    });
+    const click = () => map.rotateControl._link.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    click();
+    click();
+    await Promise.resolve();
+    if (descriptor) {
+      Object.defineProperty(window, 'DeviceOrientationEvent', descriptor);
+    } else {
+      delete window.DeviceOrientationEvent;
+    }
+    return window.permissionRequests;
+  });
+});
+
+Then('device-orientation permission is requested', function () {
+  assert.equal(this.permissionRequests, 1);
+});
+
+When('I apply compass heading readings', async function () {
+  this.compassReadings = await this.page.evaluate(async () => {
+    const compass = map.compassBearing;
+    const previousOrientation = window.orientation;
+    const setOrientation = value => Object.defineProperty(window, 'orientation', {
+      configurable: true,
+      value,
+    });
+
+    map.setBearing(0);
+    compass._onDeviceOrientation({ alpha: 40, absolute: true });
+    const absolute = map.getBearing();
+
+    setOrientation(90);
+    compass._onDeviceOrientation({ alpha: 40, absolute: false });
+    const relative = map.getBearing();
+
+    setOrientation(0);
+    compass._onDeviceOrientation({ webkitCompassHeading: 30, absolute: false });
+    const ios = map.getBearing();
+
+    compass._onDeviceOrientation({ alpha: null, absolute: true });
+    const unavailable = map.getBearing();
+
+    const absoluteEventDescriptor = Object.getOwnPropertyDescriptor(window, 'ondeviceorientationabsolute');
+    Object.defineProperty(window, 'ondeviceorientationabsolute', {
+      configurable: true,
+      value: null,
+    });
+    const container = document.createElement('div');
+    container.style.cssText = 'width: 400px; height: 300px';
+    document.body.append(container);
+    const absoluteMap = L.map(container, {
+      center: [55, 10],
+      zoom: 6,
+      rotate: true,
+      compassBearing: true,
+      rotateControl: false,
+      zoomControl: false,
+    });
+    const selectedEvent = absoluteMap.compassBearing.__deviceOrientationEvent;
+    const event = new Event('deviceorientationabsolute');
+    Object.defineProperties(event, {
+      alpha: { value: 60 },
+      absolute: { value: true },
+    });
+    window.dispatchEvent(event);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const absoluteEventBearing = absoluteMap.getBearing();
+    absoluteMap.remove();
+    container.remove();
+    if (absoluteEventDescriptor) {
+      Object.defineProperty(window, 'ondeviceorientationabsolute', absoluteEventDescriptor);
+    } else {
+      delete window.ondeviceorientationabsolute;
+    }
+
+    if (previousOrientation === undefined) {
+      delete window.orientation;
+    } else {
+      setOrientation(previousOrientation);
+    }
+    return { absolute, relative, ios, unavailable, selectedEvent, absoluteEventBearing };
+  });
+});
+
+Then('valid compass readings update bearing and invalid readings are ignored', function () {
+  const { absolute, relative, ios, unavailable, selectedEvent, absoluteEventBearing } = this.compassReadings;
+  assert.deepEqual({ absolute, relative, ios, unavailable, selectedEvent }, {
+    absolute: 40,
+    relative: 310,
+    ios: 330,
+    unavailable: 330,
+    selectedEvent: 'deviceorientationabsolute',
+  });
+  assert.ok(Math.abs(absoluteEventBearing - 60) < 1e-6);
+});
+
 When('I change the debugger bounds padding from the keyboard', async function () {
   await this.page.evaluate(() => {
     map.setView([55, 10], 6, { animate: false });

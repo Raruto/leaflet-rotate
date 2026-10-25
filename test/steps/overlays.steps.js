@@ -11,6 +11,31 @@ Then('the label remains upright while following the map bearing', function () {
   assert.deepEqual(this.labelAngles.map(({ labelAngle }) => Math.round(labelAngle)), [315, 0, 45, 315, 45]);
 });
 
+Then('the custom-pane GeoJSON stays aligned with its coordinates', function () {
+  assert.equal(this.customPanePosition.parentIsRotated, true);
+  assert.ok(Math.hypot(...this.customPanePosition.delta) < 2, JSON.stringify(this.customPanePosition));
+});
+
+Then('the Canvas renderer belongs to the rotating pane', function () {
+  assert.equal(this.canvasPane.rotating, true);
+  assert.equal(this.canvasPane.bearing, 35);
+});
+
+Then('the map rotates without invoking the removed control', function () {
+  assert.equal(this.removedControl.bearing, 40);
+  assert.equal(this.removedControl.attached, false);
+});
+
+Then('only the requested marker is draggable', function () {
+  assert.deepEqual(this.markerDragStates, [false, true]);
+});
+
+Then('the click event reports the matching geographic coordinate', function () {
+  assert.ok(this.mapClick.containerPoint.every((value, index) => Math.abs(value - 100) <= 1));
+  assert.ok(Math.abs(this.mapClick.latlng.lat - this.mapClick.expected.lat) < 1e-7, JSON.stringify(this.mapClick));
+  assert.ok(Math.abs(this.mapClick.latlng.lng - this.mapClick.expected.lng) < 1e-7, JSON.stringify(this.mapClick));
+});
+
 Then('the heat points remain aligned with their coordinates', function () {
   assert.equal(this.heatPointDeltas.length, 24);
   for (const { delta } of this.heatPointDeltas) {
@@ -63,6 +88,93 @@ When('I rotate a label marker with the view', async function () {
       ) * L.DomUtil.RAD_TO_DEG + 360) % 360;
       return { labelAngle, roadAngle };
     });
+  });
+});
+
+When('I add GeoJSON to a custom pane inside the rotate pane', async function () {
+  this.customPanePosition = await this.page.evaluate(() => {
+    map.setView([55, 10], 6, { animate: false });
+    map.setBearing(35);
+    const pane = map.createPane('customGeoJsonPane', map.getPane('rotatePane'));
+    const geoJson = L.geoJSON({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [10, 55] },
+      properties: {},
+    }, {
+      pane: 'customGeoJsonPane',
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 8 }),
+    }).addTo(map);
+    const element = geoJson.getLayers()[0].getElement();
+    const bounds = element.getBBox();
+    const screen = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+      .matrixTransform(element.getScreenCTM());
+    const rect = map.getContainer().getBoundingClientRect();
+    const expected = map.latLngToContainerPoint([55, 10]);
+    return {
+      parentIsRotated: pane.parentNode === map.getPane('rotatePane'),
+      delta: [screen.x - rect.left - expected.x, screen.y - rect.top - expected.y],
+    };
+  });
+});
+
+When('I render a Canvas vector layer on a rotated map', async function () {
+  this.canvasPane = await this.page.evaluate(() => {
+    map.setBearing(35);
+    const renderer = L.canvas({ pane: 'overlayPane' });
+    L.circleMarker([55, 10], { renderer, radius: 8 }).addTo(map);
+    return {
+      rotating: renderer._container.parentNode === map.getPane('overlayPane')
+        && map.getPane('overlayPane').parentNode === map.getPane('rotatePane'),
+      bearing: map.getBearing(),
+    };
+  });
+});
+
+When('I remove the rotate control and change the map bearing', async function () {
+  this.removedControl = await this.page.evaluate(() => {
+    const control = L.control.rotate({ closeOnZeroBearing: false }).addTo(map);
+    map.removeControl(control);
+    map.setBearing(40);
+    return { bearing: map.getBearing(), attached: Boolean(control._map) };
+  });
+});
+
+When('I create default and draggable markers', async function () {
+  this.markerDragStates = await this.page.evaluate(() => {
+    const defaultMarker = L.marker([55, 10]).addTo(map);
+    const draggableMarker = L.marker([55.1, 10.1], { draggable: true }).addTo(map);
+    return [defaultMarker, draggableMarker].map(marker => marker.dragging.enabled());
+  });
+});
+
+When('I click a rotated map at a known container point', async function () {
+  this.mapClick = await this.page.evaluate(() => new Promise(resolve => {
+    map.setView([55, 10], 6, { animate: false });
+    map.setBearing(35);
+    const point = [100, 100];
+    map.once('click', event => resolve({
+      containerPoint: [event.containerPoint.x, event.containerPoint.y],
+      latlng: event.latlng,
+      expected: map.containerPointToLatLng(event.containerPoint),
+    }));
+    const rect = map.getContainer().getBoundingClientRect();
+    map.getContainer().dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      clientX: rect.left + point[0],
+      clientY: rect.top + point[1],
+    }));
+  }));
+});
+
+When('I focus a marker near the edge of a rotated map', async function () {
+  this.centerUnchanged = await this.page.evaluate(() => {
+    map.setView([55, 10], 6, { animate: false });
+    map.setBearing(30);
+    const point = map.containerPointToLatLng([35, map.getSize().y / 2]);
+    const marker = L.marker(point, { autoPanOnFocus: true }).addTo(map);
+    const before = map.getCenter();
+    marker.getElement().focus();
+    return before.equals(map.getCenter());
   });
 });
 

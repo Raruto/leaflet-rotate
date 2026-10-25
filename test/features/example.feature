@@ -2,10 +2,30 @@ Feature: Rotating a Leaflet map
   Background:
     Given the example page is open
 
-  @issue-58
+  @issue-55 @issue-58
   Scenario: Leaflet heat redraws stay aligned after map rotation
     When I redraw a heat layer after rotating, panning, and zooming
     Then the heat points remain aligned with their coordinates
+
+  @issue-11
+  Scenario: The default rotate control appears only when the map is rotated
+    When I rotate a map with the default rotate control
+    Then the default rotate control visibility follows the bearing
+
+  @issue-13
+  Scenario: Dragging the rotate control changes the map bearing
+    When I drag the rotate control
+    Then the map bearing follows the control drag
+
+  @issue-44
+  Scenario: The compass control requests device-orientation permission
+    When I activate compass mode on a permission-based device
+    Then device-orientation permission is requested
+
+  @issue-7
+  Scenario: Compass headings handle absolute, iOS, and unavailable readings
+    When I apply compass heading readings
+    Then valid compass readings update bearing and invalid readings are ignored
 
   @debugger
   Scenario: Debugger rotation presets and keyboard slider stay synchronized
