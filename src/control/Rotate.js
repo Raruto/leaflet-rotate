@@ -15,12 +15,12 @@ L.Control.Rotate = L.Control.extend({
         closeOnZeroBearing: true
     },
 
-    onAdd: function(map) {
-        var container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
+    onAdd(map) {
+        const container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
 
         // this.button = L.Control.Zoom.prototype._createButton.call(this, 'R', 'leaflet-control-rotate', 'leaflet-control-rotate', container, this._toggleLock);
 
-        var arrow = this._arrow = L.DomUtil.create('span', 'leaflet-control-rotate-arrow');
+        const arrow = this._arrow = L.DomUtil.create('span', 'leaflet-control-rotate-arrow');
 
         arrow.style.backgroundImage = `url("data:image/svg+xml;charset=utf-8,%3Csvg width='29' height='29' viewBox='0 0 29 29' xmlns='http://www.w3.org/2000/svg' fill='%23333'%3E%3Cpath d='M10.5 14l4-8 4 8h-8z'/%3E%3Cpath d='M10.5 16l4 8 4-8h-8z' fill='%23ccc'/%3E%3C/svg%3E")`;
         arrow.style.cursor = 'grab';
@@ -31,7 +31,7 @@ L.Control.Rotate = L.Control.extend({
         arrow.style.backgroundPosition = '50%';
 
         // Copy-pasted from L.Control.Zoom
-        var link = this._link = L.DomUtil.create('a', 'leaflet-control-rotate-toggle', container);
+        const link = this._link = L.DomUtil.create('a', 'leaflet-control-rotate-toggle', container);
         link.appendChild(arrow);
         link.href = '#';
         link.title = 'Rotate map';
@@ -42,10 +42,6 @@ L.Control.Rotate = L.Control.extend({
             .on(link, 'click', L.DomEvent.stop)
             .on(link, 'click', this._cycleState, this)
             .on(link, 'click', this._refocusOnMap, this);
-
-        if (!L.Browser.any3d) {
-            L.DomUtil.addClass(link, 'leaflet-disabled');
-        }
 
         this._restyle();
 
@@ -62,11 +58,11 @@ L.Control.Rotate = L.Control.extend({
         return container;
     },
     
-    onRemove: function(map) {
+    onRemove(map) {
         map.off('rotate', this._restyle, this);
     },
 
-    _handleMouseDown: function(e) {
+    _handleMouseDown(e) {
         L.DomEvent.stop(e);
         this.dragging = true;
         this.dragstartX = e.pageX;
@@ -76,7 +72,7 @@ L.Control.Rotate = L.Control.extend({
             .on(document, 'mouseup', this._handleMouseUp, this);
     },
 
-    _handleMouseUp: function(e) {
+    _handleMouseUp(e) {
         L.DomEvent.stop(e);
         this.dragging = false;
 
@@ -85,18 +81,18 @@ L.Control.Rotate = L.Control.extend({
             .off(document, 'mouseup', this._handleMouseUp, this);
     },
 
-    _handleMouseDrag: function(e) {
+    _handleMouseDrag(e) {
         if (!this.dragging) { return; }
-        var deltaX = e.clientX - this.dragstartX;
+        const deltaX = e.clientX - this.dragstartX;
         this._map.setBearing(deltaX);
     },
 
-    _cycleState: function(ev) {
+    _cycleState(ev) {
         if (!this._map) {
             return;
         }
 
-        var map = this._map;
+        const map = this._map;
 
         // Touch mode
         if (!map.touchRotate.enabled() && !map.compassBearing.enabled()) {
@@ -124,12 +120,12 @@ L.Control.Rotate = L.Control.extend({
         this._restyle();
     },
 
-    _restyle: function() {
+    _restyle() {
         if (!this._map.options.rotate) {
-            L.DomUtil.addClass(this._link, 'leaflet-disabled');
+            this._link.classList.add('leaflet-disabled');
         } else {
-            var map = this._map;
-            var bearing = map.getBearing();
+            const map = this._map;
+            const bearing = map.getBearing();
 
             this._arrow.style.transform = 'rotate(' + bearing + 'deg)';
 
@@ -159,9 +155,9 @@ L.Control.Rotate = L.Control.extend({
 
 });
 
-L.control.rotate = function(options) {
-    return new L.Control.Rotate(options);
-};
+if (L.control) {
+    L.control.rotate = options => new L.Control.Rotate(options);
+}
 
 L.Map.mergeOptions({
     rotateControl: true,
@@ -169,8 +165,8 @@ L.Map.mergeOptions({
 
 L.Map.addInitHook(function() {
     if (this.options.rotateControl) {
-        var options = typeof this.options.rotateControl === 'object' ? this.options.rotateControl : {};
-        this.rotateControl = L.control.rotate(options);
+        const options = typeof this.options.rotateControl === 'object' ? this.options.rotateControl : {};
+        this.rotateControl = new L.Control.Rotate(options);
         this.addControl(this.rotateControl);
     }
 });

@@ -9,7 +9,7 @@ if (L.HeatLayer) {
     const heatLayerAnimateZoom = L.HeatLayer.prototype._animateZoom;
 
     L.HeatLayer.include({
-        onAdd: function(map) {
+        onAdd(map) {
             heatLayerOnAdd.apply(this, arguments);
             if (map._rotate) {
                 map.getPane('norotatePane').appendChild(this._canvas);
@@ -18,7 +18,7 @@ if (L.HeatLayer) {
             }
         },
 
-        onRemove: function(map) {
+        onRemove(map) {
             if (map._rotate) {
                 map.off('rotate', this._reset, this);
                 map.getPane('overlayPane').appendChild(this._canvas);
@@ -26,7 +26,7 @@ if (L.HeatLayer) {
             return heatLayerOnRemove.apply(this, arguments);
         },
 
-        _reset: function() {
+        _reset() {
             if (!this._map._rotate) {
                 return heatLayerReset.apply(this, arguments);
             }
@@ -44,7 +44,7 @@ if (L.HeatLayer) {
             this._redraw();
         },
 
-        _animateZoom: function(event) {
+        _animateZoom(event) {
             if (!this._map._rotate) {
                 return heatLayerAnimateZoom.apply(this, arguments);
             }
@@ -66,7 +66,7 @@ if (globalThis.HeatmapOverlay) {
     const heatmapDraw = globalThis.HeatmapOverlay.prototype._draw;
 
     globalThis.HeatmapOverlay.include({
-        onAdd: function(map) {
+        onAdd(map) {
             heatmapOnAdd.apply(this, arguments);
             if (map._rotate) {
                 map.getPane('norotatePane').appendChild(this._el);
@@ -75,7 +75,7 @@ if (globalThis.HeatmapOverlay) {
             }
         },
 
-        onRemove: function(map) {
+        onRemove(map) {
             if (map._rotate) {
                 map.off('rotate', this._draw, this);
                 map.getPane('overlayPane').appendChild(this._el);
@@ -83,7 +83,7 @@ if (globalThis.HeatmapOverlay) {
             return heatmapOnRemove.apply(this, arguments);
         },
 
-        _draw: function() {
+        _draw() {
             const map = this._map;
             if (!map._rotate) {
                 return heatmapDraw.apply(this, arguments);

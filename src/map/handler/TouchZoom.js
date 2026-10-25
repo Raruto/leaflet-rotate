@@ -34,14 +34,14 @@ L.Map.mergeOptions({
 
 L.Map.TouchZoom = L.Handler.extend({
 
-    addHooks: function() {
-        L.DomUtil.addClass(this._map._container, 'leaflet-touch-zoom');
+    addHooks() {
+        this._map._container.classList.add('leaflet-touch-zoom');
         this._map.touchGestures.enable();
         this._map.touchGestures.zoom = true;
     },
 
-    removeHooks: function() {
-        L.DomUtil.removeClass(this._map._container, 'leaflet-touch-zoom');
+    removeHooks() {
+        this._map._container.classList.remove('leaflet-touch-zoom');
         this._map.touchGestures.zoom = false;
     },
 

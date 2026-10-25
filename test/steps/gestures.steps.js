@@ -60,7 +60,7 @@ When('I drag a constrained marker on a rotated map', async function () {
     map.setView([23.1799, 113.4103], 15, { animate: false });
     map.setBearing(30);
     map.setZoom(16, { animate: false });
-    window.dragMarker = L.marker([23.1799, 113.4103], { draggable: true }).addTo(map);
+    window.dragMarker = new L.Marker([23.1799, 113.4103], { draggable: true }).addTo(map);
     window.dragMarkerStart = window.dragMarker.getLatLng();
     window.dragCallbackLatLngs = [];
     window.dragMarker.on('drag dragend', event => {
@@ -100,8 +100,8 @@ When('I drag a map with interactive layers while rotated', async function () {
   await this.page.evaluate(() => {
     map.options.zoomAnimation = false;
     map.setView([55, 10], 6, { animate: false });
-    const marker = L.marker([55.1, 10.1]).addTo(map);
-    const path = L.circleMarker([55.2, 10.2], { radius: 8 }).addTo(map);
+    const marker = new L.Marker([55.1, 10.1]).addTo(map);
+    const path = new L.CircleMarker([55.2, 10.2], { radius: 8 }).addTo(map);
     map.setBearing(35);
     window.interactiveLayers = { marker, path };
   });
@@ -134,7 +134,7 @@ When('I drag a map with interactive layers while rotated', async function () {
         pathScreen.y - mapRect.top - pathExpected.y,
       ];
     };
-    const moved = !map.getCenter().equals(L.latLng(55, 10));
+    const moved = !map.getCenter().equals(new L.LatLng(55, 10));
     const positions = [measure()];
     map.setBearing(0);
     positions.push(measure());

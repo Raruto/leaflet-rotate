@@ -17,22 +17,22 @@ L.Map.mergeOptions({
 
 L.Map.ShiftKeyRotate = L.Handler.extend({
 
-    addHooks: function() {
+    addHooks() {
         L.DomEvent.on(this._map._container, "wheel", this._handleShiftScroll, this);
         // this._map.shiftKeyRotate.enable();
         this._map.shiftKeyRotate.rotate = true;
     },
 
-    removeHooks: function() {
+    removeHooks() {
         L.DomEvent.off(this._map._container, "wheel", this._handleShiftScroll, this);
         this._map.shiftKeyRotate.rotate = false;
     },
 
-    _handleShiftScroll: function(e) {
+    _handleShiftScroll(e) {
         if (e.shiftKey) {
             e.preventDefault();
             this._map.scrollWheelZoom.disable();
-            this._map.setBearing((this._map._bearing * L.DomUtil.RAD_TO_DEG) + Math.sign(e.deltaY) * 5);
+            this._map.setBearing((this._map._bearing * (180 / Math.PI)) + Math.sign(e.deltaY) * 5);
         } else {
             this._map.scrollWheelZoom.enable();
         }

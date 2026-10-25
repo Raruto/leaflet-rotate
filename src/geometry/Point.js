@@ -4,7 +4,7 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/geometry/Point.js
  */
 
-L.extend(L.Point.prototype, {
+Object.assign(L.Point.prototype, {
 
     /**
      * Rotate around (0,0) by applying the 2D rotation matrix:
@@ -14,7 +14,7 @@ L.extend(L.Point.prototype, {
      * 
      * @param theta must be given in radians.
      */
-    rotate: function(theta) {
+    rotate(theta) {
         return this.rotateFrom(theta, new L.Point(0,0))
     },
 
@@ -32,13 +32,13 @@ L.extend(L.Point.prototype, {
      * 
      * @returns {L.Point}
      */
-    rotateFrom: function(theta, pivot) {
+    rotateFrom(theta, pivot) {
         if (!theta) { return this; }
-        var sinTheta = Math.sin(theta);
-        var cosTheta = Math.cos(theta);
-        var cx = pivot.x,
+        const sinTheta = Math.sin(theta);
+        const cosTheta = Math.cos(theta);
+        const cx = pivot.x,
             cy = pivot.y;
-        var x = this.x - cx,
+        const x = this.x - cx,
             y = this.y - cy;
 
         return new L.Point(
@@ -48,3 +48,12 @@ L.extend(L.Point.prototype, {
     },
 
 });
+
+export function toPoint(point) {
+    if (point == null || point instanceof L.Point) {
+        return point;
+    }
+    return Array.isArray(point)
+        ? new L.Point(point[0], point[1])
+        : new L.Point(point.x, point.y);
+}

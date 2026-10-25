@@ -4,7 +4,9 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Renderer.js
  */
 
-const rendererProto = L.extend({}, L.Renderer.prototype);
+const rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
+const rendererBase = Object.getPrototypeOf(L.Renderer.prototype);
+const rendererGetEvents = rendererProto.getEvents || rendererBase.getEvents;
 
 L.Renderer.include({
 
@@ -14,8 +16,9 @@ L.Renderer.include({
      * 
      * @listens L.Map~rotate
      */
-    getEvents: function() {
-        return L.extend(rendererProto.getEvents.apply(this, arguments), { rotate: this._update });
+    getEvents() {
+        const events = rendererGetEvents.apply(this, arguments);
+        return L.version.startsWith('2.') ? events : Object.assign(events, { rotate: this._update });
     },
 
     /**
@@ -23,7 +26,7 @@ L.Renderer.include({
      * 
      * @see https://github.com/Leaflet/Leaflet/pull/8794
      */
-    onAdd: function() {
+    onAdd() {
         rendererProto.onAdd.apply(this, arguments);
         if (L.version <= "1.9.3") {
             // always keep transform-origin as 0 0
@@ -50,7 +53,18 @@ L.Renderer.include({
      * 
      * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
      */
-    _updateTransform: function(center, zoom) {
+    _updateTransform(center, zoom) {
+        if (L.version.startsWith('2.')) {
+            if (this._map._rotate) {
+                const scale = this._map.getZoomScale(zoom, this._zoom),
+                    offset = this._topLeftPoint.multiplyBy(scale)
+                        .subtract(this._map._getNewPixelOrigin(center, zoom));
+
+                L.DomUtil.setTransform(this._container, offset, scale);
+                return;
+            }
+            return rendererBase._updateTransform.apply(this, arguments);
+        }
         if (!this._map._rotate) {
             return rendererProto._updateTransform.apply(this, arguments);
         }
@@ -61,11 +75,37 @@ L.Renderer.include({
         /**
          * @FIXME see path._renderer._reset();
          */
-        var scale = this._map.getZoomScale(zoom, this._zoom),
+        const scale = this._map.getZoomScale(zoom, this._zoom),
             offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
 
         L.DomUtil.setTransform(this._container, offset, scale);
         
+    },
+
+    _onMoveEnd(ev) {
+        if (!L.version.startsWith('2.') || !this._map._rotate) {
+            return rendererBase._onMoveEnd.apply(this, arguments);
+        }
+
+        this._bounds = this._map._getPaddedPixelBounds(this.options.padding);
+        this._topLeft = this._map.layerPointToLatLng(this._bounds.min);
+        this._center = this._map.getCenter();
+        this._zoom = this._map.getZoom();
+        this._topLeftPoint = this._map._getNewPixelOrigin(this._center, this._zoom).add(this._bounds.min);
+        this._updateTransform(this._center, this._zoom);
+        this._resizeContainer();
+        this._onSettled(ev);
+    },
+
+    _resizeContainer() {
+        if (!L.version.startsWith('2.') || !this._map._rotate || !this._bounds) {
+            return rendererBase._resizeContainer.apply(this, arguments);
+        }
+
+        const size = this._bounds.getSize();
+        this._container.style.width = size.x + 'px';
+        this._container.style.height = size.y + 'px';
+        return size;
     },
 
     // getEvents() {
@@ -110,7 +150,7 @@ L.Renderer.include({
     //     }
     // },
 
-    _update: function() {
+    _update() {
         if (!this._map._rotate) {
             return rendererProto._update.apply(this, arguments);
         }

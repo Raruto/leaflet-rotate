@@ -65,27 +65,27 @@ When('I rotate a label marker with the view', async function () {
   this.labelAngles = await this.page.evaluate(() => {
     map.setView([55, 10], 6, { animate: false });
     map.setBearing(0);
-    const label = L.marker([55, 10], {
-      icon: L.divIcon({ className: 'road-label', html: 'Road name' }),
-      rotation: 135 * L.DomUtil.DEG_TO_RAD,
+    const label = new L.Marker([55, 10], {
+      icon: new L.DivIcon({ className: 'road-label', html: 'Road name' }),
+      rotation: 135 * (Math.PI / 180),
       rotateWithView: true,
       keepUpright: true,
     }).addTo(map);
     const center = map.latLngToContainerPoint(label.getLatLng());
-    const direction = 135 * L.DomUtil.DEG_TO_RAD;
-    const road = L.polyline([
+    const direction = 135 * (Math.PI / 180);
+    const road = new L.Polyline([
       map.containerPointToLatLng(center.subtract([20 * Math.cos(direction), 20 * Math.sin(direction)])),
       map.containerPointToLatLng(center.add([20 * Math.cos(direction), 20 * Math.sin(direction)])),
     ]).addTo(map);
     return [0, 45, 90, 180, 270].map(bearing => {
       map.setBearing(bearing);
       const transform = new DOMMatrix(getComputedStyle(label.getElement()).transform);
-      const labelAngle = (Math.atan2(transform.b, transform.a) * L.DomUtil.RAD_TO_DEG + 360) % 360;
+      const labelAngle = (Math.atan2(transform.b, transform.a) * (180 / Math.PI) + 360) % 360;
       const endpoints = road.getLatLngs().map(latlng => map.latLngToContainerPoint(latlng));
       const roadAngle = (Math.atan2(
         endpoints[1].y - endpoints[0].y,
         endpoints[1].x - endpoints[0].x,
-      ) * L.DomUtil.RAD_TO_DEG + 360) % 360;
+      ) * (180 / Math.PI) + 360) % 360;
       return { labelAngle, roadAngle };
     });
   });
@@ -96,13 +96,13 @@ When('I add GeoJSON to a custom pane inside the rotate pane', async function () 
     map.setView([55, 10], 6, { animate: false });
     map.setBearing(35);
     const pane = map.createPane('customGeoJsonPane', map.getPane('rotatePane'));
-    const geoJson = L.geoJSON({
+    const geoJson = new L.GeoJSON({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [10, 55] },
       properties: {},
     }, {
       pane: 'customGeoJsonPane',
-      pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 8 }),
+      pointToLayer: (feature, latlng) => new L.CircleMarker(latlng, { radius: 8 }),
     }).addTo(map);
     const element = geoJson.getLayers()[0].getElement();
     const bounds = element.getBBox();
@@ -120,8 +120,8 @@ When('I add GeoJSON to a custom pane inside the rotate pane', async function () 
 When('I render a Canvas vector layer on a rotated map', async function () {
   this.canvasPane = await this.page.evaluate(() => {
     map.setBearing(35);
-    const renderer = L.canvas({ pane: 'overlayPane' });
-    L.circleMarker([55, 10], { renderer, radius: 8 }).addTo(map);
+    const renderer = new L.Canvas({ pane: 'overlayPane' });
+    new L.CircleMarker([55, 10], { renderer, radius: 8 }).addTo(map);
     return {
       rotating: renderer._container.parentNode === map.getPane('overlayPane')
         && map.getPane('overlayPane').parentNode === map.getPane('rotatePane'),
@@ -132,7 +132,7 @@ When('I render a Canvas vector layer on a rotated map', async function () {
 
 When('I remove the rotate control and change the map bearing', async function () {
   this.removedControl = await this.page.evaluate(() => {
-    const control = L.control.rotate({ closeOnZeroBearing: false }).addTo(map);
+    const control = new L.Control.Rotate({ closeOnZeroBearing: false }).addTo(map);
     map.removeControl(control);
     map.setBearing(40);
     return { bearing: map.getBearing(), attached: Boolean(control._map) };
@@ -141,8 +141,8 @@ When('I remove the rotate control and change the map bearing', async function ()
 
 When('I create default and draggable markers', async function () {
   this.markerDragStates = await this.page.evaluate(() => {
-    const defaultMarker = L.marker([55, 10]).addTo(map);
-    const draggableMarker = L.marker([55.1, 10.1], { draggable: true }).addTo(map);
+    const defaultMarker = new L.Marker([55, 10]).addTo(map);
+    const draggableMarker = new L.Marker([55.1, 10.1], { draggable: true }).addTo(map);
     return [defaultMarker, draggableMarker].map(marker => marker.dragging.enabled());
   });
 });
@@ -171,7 +171,7 @@ When('I focus a marker near the edge of a rotated map', async function () {
     map.setView([55, 10], 6, { animate: false });
     map.setBearing(30);
     const point = map.containerPointToLatLng([35, map.getSize().y / 2]);
-    const marker = L.marker(point, { autoPanOnFocus: true }).addTo(map);
+    const marker = new L.Marker(point, { autoPanOnFocus: true }).addTo(map);
     const before = map.getCenter();
     marker.getElement().focus();
     return before.equals(map.getCenter());
@@ -183,10 +183,10 @@ When('I redraw a heat layer after rotating, panning, and zooming', async functio
     map.setView([55, 10], 6, { animate: false });
     map.setBearing(35);
     L.HeatLayer = L.Layer.extend({
-      initialize: function(latlngs) {
+      initialize(latlngs) {
         this._latlngs = latlngs;
       },
-      onAdd: function(map) {
+      onAdd(map) {
         this._map = map;
         const size = map.getSize();
         this._heat = { _width: size.x, _height: size.y };
@@ -198,41 +198,41 @@ When('I redraw a heat layer after rotating, panning, and zooming', async functio
         map.on('moveend', this._reset, this);
         this._reset();
       },
-      onRemove: function(map) {
+      onRemove(map) {
         map.off('moveend', this._reset, this);
         L.DomUtil.remove(this._canvas);
       },
-      _redraw: function() {
+      _redraw() {
         this._drawnPoints = this._latlngs.map(latlng => this._map.latLngToContainerPoint(latlng));
       },
     });
     L.heatLayer = latlngs => new L.HeatLayer(latlngs);
     globalThis.HeatmapOverlay = L.Layer.extend({
-      initialize: function(latlngs) {
+      initialize(latlngs) {
         this._latlngs = latlngs;
         this._el = L.DomUtil.create('div', 'leaflet-heatmap-overlay');
       },
-      onAdd: function(map) {
+      onAdd(map) {
         this._map = map;
         map.getPane('overlayPane').appendChild(this._el);
         map.on('moveend', this._draw, this);
         this._draw();
       },
-      onRemove: function(map) {
+      onRemove(map) {
         map.off('moveend', this._draw, this);
         L.DomUtil.remove(this._el);
       },
-      _draw: function() {
+      _draw() {
         this._update();
       },
-      _update: function() {
+      _update() {
         this._drawnPoints = this._latlngs.map(latlng => this._map.latLngToContainerPoint(latlng));
       },
     });
   });
   await this.page.addScriptTag({ url: `${this.baseUrl}/misc/leaflet-heat-rotate.js` });
   this.heatPointDeltas = await this.page.evaluate(async () => {
-    const locations = [L.latLng(55.1, 10.1), L.latLng(54.9, 9.8), L.latLng(55.25, 10.3)];
+    const locations = [new L.LatLng(55.1, 10.1), new L.LatLng(54.9, 9.8), new L.LatLng(55.25, 10.3)];
     const layer = L.heatLayer(locations).addTo(map);
     const overlay = new HeatmapOverlay(locations).addTo(map);
     const deltas = [];
@@ -292,8 +292,8 @@ When('I zoom an SVG path near the latitude limit', async function () {
     map.options.zoomAnimation = false;
     map.setView([85, 0], 5, { animate: false });
     map.setBearing(30);
-    const location = L.latLng(85, 0);
-    const path = L.circleMarker(location, { radius: 6 }).addTo(map);
+    const location = new L.LatLng(85, 0);
+    const path = new L.CircleMarker(location, { radius: 6 }).addTo(map);
     const pathPoint = () => {
       const element = path.getElement();
       const bounds = element.getBBox();
@@ -316,7 +316,7 @@ When('I open a popup on a rotated map without zoom animation', async function ()
     map.options.zoomAnimation = false;
     map.setView([55, 10], 6, { animate: false });
     map.setBearing(30);
-    const marker = L.marker([55, 10]).addTo(map).bindPopup('popup');
+    const marker = new L.Marker([55, 10]).addTo(map).bindPopup('popup');
     marker.getElement().click();
     const popup = marker.getPopup();
     const tip = popup.getElement().querySelector('.leaflet-popup-tip-container');
@@ -347,7 +347,7 @@ When('I open a popup near the edge of a rotated map', async function () {
     map.setBearing(30);
     map.on('move zoomend dragend locationfound locationerror', () => {});
     const edge = map.containerPointToLatLng([map.getSize().x - 10, map.getSize().y / 2]);
-    const marker = L.marker(edge).addTo(map).bindPopup('edge popup');
+    const marker = new L.Marker(edge).addTo(map).bindPopup('edge popup');
     const oldCenter = map.project(map.getCenter(), map.getZoom());
     marker.openPopup();
     await new Promise(resolve => {
@@ -380,10 +380,10 @@ When('I open a popup in a second rotated map with map listeners', async function
     element.id = 'secondary-map';
     element.style.cssText = 'height: 300px; width: 500px; margin-top: 40px';
     document.body.append(element);
-    const secondMap = window.secondaryMap = L.map(element, {
+    const secondMap = window.secondaryMap = new L.Map(element, {
       center: [55, 10], zoom: 6, rotate: true, bearing: 30,
     });
-    const marker = L.marker([55.5, 10.5]).addTo(secondMap)
+    const marker = new L.Marker([55.5, 10.5]).addTo(secondMap)
       .bindPopup('popup')
       .bindTooltip('tooltip', { permanent: true, direction: 'right' });
     marker.openTooltip();
@@ -400,7 +400,7 @@ When('I open a popup in a second rotated map with map listeners', async function
       .add(popup._getAnchor()).add(popup.options.offset);
     const tooltip = marker.getTooltip();
     const tooltipRect = tooltip.getElement().getBoundingClientRect();
-    const tooltipOffset = L.point(tooltip.options.offset);
+    const tooltipOffset = tooltip.options.offset || new L.Point(0, 0);
     const tooltipPoint = secondMap.latLngToContainerPoint(marker.getLatLng()).add(tooltip._getAnchor()).add(tooltipOffset);
     const tooltipExpected = [
       tooltipPoint.x + parseFloat(getComputedStyle(tooltip.getElement()).marginLeft),

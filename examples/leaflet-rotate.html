@@ -62,7 +62,7 @@
 		</div>
 
 		<script>
-			var esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+			const esri = new L.TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
 				id: 'mapbox.streets',
 				maxZoom: 24,
 				maxNativeZoom: 18,
@@ -70,14 +70,14 @@
 				// noWrap: true
 			});
 
-			var osm = L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+			const osm = new L.TileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 				maxZoom: 24,
 				maxNativeZoom: 19,
 				attribution: '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 				// noWrap: true
 			});
 
-			var map = L.map('map', {
+			const map = new L.Map('map', {
 				center: [55, 10],
 				zoom: 2,
 				layers: [esri],
@@ -110,17 +110,17 @@
 			// map.rotateControl.setPosition('bottomleft');
 			// map.setMaxBounds([[-90,-180], [90,180]]);
 
-			var layers = L.control.layers({
-				'Empty': L.tileLayer(''),
+			const layers = new L.Control.Layers({
+				'Empty': new L.TileLayer(''),
 				'Streets': osm,
 				'Satellite': esri,
 			}, null, {
 				collapsed: false
 			}).addTo(map);
 
-			var markers = [];
-			for (var i in places) {
-				markers.push(L.marker(places[i], {
+			const markers = [];
+			for (const i in places) {
+				markers.push(new L.Marker(places[i], {
 						draggable: true
 					})
 					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
@@ -133,20 +133,20 @@
 					.addTo(map));
 			}
 
-			var path = L.polyline(route, {
-				renderer: L.canvas()
+			const path = new L.Polyline(route, {
+				renderer: new L.Canvas()
 			}).addTo(map);
 
-			var circle = L.circle([53, 4], 111111)
+			const circle = new L.Circle([53, 4], 111111)
 				.addTo(map);
 
-			var polygon = L.polygon([
+			const polygon = new L.Polygon([
 				[48, -3],
 				[50, -4],
 				[52, 4]
 			]).addTo(map);
 
-			const rectangle = L.rectangle([
+			const rectangle = new L.Rectangle([
 				[60.81123, 25.71632],
 				[60.81028, 25.73166],
 				[60.7997, 25.72892],

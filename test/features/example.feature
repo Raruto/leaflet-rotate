@@ -27,6 +27,11 @@ Feature: Rotating a Leaflet map
     When I apply compass heading readings
     Then valid compass readings update bearing and invalid readings are ignored
 
+  @issue-33 @issue-41
+  Scenario: Shift-wheel rotation can be disabled without disabling wheel zoom
+    When I use shift-wheel rotation with the handler disabled
+    Then shift-wheel input zooms without changing the map bearing
+
   @debugger
   Scenario: Debugger rotation presets and keyboard slider stay synchronized
     When I use the debugger rotation controls
