@@ -52,11 +52,13 @@ L.Map.CompassBearing = L.Handler.extend({
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
      */
     _onDeviceOrientation: function(e) {
-        var angle = e.webkitCompassHeading || e.alpha;
+         var angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
         var deviceOrientation = 0;
 
-        // Safari iOS
-        if (!e.absolute && e.webkitCompassHeading) {
+         if (!Number.isFinite(angle)) { return; }
+
+         // Safari iOS
+         if (!e.absolute && e.webkitCompassHeading) {
             angle = 360 - angle;
         }
 

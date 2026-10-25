@@ -54,6 +54,10 @@ L.Renderer.include({
         if (!this._map._rotate) {
             return rendererProto._updateTransform.apply(this, arguments);
         }
+        if (zoom === this._zoom) {
+            // _reset() has already repositioned the renderer at the current zoom.
+            return;
+        }
         /**
          * @FIXME see path._renderer._reset();
          */

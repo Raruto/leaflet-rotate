@@ -10,6 +10,16 @@ L.Map.mergeOptions({ rotate: false, bearing: 0, });
 
 L.Map.include({
 
+    _animateZoomNoDelay: function(center, zoom) {
+        if (!this._mapPane) { return; }
+
+        this._animatingZoom = true;
+        this._animateToCenter = center;
+        this._animateToZoom = zoom;
+        this._move(center, zoom, undefined, true);
+        this._onZoomTransitionEnd();
+    },
+
     /**
      * @param {(HTMLElement|String)} id html selector
      * @param {Object} [options={}] leaflet map options
@@ -193,12 +203,62 @@ L.Map.include({
      * Change map rotation
      * 
      * @param {number} theta map degrees
+     * @param {Object} [options] animation options
+     * @param {boolean} [options.animate=false]
+     * @param {number} [options.duration=0.25] animation duration in seconds
+     * @param {number} [options.easeLinearity=0.5]
      * 
      * @since leaflet-rotate (v0.1)
      */
-    setBearing: function(theta) {
+    setBearing: function(theta, options) {
         if (!L.Browser.any3d || !this._rotate) { return; }
 
+        if (options && options.animate) {
+            this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
+            var animationId = this._bearingAnimationId;
+            if (this._bearingAnimationFrame) {
+                L.Util.cancelAnimFrame(this._bearingAnimationFrame);
+            }
+
+            var startBearing = this.getBearing(),
+                endBearing = L.Util.wrapNum(theta, [0, 360]),
+                delta = ((endBearing - startBearing + 540) % 360) - 180,
+                duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1000,
+                easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2),
+                startTime = performance.now();
+
+            var animate = function() {
+                if (!this._mapPane) {
+                    delete this._bearingAnimationFrame;
+                    return;
+                }
+
+                var progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
+                    eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
+
+                this._setBearing(progress === 1 ? endBearing : startBearing + delta * eased);
+                if (this._bearingAnimationId !== animationId) { return; }
+                if (progress < 1) {
+                    this._bearingAnimationFrame = L.Util.requestAnimFrame(animate, this);
+                } else {
+                    delete this._bearingAnimationFrame;
+                }
+            };
+
+            this._bearingAnimationFrame = L.Util.requestAnimFrame(animate, this);
+            return;
+        }
+
+        this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
+        if (this._bearingAnimationFrame) {
+            L.Util.cancelAnimFrame(this._bearingAnimationFrame);
+            delete this._bearingAnimationFrame;
+        }
+
+        this._setBearing(theta);
+    },
+
+    _setBearing: function(theta) {
         var bearing = L.Util.wrapNum(theta, [0, 360]) * L.DomUtil.DEG_TO_RAD,
             center = this._getPixelCenter(),
             oldPos = this._getRotatePanePos().rotateFrom(-this._bearing, center),
@@ -322,9 +382,8 @@ L.Map.include({
             // pixelPoint = this.project(latlng),
             // pixelBounds = this.getPixelBounds(),
             // pixelCenter = this.project(this.getCenter()),
-            rect = this._container.getBoundingClientRect(),
             pixelPoint = this.latLngToContainerPoint(latlng),
-            pixelBounds = L.bounds([ L.point(rect), L.point(rect).add(this.getSize()) ]),
+            pixelBounds = L.bounds([L.point(0, 0), this.getSize()]),
             pixelCenter = pixelBounds.getCenter(),
             //
             paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]),
