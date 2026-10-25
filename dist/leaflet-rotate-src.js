@@ -145,10 +145,19 @@ var leafletRotate = (() => {
         return;
       }
       divOverlayProto._updatePosition.apply(this, arguments);
-      if (this._map && this._map._rotate && this._zoomAnimated) {
+      if (this._map._rotate && this._zoomAnimated) {
         var anchor = this._getAnchor();
         var pos = L.DomUtil.getPosition(this._container).subtract(anchor);
         L.DomUtil.setPosition(this._container, this._map.rotatedPointToMapPanePoint(pos).add(anchor));
+      } else if (this._map._rotate) {
+        var mapPanePoint = this._map.rotatedPointToMapPanePoint(this._map.latLngToLayerPoint(this._latlng)), offset = L.point(this.options.offset), anchor = this._getAnchor();
+        this._containerLeft = -Math.round(this._containerWidth / 2) + mapPanePoint.x + offset.x + anchor.x;
+        this._containerBottom = -(mapPanePoint.y + offset.y + anchor.y);
+        this._container.style.left = this._containerLeft + "px";
+        this._container.style.bottom = this._containerBottom + "px";
+        this._container.style.top = "";
+        L.DomUtil.setPosition(this._container, new L.Point(0, 0));
+        this._container.style.transform = "";
       }
     }
   });
@@ -265,6 +274,12 @@ var leafletRotate = (() => {
      */
     rotateWithView: false,
     /**
+     * Flip a rotated marker when needed to keep it upright
+     *
+     * @type {Boolean}
+     */
+    keepUpright: false,
+    /**
      * Scale of the marker icon
      * 
      * @type {Number}
@@ -333,6 +348,13 @@ var leafletRotate = (() => {
       var bearing = this.options.rotation || 0;
       if (this.options.rotateWithView) {
         bearing += this._map._bearing;
+      }
+      if (this.options.keepUpright) {
+        bearing = (bearing % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+        if (bearing > Math.PI / 2 && bearing < 3 * Math.PI / 2) {
+          bearing += Math.PI;
+        }
+        bearing %= 2 * Math.PI;
       }
       if (this._icon) {
         L.DomUtil.setPosition(this._icon, pos, bearing, pos, this.options.scale);
@@ -428,6 +450,9 @@ var leafletRotate = (() => {
       if (!this._map._rotate) {
         return rendererProto._updateTransform.apply(this, arguments);
       }
+      if (zoom === this._zoom) {
+        return;
+      }
       var scale = this._map.getZoomScale(zoom, this._zoom), offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
       L.DomUtil.setTransform(this._container, offset, scale);
     },
@@ -481,6 +506,16 @@ var leafletRotate = (() => {
   var mapProto = L.extend({}, L.Map.prototype);
   L.Map.mergeOptions({ rotate: false, bearing: 0 });
   L.Map.include({
+    _animateZoomNoDelay: function(center, zoom) {
+      if (!this._mapPane) {
+        return;
+      }
+      this._animatingZoom = true;
+      this._animateToCenter = center;
+      this._animateToZoom = zoom;
+      this._move(center, zoom, void 0, true);
+      this._onZoomTransitionEnd();
+    },
     /**
      * @param {(HTMLElement|String)} id html selector
      * @param {Object} [options={}] leaflet map options
@@ -628,13 +663,51 @@ var leafletRotate = (() => {
      * Change map rotation
      * 
      * @param {number} theta map degrees
+     * @param {Object} [options] animation options
+     * @param {boolean} [options.animate=false]
+     * @param {number} [options.duration=0.25] animation duration in seconds
+     * @param {number} [options.easeLinearity=0.5]
      * 
      * @since leaflet-rotate (v0.1)
      */
-    setBearing: function(theta) {
+    setBearing: function(theta, options) {
       if (!L.Browser.any3d || !this._rotate) {
         return;
       }
+      if (options && options.animate) {
+        this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
+        var animationId = this._bearingAnimationId;
+        if (this._bearingAnimationFrame) {
+          L.Util.cancelAnimFrame(this._bearingAnimationFrame);
+        }
+        var startBearing = this.getBearing(), endBearing = L.Util.wrapNum(theta, [0, 360]), delta = (endBearing - startBearing + 540) % 360 - 180, duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1e3, easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2), startTime = performance.now();
+        var animate = function() {
+          if (!this._mapPane) {
+            delete this._bearingAnimationFrame;
+            return;
+          }
+          var progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1, eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
+          this._setBearing(progress === 1 ? endBearing : startBearing + delta * eased);
+          if (this._bearingAnimationId !== animationId) {
+            return;
+          }
+          if (progress < 1) {
+            this._bearingAnimationFrame = L.Util.requestAnimFrame(animate, this);
+          } else {
+            delete this._bearingAnimationFrame;
+          }
+        };
+        this._bearingAnimationFrame = L.Util.requestAnimFrame(animate, this);
+        return;
+      }
+      this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
+      if (this._bearingAnimationFrame) {
+        L.Util.cancelAnimFrame(this._bearingAnimationFrame);
+        delete this._bearingAnimationFrame;
+      }
+      this._setBearing(theta);
+    },
+    _setBearing: function(theta) {
       var bearing = L.Util.wrapNum(theta, [0, 360]) * L.DomUtil.DEG_TO_RAD, center = this._getPixelCenter(), oldPos = this._getRotatePanePos().rotateFrom(-this._bearing, center), newPos = oldPos.rotateFrom(bearing, center);
       L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
       this._pivot = center;
@@ -734,7 +807,7 @@ var leafletRotate = (() => {
         return mapProto.panInside.apply(this, arguments);
       }
       options = options || {};
-      const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]), paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]), rect = this._container.getBoundingClientRect(), pixelPoint = this.latLngToContainerPoint(latlng), pixelBounds = L.bounds([L.point(rect), L.point(rect).add(this.getSize())]), pixelCenter = pixelBounds.getCenter(), paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]), paddedSize = paddedBounds.getSize();
+      const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]), paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]), pixelPoint = this.latLngToContainerPoint(latlng), pixelBounds = L.bounds([L.point(0, 0), this.getSize()]), pixelCenter = pixelBounds.getCenter(), paddedBounds = L.bounds([pixelBounds.min.add(paddingTL), pixelBounds.max.subtract(paddingBR)]), paddedSize = paddedBounds.getSize();
       if (!paddedBounds.contains(pixelPoint)) {
         this._enforcingBounds = true;
         const centerOffset = pixelPoint.subtract(paddedBounds.getCenter());
@@ -1009,8 +1082,11 @@ var leafletRotate = (() => {
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
      */
     _onDeviceOrientation: function(e) {
-      var angle = e.webkitCompassHeading || e.alpha;
+      var angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
       var deviceOrientation = 0;
+      if (!Number.isFinite(angle)) {
+        return;
+      }
       if (!e.absolute && e.webkitCompassHeading) {
         angle = 360 - angle;
       }
@@ -1152,6 +1228,13 @@ var leafletRotate = (() => {
       L.Util.cancelAnimFrame(this._animRequest);
       var moveFn = map._move.bind(map, this._center, this._zoom, { pinch: true, round: false }, void 0);
       this._animRequest = L.Util.requestAnimFrame(moveFn, this, true);
+      if (this.zoom) {
+        if (map.options.zoomAnimation) {
+          map._animateZoomNoDelay(this._center, map._limitZoom(this._zoom));
+        } else {
+          map._resetView(this._center, map._limitZoom(this._zoom));
+        }
+      }
       L.DomEvent.preventDefault(e);
     },
     _onTouchEnd: function() {

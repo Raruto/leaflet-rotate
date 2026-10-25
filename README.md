@@ -41,6 +41,10 @@ After that you can start developing inside the `src` and `test` folders (eg. ope
 
 Be aware that this library overrides notable parts of leaflet core via the [L.Class.include()](https://leafletjs.com/examples/extending/extending-1-classes.html) function in order to make the rotate feature usable as a standalone plug-in.
 
+For [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) or [heatmap.js's Leaflet plugin](https://github.com/pa7/heatmap.js/tree/master/plugins/leaflet-heatmap), load `misc/leaflet-heat-rotate.js` after the heatmap plugin. It adapts heat redraw coordinates to the rotated pane.
+
+Markers with `rotateWithView: true` can use `keepUpright: true` to remain readable while preserving their line alignment.
+
 Initial changes to this project have been apported by comparing the following branches: [https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master](https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master) (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
 
 ---

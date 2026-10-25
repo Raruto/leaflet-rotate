@@ -26,6 +26,13 @@ L.Marker.mergeOptions({
     rotateWithView: false,
 
     /**
+     * Flip a rotated marker when needed to keep it upright
+     *
+     * @type {Boolean}
+     */
+    keepUpright: false,
+
+    /**
      * Scale of the marker icon
      * 
      * @type {Number}
@@ -127,6 +134,13 @@ L.Marker.include({
         var bearing = this.options.rotation || 0;
         if (this.options.rotateWithView) {
             bearing += this._map._bearing;
+        }
+        if (this.options.keepUpright) {
+            bearing = ((bearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+            if (bearing > Math.PI / 2 && bearing < 3 * Math.PI / 2) {
+                bearing += Math.PI;
+            }
+            bearing %= 2 * Math.PI;
         }
 
         /** @TODO use markerProto._setPos */
