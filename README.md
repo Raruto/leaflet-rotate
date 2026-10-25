@@ -30,7 +30,7 @@ cd ./leaflet-rotate
 npm i         # install dependencies
 npm run dev   # start dev server at: http://localhost:8080
 npm run build # generate "dist" files (once)
-npm run test  # test all "*.spec.js" files (once)
+npm run test  # build and run browser tests
 ```
 
 After that you can start developing inside the `src` and `test` folders (eg. open "http://localhost:8080/test" in your browser to preview changes).
