@@ -400,7 +400,7 @@ When('I open a popup in a second rotated map with map listeners', async function
       .add(popup._getAnchor()).add(popup.options.offset);
     const tooltip = marker.getTooltip();
     const tooltipRect = tooltip.getElement().getBoundingClientRect();
-    const tooltipOffset = new L.Point(tooltip.options.offset.x, tooltip.options.offset.y);
+    const tooltipOffset = tooltip.options.offset || new L.Point(0, 0);
     const tooltipPoint = secondMap.latLngToContainerPoint(marker.getLatLng()).add(tooltip._getAnchor()).add(tooltipOffset);
     const tooltipExpected = [
       tooltipPoint.x + parseFloat(getComputedStyle(tooltip.getElement()).marginLeft),

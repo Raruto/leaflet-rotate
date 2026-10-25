@@ -30,7 +30,7 @@ Before(async function () {
     let body = (await response.text())
       .replace(/https:\/\/unpkg\.com\/leaflet-rotate@(.*?)\//g, '../')
       .replace(/leaflet-rotate@(.*?)\//g, '../')
-      .replace(/\bconst (map|esri|osm|markers|path|circle|polygon|rectangle) =/g, 'const $1 = window.$1 =');
+      .replace(/\bconst (map|esri|osm|layers|markers|path|circle|polygon|rectangle) =/g, 'const $1 = window.$1 =');
     if (version === '2') {
       body = body
         .replace('<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>', `<script>
