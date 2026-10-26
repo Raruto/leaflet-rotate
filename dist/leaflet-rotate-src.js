@@ -138,7 +138,21 @@ var leafletRotate = (() => {
      * @listens L.Map~rotate
      */
     getEvents() {
-      return Object.assign(divOverlayProto.getEvents.apply(this, arguments), { rotate: this._updatePosition });
+      const events = Object.assign(divOverlayProto.getEvents.apply(this, arguments), {
+        rotate: this._updatePosition,
+        pitch: this._updatePitchEvents
+      });
+      if (this._map && this._map._pitch) {
+        events.move = this._updatePosition;
+      }
+      return events;
+    },
+    _updatePitchEvents() {
+      if (this._map._pitch) {
+        this._map.on("move", this._updatePosition, this);
+      } else {
+        this._map.off("move", this._updatePosition, this);
+      }
     },
     /**
      * 0. update element anchor point (divOverlayProto v1.9.3)
@@ -331,7 +345,21 @@ var leafletRotate = (() => {
      * @listens L.Map~rotate
      */
     getEvents() {
-      return Object.assign(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
+      const events = Object.assign(markerProto.getEvents.apply(this, arguments), {
+        rotate: this.update,
+        pitch: this._updatePitchEvents
+      });
+      if (this._map && this._map._pitch) {
+        events.move = this.update;
+      }
+      return events;
+    },
+    _updatePitchEvents() {
+      if (this._map._pitch) {
+        this._map.on("move", this.update, this);
+      } else {
+        this._map.off("move", this.update, this);
+      }
     },
     _initInteraction() {
       const ret = markerProto._initInteraction.apply(this, arguments);
@@ -414,6 +442,7 @@ var leafletRotate = (() => {
   var rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
   var rendererBase = Object.getPrototypeOf(L.Renderer.prototype);
   var rendererGetEvents = rendererProto.getEvents || rendererBase.getEvents;
+  var rendererOnMoveEnd = rendererProto._onMoveEnd || rendererBase._onMoveEnd;
   L.Renderer.include({
     /**
      * Redraw L.Canvas and L.SVG renderer bounds after the
@@ -423,7 +452,18 @@ var leafletRotate = (() => {
      */
     getEvents() {
       const events = rendererGetEvents.apply(this, arguments);
-      return L.version.startsWith("2.") ? events : Object.assign(events, { rotate: this._update });
+      return Object.assign(events, { rotate: this._onRotate });
+    },
+    _onRotate() {
+      if (!this._map._rotate) {
+        return;
+      }
+      this._onZoomEnd();
+      if (L.version.startsWith("2.")) {
+        this._onMoveEnd();
+      } else {
+        this._update();
+      }
     },
     /**
      * Fix for `map.flyTo()` when `false === map.options.zoomAnimation`
@@ -475,7 +515,7 @@ var leafletRotate = (() => {
     },
     _onMoveEnd(ev) {
       if (!L.version.startsWith("2.") || !this._map._rotate) {
-        return rendererBase._onMoveEnd.apply(this, arguments);
+        return rendererOnMoveEnd.apply(this, arguments);
       }
       this._bounds = this._map._getPaddedPixelBounds(this.options.padding);
       this._topLeft = this._map.layerPointToLatLng(this._bounds.min);
@@ -543,7 +583,7 @@ var leafletRotate = (() => {
 
   // src/map/Map.js
   var mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
-  L.Map.mergeOptions({ rotate: false, bearing: 0 });
+  L.Map.mergeOptions({ rotate: false, bearing: 0, pitch: 0 });
   L.Map.include({
     _animateZoomNoDelay(center, zoom) {
       if (!this._mapPane) {
@@ -563,10 +603,13 @@ var leafletRotate = (() => {
       if (options.rotate) {
         this._rotate = true;
         this._bearing = 0;
+        this._pitch = 0;
       }
       mapProto.initialize.apply(this, arguments);
       if (this.options.rotate) {
+        this.on("resize", this._updatePitchTransform, this);
         this.setBearing(this.options.bearing);
+        this.setPitch(this.options.pitch);
       }
     },
     /**
@@ -581,6 +624,12 @@ var leafletRotate = (() => {
       if (!this._rotate) {
         return mapProto.containerPointToLayerPoint.apply(this, arguments);
       }
+      if (this._pitch) {
+        return this._transformPitchPoint(
+          toPoint(point).subtract(this._getMapPanePos()),
+          this._pitchInverseTransform
+        );
+      }
       return toPoint(point).subtract(this._getMapPanePos()).rotateFrom(-this._bearing, this._getRotatePanePos()).subtract(this._getRotatePanePos());
     },
     /**
@@ -593,6 +642,9 @@ var leafletRotate = (() => {
     layerPointToContainerPoint(point) {
       if (!this._rotate) {
         return mapProto.layerPointToContainerPoint.apply(this, arguments);
+      }
+      if (this._pitch) {
+        return this._transformPitchPoint(point, this._pitchTransform).add(this._getMapPanePos());
       }
       return toPoint(point).add(this._getRotatePanePos()).rotateFrom(this._bearing, this._getRotatePanePos()).add(this._getMapPanePos());
     },
@@ -609,6 +661,9 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1)
      */
     rotatedPointToMapPanePoint(point) {
+      if (this._pitch) {
+        return this._transformPitchPoint(point, this._pitchTransform);
+      }
       return toPoint(point).rotate(this._bearing)._add(this._getRotatePanePos());
     },
     /**
@@ -623,6 +678,9 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1)
      */
     mapPanePointToRotatedPoint(point) {
+      if (this._pitch) {
+        return this._transformPitchPoint(point, this._pitchInverseTransform);
+      }
       return toPoint(point)._subtract(this._getRotatePanePos()).rotate(-this._bearing);
     },
     // latLngToLayerPoint(latlng) {
@@ -746,13 +804,94 @@ var leafletRotate = (() => {
       }
       this._setBearing(theta);
     },
-    _setBearing(theta) {
+    _setBearing(theta, mapCenter) {
+      if (!mapCenter && this._loaded) {
+        mapCenter = this.getCenter();
+      }
       const bearing = L.Util.wrapNum(theta, [0, 360]) * (Math.PI / 180), center = this._getPixelCenter(), oldPos = this._getRotatePanePos().rotateFrom(-this._bearing, center), newPos = oldPos.rotateFrom(bearing, center);
-      L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
       this._pivot = center;
       this._bearing = bearing;
       this._rotatePanePos = newPos;
+      if (this._pitch) {
+        this._rotatePane._leaflet_pos = oldPos;
+        this._updatePitchTransform();
+      } else {
+        L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
+      }
+      if (mapCenter) {
+        this._pixelOrigin = this.project(mapCenter, this._zoom).subtract(this.containerPointToLayerPoint(this.getSize().divideBy(2)));
+        delete this._lastCenter;
+        this.fire("move");
+      }
       this.fire("rotate");
+    },
+    _transformPitchPoint(point, matrix) {
+      point = toPoint(point);
+      if (!(matrix instanceof DOMMatrix)) {
+        const denominator = matrix.g * point.x + matrix.h * point.y + matrix.i;
+        return new L.Point(
+          (matrix.a * point.x + matrix.b * point.y + matrix.c) / denominator,
+          (matrix.d * point.x + matrix.e * point.y + matrix.f) / denominator
+        );
+      }
+      const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+      return new L.Point(transformed.x / transformed.w, transformed.y / transformed.w);
+    },
+    _updatePitchTransform() {
+      if (!this._pitch || !this._rotatePane) {
+        return;
+      }
+      const pivot = this._getPixelCenter(), size = this.getSize(), perspective = Math.max(1, size.y * 1.5), position = this._rotatePane._leaflet_pos || new L.Point(0, 0), transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
+      this._rotatePane.style.transformOrigin = "0 0";
+      this._rotatePane.style.transform = transform;
+      const matrix = this._pitchTransform = new DOMMatrix(getComputedStyle(this._rotatePane).transform), a = matrix.m11, b = matrix.m21, c = matrix.m41, d = matrix.m12, e = matrix.m22, f = matrix.m42, g = matrix.m14, h = matrix.m24, i = matrix.m44, determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+      this._pitchInverseTransform = {
+        a: (e * i - f * h) / determinant,
+        b: (c * h - b * i) / determinant,
+        c: (b * f - c * e) / determinant,
+        d: (f * g - d * i) / determinant,
+        e: (a * i - c * g) / determinant,
+        f: (c * d - a * f) / determinant,
+        g: (d * h - e * g) / determinant,
+        h: (b * g - a * h) / determinant,
+        i: (a * e - b * d) / determinant
+      };
+    },
+    /**
+     * Set the map pitch in degrees. Values are clamped to the range 0–85.
+     *
+     * @param {number} pitch
+     * @returns {L.Map}
+     */
+    setPitch(pitch) {
+      this._setPitchAndBearing(pitch, this.getBearing());
+      return this;
+    },
+    _setPitchAndBearing(pitch, bearing) {
+      if (!this._rotate) {
+        return;
+      }
+      const clampedPitch = Math.max(0, Math.min(pitch, 85)) * (Math.PI / 180), clampedBearing = L.Util.wrapNum(bearing, [0, 360]) * (Math.PI / 180), pitchChanged = clampedPitch !== this._pitch;
+      if (!pitchChanged && clampedBearing === this._bearing) {
+        return;
+      }
+      const mapCenter = this._loaded ? this.getCenter() : void 0;
+      if (pitchChanged) {
+        this._pitch = clampedPitch;
+        this._rotatePane.style.transformOrigin = L.version.startsWith("2.") ? "0 0" : "";
+      }
+      this._setBearing(bearing, mapCenter);
+      if (pitchChanged) {
+        this.fire("pitch");
+      }
+    },
+    /**
+     * Get the map pitch in degrees.
+     *
+     * @returns {number}
+     */
+    getPitch() {
+      return (this._pitch || 0) * (180 / Math.PI);
     },
     /**
      * Get current map rotation
@@ -845,7 +984,7 @@ var leafletRotate = (() => {
      * @returns {L.Map} current map instance
      */
     panInside(latlng, options) {
-      if (!this._rotate || Math.abs(this._bearing).toFixed(1) < 0.1) {
+      if (!this._rotate || !this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1) {
         return mapProto.panInside.apply(this, arguments);
       }
       options = options || {};
@@ -945,7 +1084,7 @@ var leafletRotate = (() => {
      * @returns {Number} zoom level
      */
     getBoundsZoom(bounds, inside, padding) {
-      if (!this._rotate || Math.abs(this._bearing).toFixed(1) < 0.1) {
+      if (!this._rotate || !this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1) {
         return mapProto.getBoundsZoom.apply(this, arguments);
       }
       bounds = bounds instanceof L.LatLngBounds ? bounds : new L.LatLngBounds(bounds);
@@ -974,7 +1113,10 @@ var leafletRotate = (() => {
      */
     _getCenterOffset(latlng) {
       let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
-      if (this._rotate) {
+      if (this._pitch) {
+        const center = this.getSize()._divideBy(2);
+        centerOffset = this.containerPointToLayerPoint(center.add(centerOffset)).subtract(this.containerPointToLayerPoint(center));
+      } else if (this._rotate) {
         centerOffset = centerOffset.rotate(this._bearing);
       }
       return centerOffset;
@@ -1267,8 +1409,8 @@ var leafletRotate = (() => {
           if (scale === 1 && delta.x === 0 && delta.y === 0) {
             return;
           }
-          const alpha = -map.getBearing() * (Math.PI / 180);
-          this._center = map.unproject(map.project(this._pinchStartLatLng).subtract(delta.rotate(alpha)));
+          const mapDelta = map._pitch ? map.containerPointToLayerPoint(this._centerPoint.add(delta)).subtract(map.containerPointToLayerPoint(this._centerPoint)) : delta.rotate(-map.getBearing() * (Math.PI / 180));
+          this._center = map.unproject(map.project(this._pinchStartLatLng).subtract(mapDelta));
         }
       }
       if (!this._moved) {
@@ -1331,30 +1473,106 @@ var leafletRotate = (() => {
      * Whether the map can be rotated with shift + wheel scroll
      * @type {Boolean}
      */
-    shiftKeyRotate: true
+    shiftKeyRotate: true,
+    pitchDrag: true
   });
   L.Map.ShiftKeyRotate = L.Handler.extend({
+    initialize(map) {
+      this._map = map;
+      this._onMouseDownBound = this._onMouseDown.bind(this);
+      this._onMouseMoveBound = this._onMouseMove.bind(this);
+      this._onMouseUpBound = this._onMouseUp.bind(this);
+    },
     addHooks() {
-      L.DomEvent.on(this._map._container, "wheel", this._handleShiftScroll, this);
-      this._map.shiftKeyRotate.rotate = true;
+      if (this._map.options.shiftKeyRotate) {
+        L.DomEvent.on(this._map._container, "wheel", this._handleShiftScroll, this);
+      }
+      if (this._map.options.pitchDrag) {
+        this.addPitchHooks();
+      }
     },
     removeHooks() {
       L.DomEvent.off(this._map._container, "wheel", this._handleShiftScroll, this);
-      this._map.shiftKeyRotate.rotate = false;
+      this.removePitchHooks();
+    },
+    addPitchHooks() {
+      if (this._pitchHooksAdded) {
+        return;
+      }
+      this._pitchEvents = L.version.startsWith("2.") ? ["pointerdown", "pointermove", "pointerup pointercancel"] : ["mousedown", "mousemove", "mouseup"];
+      this._map._container.addEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
+      this._pitchHooksAdded = true;
+    },
+    removePitchHooks() {
+      if (!this._pitchHooksAdded) {
+        return;
+      }
+      this._map._container.removeEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
+      this._onMouseUp();
+      delete this._pitchEvents;
+      this._pitchHooksAdded = false;
     },
     _handleShiftScroll(e) {
       if (e.shiftKey) {
         e.preventDefault();
         this._map.scrollWheelZoom.disable();
-        this._map.setBearing(this._map._bearing * (180 / Math.PI) + Math.sign(e.deltaY) * 5);
+        this._map.setBearing(this._map.getBearing() + Math.sign(e.deltaY) * 5);
       } else {
         this._map.scrollWheelZoom.enable();
       }
+    },
+    _onMouseDown(e) {
+      if (!this._map._rotate || !this._map.options.pitchDrag || !e.ctrlKey || e.button !== 0) {
+        return;
+      }
+      const scrollWheelZoom = this._map.scrollWheelZoom;
+      if (scrollWheelZoom && scrollWheelZoom._timer) {
+        clearTimeout(scrollWheelZoom._timer);
+        scrollWheelZoom._timer = null;
+        scrollWheelZoom._delta = 0;
+        scrollWheelZoom._startTime = null;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      this._lastX = e.clientX;
+      this._lastY = e.clientY;
+      document.addEventListener(this._pitchEvents[1], this._onMouseMoveBound);
+      for (const event of this._pitchEvents[2].split(" ")) {
+        document.addEventListener(event, this._onMouseUpBound);
+      }
+    },
+    _onMouseMove(e) {
+      this._map._setPitchAndBearing(
+        this._map.getPitch() + (this._lastY - e.clientY) * 0.5,
+        this._map.getBearing() + (e.clientX - this._lastX) * 0.8
+      );
+      this._lastX = e.clientX;
+      this._lastY = e.clientY;
+      e.preventDefault();
+    },
+    _onMouseUp() {
+      if (!this._pitchEvents) {
+        return;
+      }
+      document.removeEventListener(this._pitchEvents[1], this._onMouseMoveBound);
+      for (const event of this._pitchEvents[2].split(" ")) {
+        document.removeEventListener(event, this._onMouseUpBound);
+      }
+      delete this._lastX;
+      delete this._lastY;
     }
   });
-  L.Map.addInitHook("addHandler", "shiftKeyRotate", L.Map.ShiftKeyRotate);
   L.Map.addInitHook(function() {
-    if (this.scrollWheelZoom.enabled() && this.shiftKeyRotate.enabled()) {
+    if (this.options.shiftKeyRotate) {
+      this.shiftKeyRotate = new L.Map.ShiftKeyRotate(this);
+      this.shiftKeyRotate.enable();
+    } else if (this.options.pitchDrag) {
+      this.shiftKeyRotate = new L.Map.ShiftKeyRotate(this);
+      this.shiftKeyRotate.addPitchHooks();
+      this.on("unload", this.shiftKeyRotate.removePitchHooks, this.shiftKeyRotate);
+    }
+    if (this.scrollWheelZoom.enabled() && this.options.shiftKeyRotate) {
       this.scrollWheelZoom.disable();
       this.scrollWheelZoom.enable();
     }

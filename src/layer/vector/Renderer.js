@@ -7,6 +7,7 @@
 const rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
 const rendererBase = Object.getPrototypeOf(L.Renderer.prototype);
 const rendererGetEvents = rendererProto.getEvents || rendererBase.getEvents;
+const rendererOnMoveEnd = rendererProto._onMoveEnd || rendererBase._onMoveEnd;
 
 L.Renderer.include({
 
@@ -18,7 +19,17 @@ L.Renderer.include({
      */
     getEvents() {
         const events = rendererGetEvents.apply(this, arguments);
-        return L.version.startsWith('2.') ? events : Object.assign(events, { rotate: this._update });
+        return Object.assign(events, { rotate: this._onRotate });
+    },
+
+    _onRotate() {
+        if (!this._map._rotate) { return; }
+        this._onZoomEnd();
+        if (L.version.startsWith('2.')) {
+            this._onMoveEnd();
+        } else {
+            this._update();
+        }
     },
 
     /**
@@ -84,7 +95,7 @@ L.Renderer.include({
 
     _onMoveEnd(ev) {
         if (!L.version.startsWith('2.') || !this._map._rotate) {
-            return rendererBase._onMoveEnd.apply(this, arguments);
+            return rendererOnMoveEnd.apply(this, arguments);
         }
 
         this._bounds = this._map._getPaddedPixelBounds(this.options.padding);

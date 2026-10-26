@@ -33,22 +33,10 @@ Before(async function () {
       .replace(/\bconst (map|esri|osm|layers|markers|path|circle|polygon|rectangle) =/g, 'const $1 = window.$1 =');
     if (version === '2') {
       body = body
-        .replace('<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>', `<script>
-          globalThis.__leafletLoading = import('https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js').then(async leaflet => {
-            globalThis.L = Object.assign({}, leaflet);
-            for (const src of ['../dist/leaflet-rotate-src.js', '../misc/route.js', '../misc/places.js', '../misc/loremIpsum.js', '../lib/debug.js']) {
-              await new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = src;
-                script.onload = resolve;
-                script.onerror = () => reject(new Error(\`Could not load \${src}\`));
-                document.head.appendChild(script);
-              });
-            }
-          });
-        </script>`)
-        .replace(/<script src="\.\.\/(?:dist|misc|lib)\/[^"]+"><\/script>/g, '')
-        .replace(/<script>\s*(const esri[\s\S]*?L\.Rotate\.debug\(map\);\s*)<\/script>/, '<script>globalThis.__leafletLoading.then(() => {$1});</script>')
+        .replace(
+          '<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>',
+          '<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script><script>globalThis.L = globalThis.leaflet;</script>'
+        )
         .replace('https://unpkg.com/leaflet@1.9/dist/leaflet.css', 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css');
     }
     await route.fulfill({ response, body, headers: response.headers() });

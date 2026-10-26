@@ -17,7 +17,22 @@ L.DivOverlay.include({
      * @listens L.Map~rotate
      */
     getEvents() {
-        return Object.assign(divOverlayProto.getEvents.apply(this, arguments), { rotate: this._updatePosition });
+        const events = Object.assign(divOverlayProto.getEvents.apply(this, arguments), {
+            rotate: this._updatePosition,
+            pitch: this._updatePitchEvents,
+        });
+        if (this._map && this._map._pitch) {
+            events.move = this._updatePosition;
+        }
+        return events;
+    },
+
+    _updatePitchEvents() {
+        if (this._map._pitch) {
+            this._map.on('move', this._updatePosition, this);
+        } else {
+            this._map.off('move', this._updatePosition, this);
+        }
     },
 
     /**

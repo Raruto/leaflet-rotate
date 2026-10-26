@@ -8,7 +8,7 @@ import { toPoint } from '../geometry/Point';
 
 const mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
 
-L.Map.mergeOptions({ rotate: false, bearing: 0, });
+L.Map.mergeOptions({ rotate: false, bearing: 0, pitch: 0, });
 
 L.Map.include({
 
@@ -30,10 +30,13 @@ L.Map.include({
         if (options.rotate) {
             this._rotate = true;
             this._bearing = 0;
+            this._pitch = 0;
         }
         mapProto.initialize.apply(this, arguments);
-        if(this.options.rotate){
-          this.setBearing(this.options.bearing);
+        if (this.options.rotate) {
+            this.on('resize', this._updatePitchTransform, this);
+            this.setBearing(this.options.bearing);
+            this.setPitch(this.options.pitch);
         }
     },
 
@@ -48,6 +51,12 @@ L.Map.include({
     containerPointToLayerPoint(point) {
         if (!this._rotate) {
             return mapProto.containerPointToLayerPoint.apply(this, arguments);
+        }
+        if (this._pitch) {
+            return this._transformPitchPoint(
+                toPoint(point).subtract(this._getMapPanePos()),
+                this._pitchInverseTransform
+            );
         }
         return toPoint(point)
             .subtract(this._getMapPanePos())
@@ -65,6 +74,9 @@ L.Map.include({
     layerPointToContainerPoint(point) {
         if (!this._rotate) {
             return mapProto.layerPointToContainerPoint.apply(this, arguments);
+        }
+        if (this._pitch) {
+            return this._transformPitchPoint(point, this._pitchTransform).add(this._getMapPanePos());
         }
         return toPoint(point)
             .add(this._getRotatePanePos())
@@ -85,6 +97,9 @@ L.Map.include({
      * @since leaflet-rotate (v0.1)
      */
     rotatedPointToMapPanePoint(point) {
+        if (this._pitch) {
+            return this._transformPitchPoint(point, this._pitchTransform);
+        }
         return toPoint(point)
             .rotate(this._bearing)
             ._add(this._getRotatePanePos());
@@ -102,6 +117,9 @@ L.Map.include({
      * @since leaflet-rotate (v0.1)
      */
     mapPanePointToRotatedPoint(point) {
+        if (this._pitch) {
+            return this._transformPitchPoint(point, this._pitchInverseTransform);
+        }
         return toPoint(point)
             ._subtract(this._getRotatePanePos())
             .rotate(-this._bearing);
@@ -260,20 +278,117 @@ L.Map.include({
         this._setBearing(theta);
     },
 
-    _setBearing(theta) {
+    _setBearing(theta, mapCenter) {
+        if (!mapCenter && this._loaded) {
+            mapCenter = this.getCenter();
+        }
+
         const bearing = L.Util.wrapNum(theta, [0, 360]) * (Math.PI / 180),
             center = this._getPixelCenter(),
             oldPos = this._getRotatePanePos().rotateFrom(-this._bearing, center),
             newPos = oldPos.rotateFrom(bearing, center);
 
-        // CSS transform
-        L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
-
         this._pivot = center;
         this._bearing = bearing;
         this._rotatePanePos = newPos;
 
+        if (this._pitch) {
+            this._rotatePane._leaflet_pos = oldPos;
+            this._updatePitchTransform();
+        } else {
+            L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
+        }
+
+        if (mapCenter) {
+            this._pixelOrigin = this.project(mapCenter, this._zoom)
+                .subtract(this.containerPointToLayerPoint(this.getSize().divideBy(2)));
+            delete this._lastCenter;
+            this.fire('move');
+        }
+
         this.fire('rotate');
+    },
+
+    _transformPitchPoint(point, matrix) {
+        point = toPoint(point);
+        if (!(matrix instanceof DOMMatrix)) {
+            const denominator = matrix.g * point.x + matrix.h * point.y + matrix.i;
+            return new L.Point(
+                (matrix.a * point.x + matrix.b * point.y + matrix.c) / denominator,
+                (matrix.d * point.x + matrix.e * point.y + matrix.f) / denominator
+            );
+        }
+        const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
+        return new L.Point(transformed.x / transformed.w, transformed.y / transformed.w);
+    },
+
+    _updatePitchTransform() {
+        if (!this._pitch || !this._rotatePane) { return; }
+
+        const pivot = this._getPixelCenter(),
+            size = this.getSize(),
+            perspective = Math.max(1, size.y * 1.5),
+            position = this._rotatePane._leaflet_pos || new L.Point(0, 0),
+            transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
+
+        this._rotatePane.style.transformOrigin = '0 0';
+        this._rotatePane.style.transform = transform;
+        const matrix = this._pitchTransform = new DOMMatrix(getComputedStyle(this._rotatePane).transform),
+            a = matrix.m11, b = matrix.m21, c = matrix.m41,
+            d = matrix.m12, e = matrix.m22, f = matrix.m42,
+            g = matrix.m14, h = matrix.m24, i = matrix.m44,
+            determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+
+        this._pitchInverseTransform = {
+            a: (e * i - f * h) / determinant,
+            b: (c * h - b * i) / determinant,
+            c: (b * f - c * e) / determinant,
+            d: (f * g - d * i) / determinant,
+            e: (a * i - c * g) / determinant,
+            f: (c * d - a * f) / determinant,
+            g: (d * h - e * g) / determinant,
+            h: (b * g - a * h) / determinant,
+            i: (a * e - b * d) / determinant,
+        };
+    },
+
+    /**
+     * Set the map pitch in degrees. Values are clamped to the range 0–85.
+     *
+     * @param {number} pitch
+     * @returns {L.Map}
+     */
+    setPitch(pitch) {
+        this._setPitchAndBearing(pitch, this.getBearing());
+        return this;
+    },
+
+    _setPitchAndBearing(pitch, bearing) {
+        if (!this._rotate) { return; }
+
+        const clampedPitch = Math.max(0, Math.min(pitch, 85)) * (Math.PI / 180),
+            clampedBearing = L.Util.wrapNum(bearing, [0, 360]) * (Math.PI / 180),
+            pitchChanged = clampedPitch !== this._pitch;
+        if (!pitchChanged && clampedBearing === this._bearing) { return; }
+
+        const mapCenter = this._loaded ? this.getCenter() : undefined;
+        if (pitchChanged) {
+            this._pitch = clampedPitch;
+            this._rotatePane.style.transformOrigin = L.version.startsWith('2.') ? '0 0' : '';
+        }
+        this._setBearing(bearing, mapCenter);
+        if (pitchChanged) {
+            this.fire('pitch');
+        }
+    },
+
+    /**
+     * Get the map pitch in degrees.
+     *
+     * @returns {number}
+     */
+    getPitch() {
+        return (this._pitch || 0) * (180 / Math.PI);
     },
 
     /**
@@ -375,7 +490,7 @@ L.Map.include({
      * @returns {L.Map} current map instance
      */
     panInside(latlng, options) {
-        if (!this._rotate || Math.abs(this._bearing).toFixed(1) < 0.1) {
+        if (!this._rotate || (!this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1)) {
             return mapProto.panInside.apply(this, arguments);
         }
 
@@ -497,7 +612,7 @@ L.Map.include({
      * @returns {Number} zoom level
      */
     getBoundsZoom(bounds, inside, padding) {
-        if (!this._rotate || Math.abs(this._bearing).toFixed(1) < 0.1) {
+        if (!this._rotate || (!this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1)) {
             return mapProto.getBoundsZoom.apply(this, arguments);
         }
 
@@ -545,7 +660,11 @@ L.Map.include({
      */
     _getCenterOffset(latlng) {
         let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
-        if (this._rotate) {
+        if (this._pitch) {
+            const center = this.getSize()._divideBy(2);
+            centerOffset = this.containerPointToLayerPoint(center.add(centerOffset))
+                .subtract(this.containerPointToLayerPoint(center));
+        } else if (this._rotate) {
             centerOffset = centerOffset.rotate(this._bearing);
         }
         return centerOffset;

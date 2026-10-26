@@ -104,7 +104,22 @@ L.Marker.include({
      * @listens L.Map~rotate
      */
     getEvents() {
-        return Object.assign(markerProto.getEvents.apply(this, arguments), { rotate: this.update });
+        const events = Object.assign(markerProto.getEvents.apply(this, arguments), {
+            rotate: this.update,
+            pitch: this._updatePitchEvents,
+        });
+        if (this._map && this._map._pitch) {
+            events.move = this.update;
+        }
+        return events;
+    },
+
+    _updatePitchEvents() {
+        if (this._map._pitch) {
+            this._map.on('move', this.update, this);
+        } else {
+            this._map.off('move', this.update, this);
+        }
     },
 
     _initInteraction() {

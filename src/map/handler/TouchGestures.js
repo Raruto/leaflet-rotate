@@ -133,9 +133,12 @@ L.Map.TouchGestures = L.Handler.extend({
                 delta = p1._add(p2)._divideBy(2)._subtract(this._centerPoint);
                 if (scale === 1 && delta.x === 0 && delta.y === 0) { return; }
 
-                const alpha = -map.getBearing() * (Math.PI / 180);
+                const mapDelta = map._pitch
+                    ? map.containerPointToLayerPoint(this._centerPoint.add(delta))
+                        .subtract(map.containerPointToLayerPoint(this._centerPoint))
+                    : delta.rotate(-map.getBearing() * (Math.PI / 180));
 
-                this._center = map.unproject(map.project(this._pinchStartLatLng).subtract(delta.rotate(alpha)));
+                this._center = map.unproject(map.project(this._pinchStartLatLng).subtract(mapDelta));
             }
 
         }

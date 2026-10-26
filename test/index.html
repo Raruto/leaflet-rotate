@@ -83,7 +83,8 @@
 				: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
 
 			if (version === '2') {
-				globalThis.L = await import('https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js');
+				await loadScript('https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js');
+				globalThis.L = globalThis.leaflet;
 			} else {
 				await loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.js');
 			}
