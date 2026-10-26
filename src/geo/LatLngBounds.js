@@ -1,4 +1,7 @@
 /**
+ * Leaflet's `L.LatLngBounds` is not overridden by this plugin. Map methods
+ * such as `getBounds()` return standard Leaflet bounds containing the viewport.
+ *
  * @external L.LatLngBounds
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/geo/LatLngBounds.js

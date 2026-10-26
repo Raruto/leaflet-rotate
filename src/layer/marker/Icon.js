@@ -1,4 +1,6 @@
 /**
+ * Applies icon-anchor transform origins so marker rotation pivots around its anchor.
+ *
  * @external L.Icon
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Icon.js
@@ -8,6 +10,12 @@ const iconProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L
 
 L.Icon.include({
 
+    /**
+     * Set marker icon dimensions and anchor styles, including the rotation origin.
+     * 
+     * @param {HTMLImageElement} img Icon or shadow element.
+     * @param {string} name Icon style key (`icon` or `shadow`).
+     */
     _setIconStyles(img, name) {
         const options = this.options;
         let sizeOption = options[name + 'Size'];

@@ -1,4 +1,6 @@
 /**
+ * Preserves popup positioning and auto-pan behavior on rotated maps.
+ *
  * @external L.Popup
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/Popup.js
@@ -11,8 +13,9 @@ const popupProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(
 L.Popup.include({
 
     /**
-     * 0. update element anchor point (popupProto v1.9.3)
-     * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
+     * Update the popup position during zoom animation and transform it into map-pane coordinates.
+     *
+     * @param {Object} e Zoom animation event.
      */
     _animateZoom(e) {
         popupProto._animateZoom.apply(this, arguments);
@@ -24,9 +27,11 @@ L.Popup.include({
     },
 
     /**
-     * Fix for L.popup({ keepInView = true })
+     * Pan the map when a popup with auto-pan enabled would extend beyond the viewport.
      * 
      * @see https://github.com/fnicollet/Leaflet/pull/21
+     *
+     * @fires L.Map#autopanstart
      */
     _adjustPan() {
         if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }

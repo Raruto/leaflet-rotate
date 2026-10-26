@@ -1,7 +1,8 @@
 /**
- * Triggers `invalidateResize` when the map's DOM container mutates.
+ * Calls `invalidateSize()` when the map container's inline style changes.
  * 
  * @typedef L.Map.ContainerMutation
+ * @property {boolean} [trackContainerMutation=false] Observe inline style changes on the map container.
  */
 
 /**
@@ -27,6 +28,9 @@ L.Map.mergeOptions({
 
 L.Map.ContainerMutation = L.Handler.extend({
 
+    /**
+     * Start observing the map container's style attribute.
+     */
     addHooks() {
         // if (!L.Browser.mutation) { return; }
         if (!this._observer) {
@@ -41,6 +45,9 @@ L.Map.ContainerMutation = L.Handler.extend({
         });
     },
 
+    /**
+     * Stop observing container mutations.
+     */
     removeHooks() {
         // if (!L.Browser.mutation) { return; }
         this._observer.disconnect();

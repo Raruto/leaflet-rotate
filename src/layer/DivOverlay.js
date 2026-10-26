@@ -1,4 +1,6 @@
 /**
+ * Keeps popup and tooltip screen positions aligned with rotated and pitched maps.
+ *
  * @external L.DivOverlay
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/DivOverlay.js
@@ -11,10 +13,12 @@ const divOverlayProto = Object.defineProperties({}, Object.getOwnPropertyDescrip
 L.DivOverlay.include({
 
     /**
-     * Update L.Popup and L.Tooltip anchor positions after
-     * the map is moved by calling `map.setBearing(theta)`
+     * Extend overlay event subscriptions to refresh position after map rotation and pitch.
      * 
      * @listens L.Map~rotate
+     * @listens L.Map~pitch
+     *
+     * @returns {Object} Leaflet event map for the overlay.
      */
     getEvents() {
         const events = Object.assign(divOverlayProto.getEvents.apply(this, arguments), {
@@ -27,6 +31,9 @@ L.DivOverlay.include({
         return events;
     },
 
+    /**
+     * Listen to map movement only while pitch is non-zero.
+     */
     _updatePitchEvents() {
         if (this._map._pitch) {
             this._map.on('move', this._updatePosition, this);
@@ -36,8 +43,7 @@ L.DivOverlay.include({
     },
 
     /**
-     * 0. update element anchor point (divOverlayProto v1.9.3)
-     * 1. rotate around anchor point (subtract anchor -> rotate point -> add anchor)
+     * Reposition the overlay after map movement, applying rotation/pitch-aware coordinates.
      */
     _updatePosition() {
         if (!this._map) { return; }

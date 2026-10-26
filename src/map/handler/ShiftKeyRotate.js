@@ -1,23 +1,35 @@
 
 /**
- * Rotates the map on shift key + mousewheel scrolling (desktop).
+ * Handles Shift+wheel bearing changes and Ctrl+drag bearing/pitch changes.
  * 
  * @typedef L.Map.ShiftKeyRotate
+ * @property {boolean} [shiftKeyRotate=true] Enable Shift+wheel bearing rotation.
+ * @property {boolean} [pitchDrag=true] Enable Ctrl+drag bearing and pitch adjustment.
  */
 
 L.Map.mergeOptions({
 
     /**
-     * Whether the map can be rotated with shift + wheel scroll
+     * Whether Shift+wheel changes the map bearing.
+     * 
      * @type {Boolean}
      */
     shiftKeyRotate: true,
+
+    /**
+     * Whether Ctrl+drag changes bearing and pitch.
+     * 
+     * @type {Boolean}
+     */
     pitchDrag: true,
 
 });
 
 L.Map.ShiftKeyRotate = L.Handler.extend({
 
+    /**
+     * @param {L.Map} map Map controlled by this handler.
+     */
     initialize(map) {
         this._map = map;
         this._onMouseDownBound = this._onMouseDown.bind(this);
@@ -25,6 +37,9 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         this._onMouseUpBound = this._onMouseUp.bind(this);
     },
 
+    /**
+     * Attach enabled wheel and pointer/mouse gesture listeners.
+     */
     addHooks() {
         if (this._map.options.shiftKeyRotate) {
             L.DomEvent.on(this._map._container, "wheel", this._handleShiftScroll, this);
@@ -34,11 +49,17 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         }
     },
 
+    /**
+     * Detach gesture listeners and cancel any active drag.
+     */
     removeHooks() {
         L.DomEvent.off(this._map._container, "wheel", this._handleShiftScroll, this);
         this.removePitchHooks();
     },
 
+    /**
+     * Listen for the start of Ctrl+drag pitch gestures.
+     */
     addPitchHooks() {
         if (this._pitchHooksAdded) { return; }
         this._pitchEvents = L.version.startsWith('2.')
@@ -48,6 +69,9 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         this._pitchHooksAdded = true;
     },
 
+    /**
+     * Stop listening for pitch gestures and remove active document listeners.
+     */
     removePitchHooks() {
         if (!this._pitchHooksAdded) { return; }
         this._map._container.removeEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
@@ -56,6 +80,11 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         this._pitchHooksAdded = false;
     },
 
+    /**
+     * Rotate the map in fixed increments while Shift is held during wheel input.
+     * 
+     * @param {WheelEvent} e Wheel event from the map container.
+     */
     _handleShiftScroll(e) {
         if (e.shiftKey) {
             e.preventDefault();
@@ -66,6 +95,11 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         }
     },
 
+    /**
+     * Start Ctrl+drag and capture subsequent movement outside the map.
+     * 
+     * @param {MouseEvent|PointerEvent} e Gesture start event.
+     */
     _onMouseDown(e) {
         if (!this._map._rotate || !this._map.options.pitchDrag || !e.ctrlKey || e.button !== 0) { return; }
 
@@ -88,6 +122,11 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         }
     },
 
+    /**
+     * Apply pointer movement to pitch (vertical) and bearing (horizontal).
+     * 
+     * @param {MouseEvent|PointerEvent} e Gesture movement event.
+     */
     _onMouseMove(e) {
         this._map._setPitchAndBearing(
             this._map.getPitch() + (this._lastY - e.clientY) * 0.5,
@@ -98,6 +137,9 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         e.preventDefault();
     },
 
+    /**
+     * End Ctrl+drag and clear document-level listeners.
+     */
     _onMouseUp() {
         if (!this._pitchEvents) { return; }
         document.removeEventListener(this._pitchEvents[1], this._onMouseMoveBound);
@@ -110,6 +152,9 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
 });
 
+/**
+ * Create the handler when either desktop rotation gesture is enabled.
+ */
 L.Map.addInitHook(function() {
     if (this.options.shiftKeyRotate) {
         this.shiftKeyRotate = new L.Map.ShiftKeyRotate(this);

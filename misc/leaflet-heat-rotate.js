@@ -1,3 +1,10 @@
+/*
+ * For Leaflet.heat (https://github.com/Leaflet/Leaflet.heat) or the heatmap.js
+ * Leaflet plugin (https://github.com/pa7/heatmap.js/tree/master/plugins/leaflet-heatmap),
+ * load this file after the heatmap plugin. It adapts heat redraw coordinates to
+ * the rotated pane.
+ */
+
 if (!L.HeatLayer && !globalThis.HeatmapOverlay) {
     throw new Error('Load Leaflet.heat or heatmap.js Leaflet plugin before this adapter.');
 }

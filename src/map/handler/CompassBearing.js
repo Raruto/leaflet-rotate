@@ -1,11 +1,15 @@
 /**
- * Rotates the map according to a smartphone's compass.
+ * Sets map bearing from device orientation when the browser exposes compass data.
  * 
  * @typedef L.Map.CompassBearing
+ * @property {L.Map.CompassBearing} compassBearing Map handler, enabled to follow device heading.
  */
 
 L.Map.CompassBearing = L.Handler.extend({
 
+    /**
+     * @param {L.Map} map Map whose bearing follows device orientation.
+     */
     initialize(map) {
         this._map = map;
         /** @see https://caniuse.com/?search=DeviceOrientation */
@@ -17,6 +21,9 @@ L.Map.CompassBearing = L.Handler.extend({
         this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
     },
 
+    /**
+     * Subscribe to the supported device-orientation event, if available.
+     */
     addHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
             L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
@@ -27,6 +34,9 @@ L.Map.CompassBearing = L.Handler.extend({
         }
     },
 
+    /**
+     * Unsubscribe from device orientation when the handler is disabled.
+     */
     removeHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
             L.DomEvent.off(window, this.__deviceOrientationEvent, this._throttled, this);
@@ -34,6 +44,8 @@ L.Map.CompassBearing = L.Handler.extend({
     },
 
     /**
+     * Apply a device orientation reading to the map bearing.
+     *
      * `DeviceOrientationEvent.absolute` - Indicates whether the device is providing absolute
      *                                     orientation values (relatives to Magnetic North) or
      *                                     using some arbitrary frame determined by the device.
@@ -50,6 +62,8 @@ L.Map.CompassBearing = L.Handler.extend({
      * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/absolute
      * @see https://developer.mozilla.org/en-US/docs/Web/API/DeviceOrientationEvent/alpha
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
+     *
+     * @param {DeviceOrientationEvent} e Orientation reading from the browser.
      */
     _onDeviceOrientation(e) {
         let angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;

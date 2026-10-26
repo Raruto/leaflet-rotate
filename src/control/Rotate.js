@@ -1,11 +1,17 @@
 /**
- * A tri-state control for map rotation, states are:
+ * Leaflet control for changing map rotation and selecting a rotation mode.
+ * Its modes are:
  * 
- * - Locked (default)
- * - Unlocked (user can pinch-rotate)
- * - Follow (rotation follows device orientation, if available)
+ * - Locked: rotation gestures are disabled.
+ * - Touch: two-finger rotation is enabled.
+ * - Compass: bearing follows device orientation when supported and permitted.
  * 
- * @typedef L.Control.Rotate
+ * @class L.Control.Rotate
+ * 
+ * @extends L.Control
+ * 
+ * @property {string} [position='topleft'] Leaflet control position.
+ * @property {boolean} [closeOnZeroBearing=true] Hide the control when bearing is zero.
  */
 
 L.Control.Rotate = L.Control.extend({
@@ -15,6 +21,13 @@ L.Control.Rotate = L.Control.extend({
         closeOnZeroBearing: true
     },
 
+    /**
+     * Create the control element and subscribe to map rotation.
+     * 
+     * @param {L.Map} map
+     * 
+     * @returns {HTMLElement} Control container.
+     */
     onAdd(map) {
         const container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
 
@@ -58,10 +71,20 @@ L.Control.Rotate = L.Control.extend({
         return container;
     },
     
+    /**
+     * Remove the map event listener when the control is detached.
+     * 
+     * @param {L.Map} map
+     */
     onRemove(map) {
         map.off('rotate', this._restyle, this);
     },
 
+    /**
+     * Begin dragging the control's bearing indicator.
+     * 
+     * @param {MouseEvent} e Mouse-down event.
+     */
     _handleMouseDown(e) {
         L.DomEvent.stop(e);
         this.dragging = true;
@@ -72,6 +95,11 @@ L.Control.Rotate = L.Control.extend({
             .on(document, 'mouseup', this._handleMouseUp, this);
     },
 
+    /**
+     * End bearing-indicator dragging and remove document listeners.
+     * 
+     * @param {MouseEvent} e Mouse-up event.
+     */
     _handleMouseUp(e) {
         L.DomEvent.stop(e);
         this.dragging = false;
@@ -81,12 +109,23 @@ L.Control.Rotate = L.Control.extend({
             .off(document, 'mouseup', this._handleMouseUp, this);
     },
 
+    /**
+     * Set bearing from the horizontal drag distance.
+     * 
+     * @param {MouseEvent} e Mouse-move event.
+     */
     _handleMouseDrag(e) {
         if (!this.dragging) { return; }
         const deltaX = e.clientX - this.dragstartX;
         this._map.setBearing(deltaX);
     },
 
+    /**
+     * Cycle through touch, compass, and locked rotation modes.
+     * Compass mode may require permission from the browser.
+     * 
+     * @param {Event} ev Control click event.
+     */
     _cycleState(ev) {
         if (!this._map) {
             return;
@@ -120,6 +159,11 @@ L.Control.Rotate = L.Control.extend({
         this._restyle();
     },
 
+    /**
+     * Update the control icon and visibility to match the current mode.
+     * 
+     * @listens L.Map#rotate
+     */
     _restyle() {
         if (!this._map.options.rotate) {
             this._link.classList.add('leaflet-disabled');
@@ -160,9 +204,18 @@ if (L.control) {
 }
 
 L.Map.mergeOptions({
+    /**
+     * Add the rotation control automatically. Set to `false` to disable,
+     * or pass an options object to configure the control.
+     * 
+     * @type {boolean|Object}
+     */
     rotateControl: true,
 });
 
+/**
+ * Add the configured rotation control to each newly initialized map.
+ */
 L.Map.addInitHook(function() {
     if (this.options.rotateControl) {
         const options = typeof this.options.rotateControl === 'object' ? this.options.rotateControl : {};

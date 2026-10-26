@@ -1,12 +1,23 @@
 /**
- * TouchGestures is both TouchZoom plus TouchRotate
+ * Shared implementation for two-finger pinch zoom and map rotation.
  * 
  * @see https://github.com/fnicollet/Leaflet/commit/a77af51a6b10f308d1b9a16552091d1d0aee8834
  * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/handler/Map.TouchZoom.js
  * 
  * @typedef L.Map.TouchGestures
+ * @property {boolean} [bounceAtZoomLimits] Whether pinch zoom may temporarily exceed zoom limits.
+ * @property {boolean} zoom Whether pinch zoom is enabled.
+ * @property {boolean} rotate Whether touch rotation is enabled.
  */
 
+/**
+ * Convert a touch's client coordinates to coordinates relative to the map container.
+ * 
+ * @param {L.Map} map
+ * @param {Touch} touch
+ * 
+ * @returns {L.Point}
+ */
 function touchToContainerPoint(map, touch) {
     const container = map.getContainer(),
         rect = container.getBoundingClientRect();
@@ -20,9 +31,7 @@ function touchToContainerPoint(map, touch) {
 L.Map.mergeOptions({
 
     /**
-     * Set it to false if you don't want the map to
-     * zoom beyond min/max zoom and then bounce back
-     * when pinch-zooming.
+     * Whether pinch zoom may temporarily exceed min/max zoom and bounce back.
      * 
      * @type {Boolean}
      */
@@ -32,20 +41,36 @@ L.Map.mergeOptions({
 
 L.Map.TouchGestures = L.Handler.extend({
 
+    /**
+     * Initialize the shared handler from the map's touch zoom/rotation options.
+     * 
+     * @param {L.Map} map Map whose touch gestures are handled.
+     */
     initialize(map) {
         this._map = map;
         this.rotate = !!this._map.options.touchRotate;
         this.zoom = !!this._map.options.touchZoom;
     },
 
+    /**
+     * Listen for the start of two-finger gestures on the map container.
+     */
     addHooks() {
         L.DomEvent.on(this._map._container, 'touchstart', this._onTouchStart, this);
     },
 
+    /**
+     * Remove the touch-start listener.
+     */
     removeHooks() {
         L.DomEvent.off(this._map._container, 'touchstart', this._onTouchStart, this);
     },
 
+    /**
+     * Record initial touch points and start tracking a two-finger gesture.
+     * 
+     * @param {TouchEvent} e Touch-start event.
+     */
     _onTouchStart(e) {
         const map = this._map;
 
@@ -89,6 +114,11 @@ L.Map.TouchGestures = L.Handler.extend({
         L.DomEvent.preventDefault(e);
     },
 
+    /**
+     * Update bearing and/or zoom while the two touch points move.
+     * 
+     * @param {TouchEvent} e Touch-move event.
+     */
     _onTouchMove(e) {
         if (!e.touches || e.touches.length !== 2 || !(this._zooming || this._rotating)) { return; }
 
@@ -162,6 +192,9 @@ L.Map.TouchGestures = L.Handler.extend({
         L.DomEvent.preventDefault(e);
     },
 
+    /**
+     * Finish the gesture, settle the zoom and remove document listeners.
+     */
     _onTouchEnd() {
         if (!this._moved || !(this._zooming || this._rotating)) {
             this._zooming = false;
@@ -187,7 +220,7 @@ L.Map.TouchGestures = L.Handler.extend({
 });
 
 /**
- * Add Touch Gestures handler (enabled unless `touchGestures` is unset).
+ * Add the shared touch gesture handler to the map.
  * 
  * @property {L.Map.TouchGestures} touchGestures
  */

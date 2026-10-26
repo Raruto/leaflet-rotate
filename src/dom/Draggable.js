@@ -1,4 +1,7 @@
 /**
+ * This plugin does not modify the `L.Draggable` API; it adapts marker drag
+ * coordinates in `L.Marker` when rotation or pitch is enabled.
+ *
  * @external L.Draggable
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js

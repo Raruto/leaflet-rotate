@@ -1,4 +1,6 @@
 /**
+ * Recalculates vector renderer bounds and transforms for rotated and pitched maps.
+ *
  * @external L.Renderer
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Renderer.js
@@ -12,16 +14,20 @@ const rendererOnMoveEnd = rendererProto._onMoveEnd || rendererBase._onMoveEnd;
 L.Renderer.include({
 
     /**
-     * Redraw L.Canvas and L.SVG renderer bounds after the
-     * map is moved by just calling `map.setBearing(theta)`
+     * Subscribe the renderer to map rotation so its visible bounds are recalculated.
      * 
      * @listens L.Map~rotate
+     * 
+     * @returns {Object} Leaflet event map for the renderer.
      */
     getEvents() {
         const events = rendererGetEvents.apply(this, arguments);
         return Object.assign(events, { rotate: this._onRotate });
     },
 
+    /**
+     * Reproject vector paths and refresh renderer bounds after bearing changes.
+     */
     _onRotate() {
         if (!this._map._rotate) { return; }
         this._onZoomEnd();
@@ -33,7 +39,9 @@ L.Renderer.include({
     },
 
     /**
-     * Fix for `map.flyTo()` when `false === map.options.zoomAnimation`
+     * Add the zoom-animation class needed for correct renderer transforms in Leaflet 1.
+     *
+     * Fixes `map.flyTo()` when `map.options.zoomAnimation` is false.
      * 
      * @see https://github.com/Leaflet/Leaflet/pull/8794
      */
@@ -46,6 +54,8 @@ L.Renderer.include({
     },
 
     /**
+     * Update the renderer transform during zoom animation, accounting for rotated coordinates.
+     *
      * @FIXME layer drifts on `map.setZoom()` (eg. zoom during animation)
      * 
      * the main cause seems to be related to `this._updateTransform(path._center, path._zoom))`
@@ -60,9 +70,11 @@ L.Renderer.include({
      * @see https://github.com/Leaflet/Leaflet/pull/8103
      * @see https://github.com/Leaflet/Leaflet/issues/7466
      * 
-     * @TODO rechek this changes from leaflet@v1.9.3
+     * @TODO recheck these changes against leaflet@v1.9.3
      * 
      * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+     * @param {L.LatLng} center Target map center.
+     * @param {number} zoom Target zoom level.
      */
     _updateTransform(center, zoom) {
         if (L.version.startsWith('2.')) {
@@ -93,6 +105,11 @@ L.Renderer.include({
         
     },
 
+    /**
+     * Recalculate bounds and finish renderer updates after movement on Leaflet 2.
+     *
+     * @param {Object} ev Map movement event.
+     */
     _onMoveEnd(ev) {
         if (!L.version.startsWith('2.') || !this._map._rotate) {
             return rendererOnMoveEnd.apply(this, arguments);
@@ -108,6 +125,9 @@ L.Renderer.include({
         this._onSettled(ev);
     },
 
+    /**
+     * Resize the renderer container to cover the pitch-aware map bounds.
+     */
     _resizeContainer() {
         if (!L.version.startsWith('2.') || !this._map._rotate || !this._bounds) {
             return rendererBase._resizeContainer.apply(this, arguments);
@@ -161,6 +181,9 @@ L.Renderer.include({
     //     }
     // },
 
+    /**
+     * Recalculate renderer bounds and cached view state.
+     */
     _update() {
         if (!this._map._rotate) {
             return rendererProto._update.apply(this, arguments);

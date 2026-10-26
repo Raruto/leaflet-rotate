@@ -12,7 +12,8 @@ Object.assign(L.Point.prototype, {
      * ⎡ x' ⎤ = ⎡ cos θ  -sin θ ⎤ ⎡ x ⎤
      * ⎣ y' ⎦   ⎣ sin θ   cos θ ⎦ ⎣ y ⎦
      * 
-     * @param theta must be given in radians.
+     * @param {number} theta Rotation angle in radians, counterclockwise.
+     * @returns {L.Point} Rotated point (or this point when theta is zero).
      */
     rotate(theta) {
         return this.rotateFrom(theta, new L.Point(0,0))
@@ -27,8 +28,8 @@ Object.assign(L.Point.prototype, {
      * 
      * same as `this.subtract(pivot).rotate(theta).add(pivot)`
      * 
-     * @param {Number} theta 
-     * @param {L.Point} pivot 
+     * @param {number} theta Rotation angle in radians, counterclockwise.
+     * @param {L.Point} pivot Point to rotate around.
      * 
      * @returns {L.Point}
      */
@@ -49,6 +50,11 @@ Object.assign(L.Point.prototype, {
 
 });
 
+/**
+ * Convert an array or point-like object to an `L.Point`.
+ * @param {L.Point|number[]|{x:number,y:number}|null} point Coordinate to convert.
+ * @returns {L.Point|null} Existing point, converted point, or `null` for a null input.
+ */
 export function toPoint(point) {
     if (point == null || point instanceof L.Point) {
         return point;

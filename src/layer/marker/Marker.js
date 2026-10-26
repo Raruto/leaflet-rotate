@@ -1,6 +1,13 @@
 /**
+ * Adds rotation and pitch-aware positioning to Leaflet markers.
+ *
  * @external L.Marker
  * @external L.Handler.MarkerDrag
+ * 
+ * @property {number} [rotation=0] Marker icon rotation in radians.
+ * @property {boolean} [rotateWithView=false] Rotate the icon with the map bearing.
+ * @property {boolean} [keepUpright=false] Flip a map-aligned icon to keep it upright.
+ * @property {number} [scale] Optional scale applied to the icon and shadow.
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.js
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.Drag.js
@@ -12,28 +19,31 @@ const markerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors
 L.Marker.mergeOptions({
 
     /**
-     * Rotation of this marker in rad
+     * Rotation of the marker icon in radians.
      * 
      * @type {Number}
      */
     rotation: 0,
 
     /**
-     * Rotate this marker when map rotates
+     * Rotate the marker icon when the map bearing changes.
+     *
+     * Combine with `keepUpright: true` to keep the marker readable while
+     * preserving its line alignment.
      * 
      * @type {Boolean}
      */
     rotateWithView: false,
 
     /**
-     * Flip a rotated marker when needed to keep it upright
+     * Flip the icon when needed to keep it upright while map-aligned.
      *
      * @type {Boolean}
      */
     keepUpright: false,
 
     /**
-     * Scale of the marker icon
+     * Optional scale of the marker icon and shadow.
      * 
      * @type {Number}
      */
@@ -52,6 +62,11 @@ const MarkerDrag = {
     //     this._draggable.updateMapBearing(this._marker._map._bearing);
     // },
 
+    /**
+     * Update a dragged marker's geographic position from its transformed icon position.
+     * 
+     * @param {Object} e Marker drag event with `latlng` and `oldLatLng` fields.
+     */
     _onDrag(e) {
         const marker = this._marker,
             /** @TODO use markerDragProto._onDrag */
@@ -86,6 +101,11 @@ const MarkerDrag = {
             .fire('drag', e);
     },
 
+    /**
+     * Reposition the marker after a drag ends, then run Leaflet's drag-end logic.
+     * 
+     * @param {Object} e Marker drag-end event.
+     */
     _onDragEnd(e) {
         if (this._marker._map._rotate) {
             this._marker.update();
@@ -98,10 +118,12 @@ const MarkerDrag = {
 L.Marker.include({
 
     /**
-     * Update L.Marker anchor position after the map
-     * is moved by calling `map.setBearing(theta)`
+     * Extend marker event subscriptions to reposition its icon after bearing or pitch changes.
      * 
      * @listens L.Map~rotate
+     * @listens L.Map~pitch
+     * 
+     * @returns {Object} Leaflet event map for the marker.
      */
     getEvents() {
         const events = Object.assign(markerProto.getEvents.apply(this, arguments), {
@@ -114,6 +136,9 @@ L.Marker.include({
         return events;
     },
 
+    /**
+     * Subscribe to map movement while pitch is active to keep the icon aligned.
+     */
     _updatePitchEvents() {
         if (this._map._pitch) {
             this._map.on('move', this.update, this);
@@ -122,6 +147,9 @@ L.Marker.include({
         }
     },
 
+    /**
+     * Install rotation-aware drag callbacks when marker dragging is enabled.
+     */
     _initInteraction() {
         const ret = markerProto._initInteraction.apply(this, arguments);
         if (this.dragging && this.dragging.enabled() && this._map && this._map._rotate) {
@@ -138,6 +166,11 @@ L.Marker.include({
         return ret;
     },
 
+    /**
+     * Position and rotate the marker icon and shadow in map-pane coordinates.
+     * 
+     * @param {L.Point} pos Marker anchor in layer-point coordinates.
+     */
     _setPos(pos) {
 
         /** @TODO use markerProto._setPos */
@@ -180,6 +213,13 @@ L.Marker.include({
     //     this._icon.style.zIndex = Math.round(this._zIndex + offset);
     // },
 
+    /**
+     * Set the marker icon's rotation and redraw it.
+     * 
+     * @param {number} rotation Angle in radians.
+     * 
+     * @returns {void}
+     */
     setRotation(rotation) {
         this.options.rotation = rotation;
         this.update();
