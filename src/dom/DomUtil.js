@@ -11,11 +11,15 @@ Object.assign(L.DomUtil, {
      * Resets the 3D CSS transform of `el` so it is translated by `offset` pixels,
      * optionally scaled by `scale`, and rotated around `pivot` when `bearing` is set.
      *
-     * @param {HTMLElement} el
-     * @param {L.Point} offset
-     * @param {Number} scale
-     * @param {Number} bearing
-     * @param {L.Point} pivot
+     * @param {HTMLElement} el Element to transform.
+     * @param {L.Point} [offset] Translation in pixels; defaults to the origin.
+     * @param {number} [scale] Optional scale factor.
+     * @param {number} [bearing] Optional rotation in radians.
+     * @param {L.Point} [pivot] Point in pixels around which to rotate.
+     * 
+     * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setTransform(el, offset, scale, bearing, pivot) {
         let pos = offset || new L.Point(0, 0);
@@ -35,11 +39,15 @@ Object.assign(L.DomUtil, {
      * Sets the position of `el` to `point`, using CSS transforms or top/left positioning
      * depending on browser support, and optionally rotating it around `pivot`.
      *
-     * @param {HTMLElement} el
-     * @param {L.Point} point
-     * @param {Number} bearing
-     * @param {L.Point} pivot
-     * @param {Number} scale
+     * @param {HTMLElement} el Element to position.
+     * @param {L.Point} point Position in pixels.
+     * @param {number} [bearing] Rotation in radians; zero or omitted uses Leaflet positioning.
+     * @param {L.Point} [pivot] Point in pixels around which to rotate.
+     * @param {number} [scale] Optional scale factor.
+     * 
+     * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setPosition(el, point, bearing, pivot, scale) {
         if (!bearing) {
@@ -53,8 +61,11 @@ Object.assign(L.DomUtil, {
     /**
      * Returns the position assigned to `el`.
      *
-     * @param {HTMLElement} el
-     * @returns {L.Point}
+     * @param {HTMLElement} el Element whose Leaflet position is requested.
+     * 
+     * @returns {L.Point} Stored Leaflet position, or the position measured by Leaflet.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getPosition(el) {
         return el._leaflet_pos || domUtilProto.getPosition(el);

@@ -1,7 +1,10 @@
 /**
- * Triggers `invalidateResize` when the map's DOM container mutates.
+ * Calls `invalidateSize()` when the map container's inline style changes.
  * 
  * @typedef L.Map.ContainerMutation
+ * @property {boolean} [trackContainerMutation=false] Observe inline style changes on the map container.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 /**
@@ -19,6 +22,8 @@ L.Map.mergeOptions({
      *
      * @type {Boolean}
      * 
+     * @since leaflet-rotate (v0.1.0)
+     * 
      * @see https://developer.mozilla.org/docs/Web/API/MutationObserver
      */
     trackContainerMutation: false
@@ -27,6 +32,11 @@ L.Map.mergeOptions({
 
 L.Map.ContainerMutation = L.Handler.extend({
 
+    /**
+     * Start observing the map container's style attribute.
+     * 
+     * @since leaflet-rotate (v0.1.0)
+     */
     addHooks() {
         // if (!L.Browser.mutation) { return; }
         if (!this._observer) {
@@ -41,6 +51,11 @@ L.Map.ContainerMutation = L.Handler.extend({
         });
     },
 
+    /**
+     * Stop observing container mutations.
+     * 
+     * @since leaflet-rotate (v0.1.0)
+     */
     removeHooks() {
         // if (!L.Browser.mutation) { return; }
         this._observer.disconnect();
@@ -52,5 +67,7 @@ L.Map.ContainerMutation = L.Handler.extend({
  * Add Container mutation handler to L.Map (disabled unless `trackContainerMutation` is set).
  * 
  * @property {L.Map.ContainerMutation} trackContainerMutation
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 L.Map.addInitHook('addHandler', 'trackContainerMutation', L.Map.ContainerMutation);

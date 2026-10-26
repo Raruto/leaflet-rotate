@@ -71,6 +71,348 @@ Then('the bearing reaches 90 degrees gradually', function () {
   assert.ok(Math.abs(this.animatedBearings.afterUnavailableHeading - 15) < 1e-6);
 });
 
+When('I set the map pitch to 45 degrees', async function () {
+  this.pitchProjection = await this.page.evaluate(() => {
+    const location = new L.LatLng(54, 12);
+    map.setView(new L.LatLng(55, 10), 5, { animate: false });
+    const flat = map.latLngToContainerPoint(location);
+    map.setPitch(90);
+    const maxPitch = map.getPitch();
+    map.setPitch(45);
+    const layerPoint = map.latLngToLayerPoint(location),
+      pitched = map.layerPointToContainerPoint(layerPoint),
+      roundTripPoint = map.containerPointToLayerPoint(pitched),
+      centerPoint = map.latLngToContainerPoint(map.getCenter()),
+      size = map.getSize();
+
+    return {
+      pitch: map.getPitch(),
+      maxPitch,
+      bearing: map.getBearing(),
+      flat,
+      pitched,
+      layerPoint,
+      roundTripPoint,
+      centerPoint,
+      size,
+      transform: map._rotatePane.style.transform,
+    };
+  });
+});
+
+Then('map coordinates stay consistent with the pitched view', function () {
+  const { pitch, maxPitch, bearing, flat, pitched, layerPoint, roundTripPoint, centerPoint, size, transform } = this.pitchProjection;
+  assert.equal(pitch, 45);
+  assert.equal(maxPitch, 85);
+  assert.ok(Math.abs(bearing - 30) < 1e-9);
+  assert.match(transform, /rotateX\(45deg\)/);
+  assert.ok(Math.abs(Number(transform.match(/perspective\(([\d.]+)px\)/)[1]) - size.y * 1.5) < 1);
+  assert.ok(Math.abs(flat.y - pitched.y) > 0.1);
+  const details = JSON.stringify({ flat, pitched, layerPoint, roundTripPoint, centerPoint, size });
+  assert.ok(Math.abs(roundTripPoint.x - layerPoint.x) < 1e-6, details);
+  assert.ok(Math.abs(roundTripPoint.y - layerPoint.y) < 1e-6, details);
+  assert.ok(Math.abs(centerPoint.x - size.x / 2) < 1, details);
+  assert.ok(Math.abs(centerPoint.y - size.y / 2) < 1, details);
+});
+
+When('I change pitch and bearing with Ctrl-drag', async function () {
+  await this.page.evaluate(() => {
+    map.setPitch(0);
+    map.setBearing(0);
+  });
+  const bounds = await this.page.locator('#map').boundingBox();
+  const start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 },
+    panePos = await this.page.evaluate(() => {
+      const pos = map._getMapPanePos();
+      return [pos.x, pos.y];
+    });
+  await this.page.keyboard.down('Control');
+  await this.page.mouse.move(start.x, start.y);
+  await this.page.mouse.down();
+  await this.page.mouse.move(start.x + 80, start.y - 80, { steps: 4 });
+  await this.page.mouse.up();
+  await this.page.keyboard.up('Control');
+  this.ctrlPitchDrag = await this.page.evaluate(() => {
+    const pane = map._getMapPanePos();
+    return {
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+      finalPanePos: [pane.x, pane.y],
+    };
+  });
+  this.ctrlPitchDrag.panePos = panePos;
+});
+
+Then('pitch and bearing change without moving the map pane', function () {
+  assert.equal(this.ctrlPitchDrag.pitch, 40);
+  assert.equal(this.ctrlPitchDrag.bearing, 64);
+  for (let i = 0; i < 2; i++) {
+    assert.ok(Math.abs(this.ctrlPitchDrag.panePos[i] - this.ctrlPitchDrag.finalPanePos[i]) < 0.01);
+  }
+});
+
+When('I drag the pitched map', async function () {
+  const dragStart = await this.page.evaluate(() => {
+    map.setBearing(30);
+    map.setPitch(45);
+    map.setView(new L.LatLng(55, 10), 5, { animate: false });
+    const location = new L.LatLng(55, 10),
+      marker = new L.CircleMarker(location, { radius: 8 }).addTo(map),
+      pin = new L.Marker(location, {
+        icon: new L.DivIcon({ className: '', html: 'x', iconSize: [4, 4], iconAnchor: [2, 2] }),
+      }).addTo(map),
+      element = marker.getElement(),
+      pinElement = pin.getElement(),
+      container = map.getContainer(),
+      rect = container.getBoundingClientRect(),
+      start = [rect.left + rect.width / 2, rect.top + rect.height / 2];
+    const vectorScreenPoint = () => {
+      const bounds = element.getBBox();
+      const point = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        .matrixTransform(element.getScreenCTM());
+      return [point.x, point.y];
+    };
+    const before = vectorScreenPoint(),
+      pinBoundsBefore = pinElement.getBoundingClientRect(),
+      pinBefore = [pinBoundsBefore.left + pinBoundsBefore.width / 2, pinBoundsBefore.top + pinBoundsBefore.height / 2];
+    window.__pitchPanTest = { element, pinElement, vectorScreenPoint, before, pinBefore, rect };
+    return start;
+  });
+  await this.page.mouse.move(dragStart[0], dragStart[1]);
+  await this.page.mouse.down();
+  await this.page.mouse.move(dragStart[0] + 70, dragStart[1] + 35, { steps: 4 });
+  await this.page.mouse.up();
+  this.pitchedDrag = await this.page.evaluate(() => {
+    const { pinElement, vectorScreenPoint, before, pinBefore } = window.__pitchPanTest,
+      after = vectorScreenPoint(),
+      pinBoundsAfter = pinElement.getBoundingClientRect(),
+      pinAfter = [pinBoundsAfter.left + pinBoundsAfter.width / 2, pinBoundsAfter.top + pinBoundsAfter.height / 2];
+    delete window.__pitchPanTest;
+    return {
+      vectorDelta: [after[0] - before[0], after[1] - before[1]],
+      pinDelta: [pinAfter[0] - pinBefore[0], pinAfter[1] - pinBefore[1]],
+      expected: map.latLngToContainerPoint(new L.LatLng(55, 10)),
+      pointerDelta: [70, 35],
+    };
+  });
+});
+
+Then('vector layers stay aligned with their map coordinates', function () {
+  if (this.vectorAlignment) {
+    assert.ok(this.zoomAfterOffCenter > 5, 'Off-center wheel zoom did not run');
+    assert.ok(
+      this.pitchTransformError < 0.1,
+      `Pitch changed the projected map pane by ${this.pitchTransformError}px`
+    );
+    const centerDistance = Math.hypot(
+      this.centerBeforeCtrlDrag[0] - this.centerAfterCtrlDrag[0],
+      this.centerBeforeCtrlDrag[1] - this.centerAfterCtrlDrag[1]
+    );
+    assert.ok(centerDistance < 0.01, `Map center moved ${centerDistance} projected pixels`);
+    for (const layer of this.vectorAlignment) {
+      const error = Math.hypot(layer.actual[0] - layer.expected[0], layer.actual[1] - layer.expected[1]);
+      assert.ok(error < 2, `${layer.name} is ${error}px from its geographic position: ${JSON.stringify(layer)}`);
+    }
+    return;
+  }
+  const { vectorDelta, pinDelta, pointerDelta } = this.pitchedDrag;
+  for (const delta of [vectorDelta, pinDelta]) {
+    assert.ok(Math.abs(delta[0] - pointerDelta[0]) < 2, JSON.stringify(this.pitchedDrag));
+    assert.ok(Math.abs(delta[1] - pointerDelta[1]) < 2, JSON.stringify(this.pitchedDrag));
+  }
+});
+
+When('I zoom off-center then rotate the map', async function () {
+  await this.page.evaluate(() => {
+    map.setView(new L.LatLng(55, 10), 5, { animate: false });
+    map.setBearing(30);
+    map.setPitch(0);
+  });
+  const mapBounds = await this.page.locator('#map').boundingBox(),
+    zoomPoint = { x: mapBounds.x + mapBounds.width * 0.9, y: mapBounds.y + mapBounds.height * 0.1 };
+  await this.page.mouse.move(zoomPoint.x, zoomPoint.y);
+  await this.page.mouse.wheel(0, -480);
+  await this.page.waitForTimeout(500);
+
+  const positions = await this.page.evaluate(() => {
+    const location = map.containerPointToLatLng([600, 170]),
+      marker = new L.Marker(location, {
+        icon: new L.DivIcon({ className: '', html: 'x', iconSize: [8, 8], iconAnchor: [4, 4] }),
+      }).addTo(map),
+      circle = new L.CircleMarker(location, { radius: 5 }).addTo(map),
+      measure = () => {
+        const expected = map.latLngToContainerPoint(location),
+          container = map.getContainer().getBoundingClientRect(),
+          vectorBounds = circle.getElement().getBoundingClientRect(),
+          markerBounds = marker.getElement().getBoundingClientRect();
+        return [
+          {
+            name: 'vector',
+            expected: [expected.x, expected.y],
+            actual: [vectorBounds.left + vectorBounds.width / 2 - container.left, vectorBounds.top + vectorBounds.height / 2 - container.top],
+          },
+          {
+            name: 'marker',
+            expected: [expected.x, expected.y],
+            actual: [markerBounds.left + markerBounds.width / 2 - container.left, markerBounds.top + markerBounds.height / 2 - container.top],
+          },
+        ];
+      };
+
+    const positions = [measure()];
+    const pane = map._rotatePane,
+      pivot = map._getPixelCenter(),
+      size = map.getSize(),
+      beforeTransform = new DOMMatrix(getComputedStyle(pane).transform),
+      testPoints = [[0, 0], [size.x, 0], [0, size.y], [size.x, size.y]]
+        .map(([x, y]) => ({
+          x,
+          y,
+          point: new DOMPoint(x, y).matrixTransform(beforeTransform),
+        }));
+    map.setPitch(1);
+    const afterTransform = new DOMMatrix(getComputedStyle(pane).transform),
+      pitch = Math.PI / 180,
+      perspective = size.y * 1.5;
+    const pitchTransformError = Math.max(...testPoints.map(({ x: pointX, y: pointY, point }) => {
+      const x = point.x / point.w - pivot.x,
+        y = point.y / point.w - pivot.y,
+        factor = perspective / (perspective - y * Math.sin(pitch)),
+        expectedX = pivot.x + x * factor,
+        expectedY = pivot.y + y * Math.cos(pitch) * factor,
+        actual = new DOMPoint(pointX, pointY).matrixTransform(afterTransform);
+      return Math.hypot(actual.x / actual.w - expectedX, actual.y / actual.w - expectedY);
+    }));
+    positions.push(measure());
+    map.setBearing(50);
+    positions.push(measure());
+    map.setPitch(35);
+    positions.push(measure());
+    map.panBy([50, 25], { animate: false });
+    positions.push(measure());
+    window.__rotateAlignment = { marker, circle, measure };
+    const center = map.project(map.getCenter());
+    return {
+      positions: positions.flatMap((position, index) => position.map(layer => ({ ...layer, step: index }))),
+      centerBeforeCtrlDrag: [center.x, center.y],
+      zoomAfterOffCenter: map.getZoom(),
+      pitchTransformError,
+    };
+  });
+  const bounds = await this.page.locator('#map').boundingBox(),
+    start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  await this.page.keyboard.down('Control');
+  await this.page.mouse.move(start.x, start.y);
+  await this.page.mouse.down();
+  await this.page.mouse.move(start.x + 24, start.y - 18, { steps: 3 });
+  await this.page.mouse.up();
+  await this.page.keyboard.up('Control');
+  const afterCtrlDrag = await this.page.evaluate(() => {
+    const positions = window.__rotateAlignment.measure();
+    const center = map.project(map.getCenter());
+    window.__rotateAlignment.marker.remove();
+    window.__rotateAlignment.circle.remove();
+    delete window.__rotateAlignment;
+    return {
+      positions: positions.map(layer => ({ ...layer, step: 'Ctrl-drag' })),
+      center: [center.x, center.y],
+    };
+  });
+  this.vectorAlignment = [...positions.positions, ...afterCtrlDrag.positions];
+  this.centerBeforeCtrlDrag = positions.centerBeforeCtrlDrag;
+  this.centerAfterCtrlDrag = afterCtrlDrag.center;
+  this.zoomAfterOffCenter = positions.zoomAfterOffCenter;
+  this.pitchTransformError = positions.pitchTransformError;
+});
+
+When('I pan the map then Ctrl-drag', async function () {
+  await this.page.evaluate(() => {
+    map.setView(new L.LatLng(55, 10), 5, { animate: false });
+    map.setBearing(30);
+    map.setPitch(0);
+  });
+  const bounds = await this.page.locator('#map').boundingBox();
+  const x = bounds.x + bounds.width / 2,
+    y = bounds.y + bounds.height / 2;
+  await this.page.mouse.move(x, y);
+  await this.page.mouse.down();
+  await this.page.mouse.move(x + 70, y + 35, { steps: 4 });
+  await this.page.mouse.up();
+  await this.page.waitForTimeout(400);
+  this.centerBeforeCtrlDrag = await this.page.evaluate(() => {
+    const center = map.project(map.getCenter()),
+      pane = map._getMapPanePos();
+    return { point: [center.x, center.y], pane: [pane.x, pane.y] };
+  });
+
+  await this.page.keyboard.down('Control');
+  await this.page.mouse.move(x + 70, y + 35);
+  await this.page.mouse.down();
+  await this.page.mouse.move(x + 90, y + 20, { steps: 3 });
+  await this.page.mouse.up();
+  await this.page.keyboard.up('Control');
+  this.centerAfterCtrlDrag = await this.page.evaluate(() => {
+    const center = map.project(map.getCenter()),
+      pane = map._getMapPanePos();
+    return {
+      point: [center.x, center.y],
+      pane: [pane.x, pane.y],
+      pitch: map.getPitch(),
+      bearing: map.getBearing(),
+    };
+  });
+});
+
+Then('the map center stays stable during Ctrl-drag', function () {
+  const distance = Math.hypot(
+    this.centerBeforeCtrlDrag.point[0] - this.centerAfterCtrlDrag.point[0],
+    this.centerBeforeCtrlDrag.point[1] - this.centerAfterCtrlDrag.point[1]
+  );
+  assert.ok(distance < 0.01, `Map center moved ${distance} projected pixels: ${JSON.stringify({
+    before: this.centerBeforeCtrlDrag,
+    after: this.centerAfterCtrlDrag,
+  })}`);
+});
+
+When('I Ctrl-drag while a wheel zoom is pending', async function () {
+  await this.page.evaluate(() => {
+    map.setView(new L.LatLng(55, 10), 5, { animate: false });
+    map.setBearing(0);
+    map.setPitch(0);
+    map.options.wheelDebounceTime = 500;
+  });
+  const bounds = await this.page.locator('#map').boundingBox();
+  const zoomPoint = { x: bounds.x + bounds.width * 0.9, y: bounds.y + bounds.height * 0.1 },
+    dragPoint = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  await this.page.mouse.move(zoomPoint.x, zoomPoint.y);
+  await this.page.mouse.wheel(0, -120);
+  this.pendingZoomBeforeDrag = await this.page.evaluate(() => ({
+    zoom: map.getZoom(),
+    center: map.project(map.getCenter()),
+  }));
+
+  await this.page.keyboard.down('Control');
+  await this.page.mouse.move(dragPoint.x, dragPoint.y);
+  await this.page.mouse.down();
+  await this.page.mouse.move(dragPoint.x + 20, dragPoint.y - 15);
+  await this.page.waitForTimeout(600);
+  this.pendingZoomAfterDrag = await this.page.evaluate(() => ({
+    zoom: map.getZoom(),
+    center: map.project(map.getCenter()),
+  }));
+  await this.page.mouse.up();
+  await this.page.keyboard.up('Control');
+});
+
+Then('the pending wheel zoom does not move the map', function () {
+  assert.equal(this.pendingZoomAfterDrag.zoom, this.pendingZoomBeforeDrag.zoom);
+  const distance = Math.hypot(
+    this.pendingZoomBeforeDrag.center.x - this.pendingZoomAfterDrag.center.x,
+    this.pendingZoomBeforeDrag.center.y - this.pendingZoomAfterDrag.center.y
+  );
+  assert.ok(distance < 0.01, `Map center moved ${distance} projected pixels`);
+});
+
 When('I fit the same bounds twice', async function () {
   this.zooms = await this.page.evaluate(() => {
     const bounds = [[60.81123, 25.71632], [60.81028, 25.73166], [60.7997, 25.72892], [60.80061, 25.71362]];

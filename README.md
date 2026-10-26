@@ -19,6 +19,79 @@ _For a working example see the following [demo](https://raruto.github.io/leaflet
     </p>
 </blockquote>
 
+### How to use
+
+Load Leaflet first, then the plugin. For example, using the published CDN build:
+
+```html
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.5.0/dist/leaflet-rotate.js"></script>
+```
+
+Or if you want to test it with [`2.0.0-alpha.1`](https://github.com/Leaflet/Leaflet/releases/tag/v2.0.0-alpha.1):
+
+```html
+<link rel="stylesheet" href="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script>
+<script>globalThis.L = globalThis.leaflet;</script>
+<script src="https://unpkg.com/leaflet-rotate@0.5.0/dist/leaflet-rotate.js"></script>
+```
+
+Now, you can enable rotation in the map options. Bearing and pitch values are in degrees:
+
+```js
+const map = L.map('map', {
+    rotate: true,
+    bearing: 30,
+    pitch: 20,
+    rotateControl: true,
+});
+
+map.setBearing(90);
+map.setPitch(35);
+console.log(map.getBearing(), map.getPitch());
+```
+
+#### Map options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `rotate` | `false` | Enables map rotation and pitch. |
+| `bearing` | `0` | Initial map bearing, in degrees. |
+| `pitch` | `0` | Initial map pitch, in degrees (clamped to `0`–`85`). |
+| `rotateControl` | `true` | Adds the rotation control. Set to `false` to hide it, or pass options such as `{ closeOnZeroBearing: false }`. |
+| `shiftKeyRotate` | `true` | Enables bearing changes with Shift + mouse wheel. |
+| `pitchDrag` | `true` | Enables bearing and pitch changes with Ctrl + mouse drag. |
+| `touchRotate` | `false` | Enables rotation with a two-finger touch gesture. |
+
+#### Map methods and events
+
+| API | Description |
+| --- | --- |
+| `map.setBearing(degrees, options?)` | Sets the bearing. Use `{ animate: true, duration: 0.5 }` for an animated change; `duration` is in seconds. |
+| `map.getBearing()` | Returns the current bearing in degrees. |
+| `map.setPitch(degrees)` | Sets the pitch, clamped to `0`–`85` degrees. |
+| `map.getPitch()` | Returns the current pitch in degrees. |
+| `rotate` event | Fired when the bearing changes. |
+| `pitch` event | Fired when the pitch changes. |
+
+#### Rotation control
+
+The control is available as `L.Control.Rotate` or `L.control.rotate(options)`. The map option `rotateControl` adds it automatically; its `position` follows Leaflet control positions, and `closeOnZeroBearing` (default `true`) hides it when the bearing is zero.
+
+#### Marker options
+
+| Option / method | Description |
+| --- | --- |
+| `rotation` | Marker icon rotation in radians. |
+| `rotateWithView` | Rotates the icon with the map bearing. |
+| `keepUpright` | With `rotateWithView: true`, flips the icon as needed to keep it readable while preserving line alignment. |
+| `scale` | Optional scale applied to the marker icon. |
+| `marker.setRotation(radians)` | Updates the marker's icon rotation. |
+
+---
+
 ### Build Guide
 
 Within your local development environment:
@@ -40,10 +113,6 @@ After that you can start developing inside the `src` and `test` folders (eg. ope
 **Side notes:**
 
 Be aware that this library overrides notable parts of leaflet core via the [L.Class.include()](https://leafletjs.com/examples/extending/extending-1-classes.html) function in order to make the rotate feature usable as a standalone plug-in.
-
-For [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) or [heatmap.js's Leaflet plugin](https://github.com/pa7/heatmap.js/tree/master/plugins/leaflet-heatmap), load `misc/leaflet-heat-rotate.js` after the heatmap plugin. It adapts heat redraw coordinates to the rotated pane.
-
-Markers with `rotateWithView: true` can use `keepUpright: true` to remain readable while preserving their line alignment.
 
 Initial changes to this project have been apported by comparing the following branches: [https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master](https://github.com/Leaflet/Leaflet/compare/main...fnicollet:rotate-master) (ref: [bac6c7d](https://github.com/fnicollet/Leaflet/tree/4ab6342f74516e7087dcd2ae786c721f36addf9e))
 

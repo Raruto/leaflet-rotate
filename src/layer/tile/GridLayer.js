@@ -1,7 +1,11 @@
 /**
+ * Updates tile coverage for rotated map bounds.
+ *
  * @external L.GridLayer
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/tile/GridLayer.js
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 const gridLayerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.GridLayer.prototype));
@@ -9,10 +13,13 @@ const gridLayerProto = Object.defineProperties({}, Object.getOwnPropertyDescript
 L.GridLayer.include({
 
     /**
-     * Redraw L.TileLayer bounds after the map is
-     * moved by just calling `map.setBearing(theta)`
+     * Add a throttled tile refresh after map bearing changes.
      * 
      * @listens L.Map~rotate
+     * 
+     * @returns {Object} Leaflet event map for the grid layer.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
         const events = gridLayerProto.getEvents.apply(this, arguments);
@@ -25,6 +32,15 @@ L.GridLayer.include({
         return events;
     },
 
+    /**
+     * Return tile pixel bounds that cover the rotated viewport.
+     * 
+     * @param {L.LatLng} center View center used to calculate bounds.
+     * 
+     * @returns {L.Bounds} Pixel bounds covered by the layer's tiles.
+     * 
+     * @since leaflet-rotate (v0.1.0)
+     */
     _getTiledPixelBounds(center) {
         if (!this._map._rotate) {
             return gridLayerProto._getTiledPixelBounds.apply(this, arguments);
