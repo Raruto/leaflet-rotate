@@ -4,6 +4,8 @@
  * @external L.Popup
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/Popup.js
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 import { toPoint } from '../geometry/Point';
@@ -16,6 +18,8 @@ L.Popup.include({
      * Update the popup position during zoom animation and transform it into map-pane coordinates.
      *
      * @param {Object} e Zoom animation event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _animateZoom(e) {
         popupProto._animateZoom.apply(this, arguments);
@@ -32,6 +36,8 @@ L.Popup.include({
      * @see https://github.com/fnicollet/Leaflet/pull/21
      *
      * @fires L.Map#autopanstart
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _adjustPan() {
         if (!this.options.autoPan || (this._map._panAnim && this._map._panAnim._inProgress)) { return; }

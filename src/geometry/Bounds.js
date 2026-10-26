@@ -2,6 +2,8 @@
  * Leaflet's `L.Bounds` is not overridden by this plugin. Rotation-aware
  * pixel bounds are calculated by the map and renderer extensions.
  *
+ * @since leaflet-rotate (v0.1.0)
+ *
  * @external L.Bounds
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/geometry/Bounds.js

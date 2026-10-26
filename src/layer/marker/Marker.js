@@ -9,6 +9,8 @@
  * @property {boolean} [keepUpright=false] Flip a map-aligned icon to keep it upright.
  * @property {number} [scale] Optional scale applied to the icon and shadow.
  * 
+ * @since leaflet-rotate (v0.1.0)
+ * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.js
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/marker/Marker.Drag.js
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
@@ -22,6 +24,8 @@ L.Marker.mergeOptions({
      * Rotation of the marker icon in radians.
      * 
      * @type {Number}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotation: 0,
 
@@ -32,6 +36,8 @@ L.Marker.mergeOptions({
      * preserving its line alignment.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotateWithView: false,
 
@@ -39,6 +45,8 @@ L.Marker.mergeOptions({
      * Flip the icon when needed to keep it upright while map-aligned.
      *
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     keepUpright: false,
 
@@ -46,6 +54,8 @@ L.Marker.mergeOptions({
      * Optional scale of the marker icon and shadow.
      * 
      * @type {Number}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     scale: undefined,
 
@@ -66,6 +76,8 @@ const MarkerDrag = {
      * Update a dragged marker's geographic position from its transformed icon position.
      * 
      * @param {Object} e Marker drag event with `latlng` and `oldLatLng` fields.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onDrag(e) {
         const marker = this._marker,
@@ -105,6 +117,8 @@ const MarkerDrag = {
      * Reposition the marker after a drag ends, then run Leaflet's drag-end logic.
      * 
      * @param {Object} e Marker drag-end event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onDragEnd(e) {
         if (this._marker._map._rotate) {
@@ -124,6 +138,8 @@ L.Marker.include({
      * @listens L.Map~pitch
      * 
      * @returns {Object} Leaflet event map for the marker.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
         const events = Object.assign(markerProto.getEvents.apply(this, arguments), {
@@ -138,6 +154,8 @@ L.Marker.include({
 
     /**
      * Subscribe to map movement while pitch is active to keep the icon aligned.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _updatePitchEvents() {
         if (this._map._pitch) {
@@ -149,6 +167,8 @@ L.Marker.include({
 
     /**
      * Install rotation-aware drag callbacks when marker dragging is enabled.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _initInteraction() {
         const ret = markerProto._initInteraction.apply(this, arguments);
@@ -170,6 +190,8 @@ L.Marker.include({
      * Position and rotate the marker icon and shadow in map-pane coordinates.
      * 
      * @param {L.Point} pos Marker anchor in layer-point coordinates.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _setPos(pos) {
 
@@ -219,6 +241,8 @@ L.Marker.include({
      * @param {number} rotation Angle in radians.
      * 
      * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setRotation(rotation) {
         this.options.rotation = rotation;

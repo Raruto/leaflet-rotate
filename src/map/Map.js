@@ -2,10 +2,22 @@
  * Extends Leaflet maps with bearing rotation and 3D pitch.
  *
  * @external L.Map
- * @event L.Map#rotate Fired after the map bearing changes.
- * @event L.Map#pitch Fired after the map pitch changes.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  * 
  * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/Map.js
+ */
+
+/**
+ * @event L.Map#rotate Fired after the map bearing changes.
+ * 
+ * @since leaflet-rotate (v0.1.0)
+ */
+
+/**
+ * @event L.Map#pitch Fired after the map pitch changes.
+ * 
+ * @since leaflet-rotate (0.5.0)
  */
 
 import { toPoint } from '../geometry/Point';
@@ -13,20 +25,28 @@ import { toPoint } from '../geometry/Point';
 const mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
 
 L.Map.mergeOptions({
+
     /**
      * @type {boolean} Enable bearing and pitch transformations.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotate: false,
 
     /**
      * @type {number} Initial map bearing in degrees.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     bearing: 0,
 
     /**
      * @type {number} Initial map pitch in degrees, clamped to 0–85.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     pitch: 0,
+
 });
 
 L.Map.include({
@@ -36,6 +56,8 @@ L.Map.include({
      *
      * @param {L.LatLng} center Target center.
      * @param {number} zoom Target zoom level.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _animateZoomNoDelay(center, zoom) {
         if (!this._mapPane) { return; }
@@ -52,6 +74,8 @@ L.Map.include({
      * 
      * @param {HTMLElement|string} id Map container element or its ID.
      * @param {Object} [options={}] Leaflet map options, including `rotate`, `bearing`, and `pitch`.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(id, options) {
         if (options.rotate) {
@@ -75,6 +99,8 @@ L.Map.include({
      * @param {L.Point|number[]} point Pixel coordinate in the map container.
      * 
      * @returns {L.Point} Corresponding layer-point coordinate.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     containerPointToLayerPoint(point) {
         if (!this._rotate) {
@@ -99,6 +125,8 @@ L.Map.include({
      * @param {L.Point|number[]} point Pixel coordinate in layer-point space.
      * 
      * @returns {L.Point} Corresponding pixel coordinate in the map container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     layerPointToContainerPoint(point) {
         if (!this._rotate) {
@@ -124,7 +152,7 @@ L.Map.include({
      * 
      * @returns {L.Point} Corresponding point in map-pane coordinates.
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     rotatedPointToMapPanePoint(point) {
         if (this._pitch) {
@@ -146,7 +174,7 @@ L.Map.include({
      * 
      * @returns {L.Point} Corresponding point in the rotated pane.
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     mapPanePointToRotatedPoint(point) {
         if (this._pitch) {
@@ -176,7 +204,7 @@ L.Map.include({
      * 
      * @returns {L.Bounds} Axis-aligned bounds in container-pixel coordinates.
      * 
-     * @since leaflet-rotate (v0.2)
+     * @since leaflet-rotate (v0.2.0)
      */
     mapBoundsToContainerBounds(bounds) {
         if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
@@ -207,6 +235,8 @@ L.Map.include({
      * The result is the smallest geographic bounds containing all four viewport corners.
      * 
      * @returns {L.LatLngBounds} Geographic bounds visible in the map viewport.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getBounds() {
         if (!this._rotate) {
@@ -262,7 +292,7 @@ L.Map.include({
      * 
      * @fires L.Map#rotate
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     setBearing(theta, options) {
         if (!this._rotate) { return; }
@@ -319,6 +349,8 @@ L.Map.include({
      * @param {L.LatLng} [mapCenter] Center to preserve while applying the change.
      * 
      * @fires L.Map#rotate
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _setBearing(theta, mapCenter) {
         if (!mapCenter && this._loaded) {
@@ -358,6 +390,8 @@ L.Map.include({
      * @param {DOMMatrix|Object} matrix Forward or inverse transformation matrix.
      * 
      * @returns {L.Point} Transformed pixel coordinate.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _transformPitchPoint(point, matrix) {
         point = toPoint(point);
@@ -374,6 +408,8 @@ L.Map.include({
 
     /**
      * Apply the current pitch/bearing CSS transform and cache its forward and inverse matrices.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _updatePitchTransform() {
         if (!this._pitch || !this._rotatePane) { return; }
@@ -413,6 +449,8 @@ L.Map.include({
      * @returns {L.Map} This map instance.
      * 
      * @fires L.Map#pitch
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     setPitch(pitch) {
         this._setPitchAndBearing(pitch, this.getBearing());
@@ -428,6 +466,8 @@ L.Map.include({
      * 
      * @fires L.Map#pitch
      * @fires L.Map#rotate
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _setPitchAndBearing(pitch, bearing) {
         if (!this._rotate) { return; }
@@ -452,6 +492,8 @@ L.Map.include({
      * Get the current map pitch in degrees.
      * 
      * @returns {number} Pitch angle in degrees.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     getPitch() {
         return (this._pitch || 0) * (180 / Math.PI);
@@ -462,7 +504,7 @@ L.Map.include({
      * 
      * @returns {number} Bearing in degrees, normalized to [0, 360).
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     getBearing() {
         return this._bearing * (180 / Math.PI);
@@ -477,6 +519,8 @@ L.Map.include({
      * @param {HTMLElement} [container] parent element
      * 
      * @returns {HTMLElement} pane container
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     // createPane(name, container) {
     //     if (!this._rotate || name == 'mapPane') {
@@ -510,6 +554,8 @@ L.Map.include({
     /**
      * Create the map's panes, placing tile/vector layers in the transformed pane
      * and markers/overlays in the pane that remains upright.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _initPanes() {
         const panes = this._panes = {};
@@ -559,6 +605,8 @@ L.Map.include({
      * @param {Object} [options={}] Padding options (`padding`, `paddingTopLeft`, `paddingBottomRight`).
      * 
      * @returns {L.Map} current map instance
+     * 
+     * @since leaflet-rotate (v0.1.4)
      */
     panInside(latlng, options) {
         if (!this._rotate || (!this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1)) {
@@ -609,6 +657,8 @@ L.Map.include({
      * @param {Object} [options] Pan animation options.
      * 
      * @returns {L.Map} This map instance.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     // panInsideBounds(bounds, options) {
     //     this._enforcingBounds = true;
@@ -682,6 +732,8 @@ L.Map.include({
      * @param {L.Point|number[]} [padding=[0,0]] Pixel padding around the viewport.
      * 
      * @returns {number} Zoom level satisfying the fit.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getBoundsZoom(bounds, inside, padding) {
         if (!this._rotate || (!this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1)) {
@@ -731,6 +783,8 @@ L.Map.include({
      * @param {L.LatLng} latlng Geographic point.
      * 
      * @returns {L.Point} Offset in layer pixels, adjusted for bearing and pitch.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _getCenterOffset(latlng) {
         let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
@@ -749,7 +803,7 @@ L.Map.include({
      * 
      * @returns {L.Point} Rotated-pane position in map-pane coordinates.
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     _getRotatePanePos() {
         return this._rotatePanePos || new L.Point(0, 0);
@@ -768,6 +822,8 @@ L.Map.include({
      * @param {number} zoom Target zoom level.
      * 
      * @returns {L.Point} New pixel origin.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _getNewPixelOrigin(center, zoom) {
         if (!this._rotate || L.version.startsWith('2.')) {
@@ -791,7 +847,7 @@ L.Map.include({
      * 
      * @returns {L.Bounds} Pixel bounds in projected map coordinates.
      * 
-     * @since leaflet-rotate (v0.2)
+     * @since leaflet-rotate (v0.2.0)
      * 
      * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
      */
@@ -816,7 +872,7 @@ L.Map.include({
     },
 
     /**
-     * @since leaflet-rotate (v0.2)
+     * @since leaflet-rotate (v0.2.0)
      * 
      * @returns {L.Point} Map pivot point in pixel coordinates.
      */
@@ -828,13 +884,13 @@ L.Map.include({
     },
 
     /**
-     * @since leaflet-rotate (v0.2)
-     * 
      * @see src\layer\vector\Renderer::_update()
      * 
      * @param {number} padding Bounds padding as a fraction of map size.
      * 
      * @returns {L.Bounds} Padded bounds in layer-point coordinates.
+     * 
+     * @since leaflet-rotate (v0.2.0)
      */
     _getPaddedPixelBounds(padding) {
         if (!this._rotate && mapProto._getPaddedPixelBounds) {
@@ -860,6 +916,8 @@ L.Map.include({
      * @param {GeolocationPosition} pos Browser geolocation result.
      * 
      * @fires L.Map#locationfound
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleGeolocationResponse(pos) {
         if (!this._container._leaflet_id) { return; }

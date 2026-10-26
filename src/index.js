@@ -1,5 +1,7 @@
 /**
- * Export Leaflet classes in the same order as the core library
+ * Export Leaflet classes in the same order as the core library.
+ *
+ * @since leaflet-rotate (v0.1.0)
  * 
  * @external L
  *

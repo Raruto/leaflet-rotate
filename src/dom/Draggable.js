@@ -11,6 +11,8 @@
  * A class for making DOM elements draggable (including touch support).
  * Used internally for map and marker dragging. Only works for elements
  * that were positioned with [`L.DomUtil.setPosition`](#domutil-setposition).
+ *
+ * @since leaflet-rotate (v0.1.0)
  */
 
 L.Draggable.include({

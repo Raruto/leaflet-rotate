@@ -4,7 +4,8 @@
  * 
  * @typedef L.Map.ShiftKeyRotate
  * @property {boolean} [shiftKeyRotate=true] Enable Shift+wheel bearing rotation.
- * @property {boolean} [pitchDrag=true] Enable Ctrl+drag bearing and pitch adjustment.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 L.Map.mergeOptions({
@@ -13,6 +14,8 @@ L.Map.mergeOptions({
      * Whether Shift+wheel changes the map bearing.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     shiftKeyRotate: true,
 
@@ -20,6 +23,8 @@ L.Map.mergeOptions({
      * Whether Ctrl+drag changes bearing and pitch.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     pitchDrag: true,
 
@@ -29,6 +34,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
     /**
      * @param {L.Map} map Map controlled by this handler.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(map) {
         this._map = map;
@@ -39,6 +46,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
     /**
      * Attach enabled wheel and pointer/mouse gesture listeners.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
         if (this._map.options.shiftKeyRotate) {
@@ -51,6 +60,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
     /**
      * Detach gesture listeners and cancel any active drag.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
         L.DomEvent.off(this._map._container, "wheel", this._handleShiftScroll, this);
@@ -59,6 +70,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
     /**
      * Listen for the start of Ctrl+drag pitch gestures.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     addPitchHooks() {
         if (this._pitchHooksAdded) { return; }
@@ -71,6 +84,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
     /**
      * Stop listening for pitch gestures and remove active document listeners.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     removePitchHooks() {
         if (!this._pitchHooksAdded) { return; }
@@ -84,6 +99,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
      * Rotate the map in fixed increments while Shift is held during wheel input.
      * 
      * @param {WheelEvent} e Wheel event from the map container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleShiftScroll(e) {
         if (e.shiftKey) {
@@ -99,6 +116,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
      * Start Ctrl+drag and capture subsequent movement outside the map.
      * 
      * @param {MouseEvent|PointerEvent} e Gesture start event.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _onMouseDown(e) {
         if (!this._map._rotate || !this._map.options.pitchDrag || !e.ctrlKey || e.button !== 0) { return; }
@@ -126,6 +145,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
      * Apply pointer movement to pitch (vertical) and bearing (horizontal).
      * 
      * @param {MouseEvent|PointerEvent} e Gesture movement event.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _onMouseMove(e) {
         this._map._setPitchAndBearing(
@@ -139,6 +160,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
     /**
      * End Ctrl+drag and clear document-level listeners.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _onMouseUp() {
         if (!this._pitchEvents) { return; }
@@ -154,6 +177,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
 
 /**
  * Create the handler when either desktop rotation gesture is enabled.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 L.Map.addInitHook(function() {
     if (this.options.shiftKeyRotate) {

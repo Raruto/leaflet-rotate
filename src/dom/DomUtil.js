@@ -18,6 +18,8 @@ Object.assign(L.DomUtil, {
      * @param {L.Point} [pivot] Point in pixels around which to rotate.
      * 
      * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setTransform(el, offset, scale, bearing, pivot) {
         let pos = offset || new L.Point(0, 0);
@@ -44,6 +46,8 @@ Object.assign(L.DomUtil, {
      * @param {number} [scale] Optional scale factor.
      * 
      * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setPosition(el, point, bearing, pivot, scale) {
         if (!bearing) {
@@ -60,6 +64,8 @@ Object.assign(L.DomUtil, {
      * @param {HTMLElement} el Element whose Leaflet position is requested.
      * 
      * @returns {L.Point} Stored Leaflet position, or the position measured by Leaflet.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getPosition(el) {
         return el._leaflet_pos || domUtilProto.getPosition(el);

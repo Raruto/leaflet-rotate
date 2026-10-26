@@ -3,12 +3,16 @@
  * 
  * @typedef L.Map.CompassBearing
  * @property {L.Map.CompassBearing} compassBearing Map handler, enabled to follow device heading.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 L.Map.CompassBearing = L.Handler.extend({
 
     /**
      * @param {L.Map} map Map whose bearing follows device orientation.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(map) {
         this._map = map;
@@ -23,6 +27,8 @@ L.Map.CompassBearing = L.Handler.extend({
 
     /**
      * Subscribe to the supported device-orientation event, if available.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
@@ -36,6 +42,8 @@ L.Map.CompassBearing = L.Handler.extend({
 
     /**
      * Unsubscribe from device orientation when the handler is disabled.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
@@ -64,6 +72,8 @@ L.Map.CompassBearing = L.Handler.extend({
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
      *
      * @param {DeviceOrientationEvent} e Orientation reading from the browser.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onDeviceOrientation(e) {
         let angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
@@ -90,5 +100,7 @@ L.Map.CompassBearing = L.Handler.extend({
  * Add Compass bearing handler to L.Map (disabled unless `window.DeviceOrientationEvent` is set).
  * 
  * @property {L.Map.CompassBearing} compassBearing
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 L.Map.addInitHook('addHandler', 'compassBearing', L.Map.CompassBearing);

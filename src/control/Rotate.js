@@ -12,6 +12,8 @@
  * 
  * @property {string} [position='topleft'] Leaflet control position.
  * @property {boolean} [closeOnZeroBearing=true] Hide the control when bearing is zero.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 L.Control.Rotate = L.Control.extend({
@@ -27,6 +29,8 @@ L.Control.Rotate = L.Control.extend({
      * @param {L.Map} map
      * 
      * @returns {HTMLElement} Control container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     onAdd(map) {
         const container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
@@ -75,6 +79,8 @@ L.Control.Rotate = L.Control.extend({
      * Remove the map event listener when the control is detached.
      * 
      * @param {L.Map} map
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     onRemove(map) {
         map.off('rotate', this._restyle, this);
@@ -84,6 +90,8 @@ L.Control.Rotate = L.Control.extend({
      * Begin dragging the control's bearing indicator.
      * 
      * @param {MouseEvent} e Mouse-down event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleMouseDown(e) {
         L.DomEvent.stop(e);
@@ -99,6 +107,8 @@ L.Control.Rotate = L.Control.extend({
      * End bearing-indicator dragging and remove document listeners.
      * 
      * @param {MouseEvent} e Mouse-up event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleMouseUp(e) {
         L.DomEvent.stop(e);
@@ -113,6 +123,8 @@ L.Control.Rotate = L.Control.extend({
      * Set bearing from the horizontal drag distance.
      * 
      * @param {MouseEvent} e Mouse-move event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleMouseDrag(e) {
         if (!this.dragging) { return; }
@@ -125,6 +137,8 @@ L.Control.Rotate = L.Control.extend({
      * Compass mode may require permission from the browser.
      * 
      * @param {Event} ev Control click event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _cycleState(ev) {
         if (!this._map) {
@@ -163,6 +177,8 @@ L.Control.Rotate = L.Control.extend({
      * Update the control icon and visibility to match the current mode.
      * 
      * @listens L.Map#rotate
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _restyle() {
         if (!this._map.options.rotate) {
@@ -209,12 +225,16 @@ L.Map.mergeOptions({
      * or pass an options object to configure the control.
      * 
      * @type {boolean|Object}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotateControl: true,
 });
 
 /**
  * Add the configured rotation control to each newly initialized map.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 L.Map.addInitHook(function() {
     if (this.options.rotateControl) {

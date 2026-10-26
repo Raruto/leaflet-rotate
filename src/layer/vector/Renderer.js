@@ -4,6 +4,8 @@
  * @external L.Renderer
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/vector/Renderer.js
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 const rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
@@ -19,6 +21,8 @@ L.Renderer.include({
      * @listens L.Map~rotate
      * 
      * @returns {Object} Leaflet event map for the renderer.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
         const events = rendererGetEvents.apply(this, arguments);
@@ -27,6 +31,8 @@ L.Renderer.include({
 
     /**
      * Reproject vector paths and refresh renderer bounds after bearing changes.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onRotate() {
         if (!this._map._rotate) { return; }
@@ -44,6 +50,8 @@ L.Renderer.include({
      * Fixes `map.flyTo()` when `map.options.zoomAnimation` is false.
      * 
      * @see https://github.com/Leaflet/Leaflet/pull/8794
+     * 
+     * @since leaflet-rotate (v0.2.0)
      */
     onAdd() {
         rendererProto.onAdd.apply(this, arguments);
@@ -73,8 +81,11 @@ L.Renderer.include({
      * @TODO recheck these changes against leaflet@v1.9.3
      * 
      * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+     * 
      * @param {L.LatLng} center Target map center.
      * @param {number} zoom Target zoom level.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _updateTransform(center, zoom) {
         if (L.version.startsWith('2.')) {
@@ -109,6 +120,8 @@ L.Renderer.include({
      * Recalculate bounds and finish renderer updates after movement on Leaflet 2.
      *
      * @param {Object} ev Map movement event.
+     * 
+     * @since leaflet-rotate (v0.4.0)
      */
     _onMoveEnd(ev) {
         if (!L.version.startsWith('2.') || !this._map._rotate) {
@@ -127,6 +140,8 @@ L.Renderer.include({
 
     /**
      * Resize the renderer container to cover the pitch-aware map bounds.
+     * 
+     * @since leaflet-rotate (v0.4.0)
      */
     _resizeContainer() {
         if (!L.version.startsWith('2.') || !this._map._rotate || !this._bounds) {
@@ -183,6 +198,8 @@ L.Renderer.include({
 
     /**
      * Recalculate renderer bounds and cached view state.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _update() {
         if (!this._map._rotate) {

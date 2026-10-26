@@ -6,6 +6,8 @@
  * @external L.Map.TouchZoom
  * @property {boolean|string} [touchZoom=L.Browser.touch] Enable pinch zoom; `'center'` zooms around the view center.
  * @property {boolean} [bounceAtZoomLimits=false] Allow pinch zoom to exceed zoom limits before settling.
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 L.Map.mergeOptions({
@@ -18,6 +20,8 @@ L.Map.mergeOptions({
      * for touch-capable web browsers.
      * 
      * @type {(Boolean|String)}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     touchZoom: L.Browser.touch,
 
@@ -29,6 +33,8 @@ L.Map.mergeOptions({
      * when pinch-zooming.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     bounceAtZoomLimits: false,
 
@@ -38,6 +44,8 @@ L.Map.TouchZoom = L.Handler.extend({
 
     /**
      * Enable pinch zoom handling and mark the shared touch handler as active.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
         this._map._container.classList.add('leaflet-touch-zoom');
@@ -47,6 +55,8 @@ L.Map.TouchZoom = L.Handler.extend({
 
     /**
      * Disable pinch zoom handling while preserving touch rotation state.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
         this._map._container.classList.remove('leaflet-touch-zoom');
@@ -59,5 +69,7 @@ L.Map.TouchZoom = L.Handler.extend({
  * Add Touch Zoom handler (disabled unless `L.Browser.touch` is set).
  * 
  * @property {L.Map.TouchGestures} touchGestures
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 L.Map.addInitHook('addHandler', 'touchZoom', L.Map.TouchZoom);

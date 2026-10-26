@@ -4,6 +4,8 @@
  * @external L.DivOverlay
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/layer/DivOverlay.js
+ * 
+ * @since leaflet-rotate (v0.1.0)
  */
 
 import { toPoint } from '../geometry/Point';
@@ -19,6 +21,8 @@ L.DivOverlay.include({
      * @listens L.Map~pitch
      *
      * @returns {Object} Leaflet event map for the overlay.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
         const events = Object.assign(divOverlayProto.getEvents.apply(this, arguments), {
@@ -33,6 +37,8 @@ L.DivOverlay.include({
 
     /**
      * Listen to map movement only while pitch is non-zero.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _updatePitchEvents() {
         if (this._map._pitch) {
@@ -44,6 +50,8 @@ L.DivOverlay.include({
 
     /**
      * Reposition the overlay after map movement, applying rotation/pitch-aware coordinates.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _updatePosition() {
         if (!this._map) { return; }

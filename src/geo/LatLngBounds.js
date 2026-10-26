@@ -2,6 +2,8 @@
  * Leaflet's `L.LatLngBounds` is not overridden by this plugin. Map methods
  * such as `getBounds()` return standard Leaflet bounds containing the viewport.
  *
+ * @since leaflet-rotate (v0.1.0)
+ *
  * @external L.LatLngBounds
  * 
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/geo/LatLngBounds.js

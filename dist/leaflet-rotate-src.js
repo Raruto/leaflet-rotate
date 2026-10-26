@@ -37,6 +37,8 @@ var leafletRotate = (() => {
      * @param {L.Point} [pivot] Point in pixels around which to rotate.
      * 
      * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setTransform(el, offset, scale, bearing, pivot) {
       let pos = offset || new L.Point(0, 0);
@@ -57,6 +59,8 @@ var leafletRotate = (() => {
      * @param {number} [scale] Optional scale factor.
      * 
      * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setPosition(el, point, bearing, pivot, scale) {
       if (!bearing) {
@@ -71,6 +75,8 @@ var leafletRotate = (() => {
      * @param {HTMLElement} el Element whose Leaflet position is requested.
      * 
      * @returns {L.Point} Stored Leaflet position, or the position measured by Leaflet.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getPosition(el) {
       return el._leaflet_pos || domUtilProto.getPosition(el);
@@ -95,6 +101,8 @@ var leafletRotate = (() => {
      * 
      * @param {number} theta Rotation angle in radians, counterclockwise.
      * @returns {L.Point} Rotated point (or this point when theta is zero).
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotate(theta) {
       return this.rotateFrom(theta, new L.Point(0, 0));
@@ -112,6 +120,8 @@ var leafletRotate = (() => {
      * @param {L.Point} pivot Point to rotate around.
      * 
      * @returns {L.Point}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotateFrom(theta, pivot) {
       if (!theta) {
@@ -144,6 +154,8 @@ var leafletRotate = (() => {
      * @listens L.Map~pitch
      *
      * @returns {Object} Leaflet event map for the overlay.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
       const events = Object.assign(divOverlayProto.getEvents.apply(this, arguments), {
@@ -157,6 +169,8 @@ var leafletRotate = (() => {
     },
     /**
      * Listen to map movement only while pitch is non-zero.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _updatePitchEvents() {
       if (this._map._pitch) {
@@ -167,6 +181,8 @@ var leafletRotate = (() => {
     },
     /**
      * Reposition the overlay after map movement, applying rotation/pitch-aware coordinates.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _updatePosition() {
       if (!this._map) {
@@ -197,6 +213,8 @@ var leafletRotate = (() => {
      * Update the popup position during zoom animation and transform it into map-pane coordinates.
      *
      * @param {Object} e Zoom animation event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _animateZoom(e) {
       popupProto._animateZoom.apply(this, arguments);
@@ -212,6 +230,8 @@ var leafletRotate = (() => {
      * @see https://github.com/fnicollet/Leaflet/pull/21
      *
      * @fires L.Map#autopanstart
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _adjustPan() {
       if (!this.options.autoPan || this._map._panAnim && this._map._panAnim._inProgress) {
@@ -253,6 +273,8 @@ var leafletRotate = (() => {
      * Reposition the tooltip during zoom animation using transformed map coordinates.
      *
      * @param {Object} e Zoom animation event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _animateZoom(e) {
       if (!this._map._rotate) {
@@ -264,6 +286,8 @@ var leafletRotate = (() => {
     },
     /**
      * Recompute tooltip screen position after map movement.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _updatePosition() {
       if (!this._map._rotate) {
@@ -283,6 +307,8 @@ var leafletRotate = (() => {
      * 
      * @param {HTMLImageElement} img Icon or shadow element.
      * @param {string} name Icon style key (`icon` or `shadow`).
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _setIconStyles(img, name) {
       const options = this.options;
@@ -311,6 +337,8 @@ var leafletRotate = (() => {
      * Rotation of the marker icon in radians.
      * 
      * @type {Number}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotation: 0,
     /**
@@ -320,18 +348,24 @@ var leafletRotate = (() => {
      * preserving its line alignment.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotateWithView: false,
     /**
      * Flip the icon when needed to keep it upright while map-aligned.
      *
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     keepUpright: false,
     /**
      * Optional scale of the marker icon and shadow.
      * 
      * @type {Number}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     scale: void 0
   });
@@ -347,6 +381,8 @@ var leafletRotate = (() => {
      * Update a dragged marker's geographic position from its transformed icon position.
      * 
      * @param {Object} e Marker drag event with `latlng` and `oldLatLng` fields.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onDrag(e) {
       const marker = this._marker, rotated_marker = marker.options.rotation || marker.options.rotateWithView, shadow = marker._shadow;
@@ -369,6 +405,8 @@ var leafletRotate = (() => {
      * Reposition the marker after a drag ends, then run Leaflet's drag-end logic.
      * 
      * @param {Object} e Marker drag-end event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onDragEnd(e) {
       if (this._marker._map._rotate) {
@@ -385,6 +423,8 @@ var leafletRotate = (() => {
      * @listens L.Map~pitch
      * 
      * @returns {Object} Leaflet event map for the marker.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
       const events = Object.assign(markerProto.getEvents.apply(this, arguments), {
@@ -398,6 +438,8 @@ var leafletRotate = (() => {
     },
     /**
      * Subscribe to map movement while pitch is active to keep the icon aligned.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _updatePitchEvents() {
       if (this._map._pitch) {
@@ -408,6 +450,8 @@ var leafletRotate = (() => {
     },
     /**
      * Install rotation-aware drag callbacks when marker dragging is enabled.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _initInteraction() {
       const ret = markerProto._initInteraction.apply(this, arguments);
@@ -427,6 +471,8 @@ var leafletRotate = (() => {
      * Position and rotate the marker icon and shadow in map-pane coordinates.
      * 
      * @param {L.Point} pos Marker anchor in layer-point coordinates.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _setPos(pos) {
       if (this._map._rotate) {
@@ -464,6 +510,8 @@ var leafletRotate = (() => {
      * @param {number} rotation Angle in radians.
      * 
      * @returns {void}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     setRotation(rotation) {
       this.options.rotation = rotation;
@@ -480,6 +528,8 @@ var leafletRotate = (() => {
      * @listens L.Map~rotate
      * 
      * @returns {Object} Leaflet event map for the grid layer.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
       const events = gridLayerProto.getEvents.apply(this, arguments);
@@ -497,6 +547,8 @@ var leafletRotate = (() => {
      * @param {L.LatLng} center View center used to calculate bounds.
      * 
      * @returns {L.Bounds} Pixel bounds covered by the layer's tiles.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _getTiledPixelBounds(center) {
       if (!this._map._rotate) {
@@ -518,6 +570,8 @@ var leafletRotate = (() => {
      * @listens L.Map~rotate
      * 
      * @returns {Object} Leaflet event map for the renderer.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getEvents() {
       const events = rendererGetEvents.apply(this, arguments);
@@ -525,6 +579,8 @@ var leafletRotate = (() => {
     },
     /**
      * Reproject vector paths and refresh renderer bounds after bearing changes.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onRotate() {
       if (!this._map._rotate) {
@@ -543,6 +599,8 @@ var leafletRotate = (() => {
      * Fixes `map.flyTo()` when `map.options.zoomAnimation` is false.
      * 
      * @see https://github.com/Leaflet/Leaflet/pull/8794
+     * 
+     * @since leaflet-rotate (v0.2.0)
      */
     onAdd() {
       rendererProto.onAdd.apply(this, arguments);
@@ -570,8 +628,11 @@ var leafletRotate = (() => {
      * @TODO recheck these changes against leaflet@v1.9.3
      * 
      * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
+     * 
      * @param {L.LatLng} center Target map center.
      * @param {number} zoom Target zoom level.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _updateTransform(center, zoom) {
       if (L.version.startsWith("2.")) {
@@ -595,6 +656,8 @@ var leafletRotate = (() => {
      * Recalculate bounds and finish renderer updates after movement on Leaflet 2.
      *
      * @param {Object} ev Map movement event.
+     * 
+     * @since leaflet-rotate (v0.4.0)
      */
     _onMoveEnd(ev) {
       if (!L.version.startsWith("2.") || !this._map._rotate) {
@@ -611,6 +674,8 @@ var leafletRotate = (() => {
     },
     /**
      * Resize the renderer container to cover the pitch-aware map bounds.
+     * 
+     * @since leaflet-rotate (v0.4.0)
      */
     _resizeContainer() {
       if (!L.version.startsWith("2.") || !this._map._rotate || !this._bounds) {
@@ -658,6 +723,8 @@ var leafletRotate = (() => {
     // },
     /**
      * Recalculate renderer bounds and cached view state.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _update() {
       if (!this._map._rotate) {
@@ -675,14 +742,20 @@ var leafletRotate = (() => {
   L.Map.mergeOptions({
     /**
      * @type {boolean} Enable bearing and pitch transformations.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotate: false,
     /**
      * @type {number} Initial map bearing in degrees.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     bearing: 0,
     /**
      * @type {number} Initial map pitch in degrees, clamped to 0–85.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     pitch: 0
   });
@@ -692,6 +765,8 @@ var leafletRotate = (() => {
      *
      * @param {L.LatLng} center Target center.
      * @param {number} zoom Target zoom level.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _animateZoomNoDelay(center, zoom) {
       if (!this._mapPane) {
@@ -708,6 +783,8 @@ var leafletRotate = (() => {
      * 
      * @param {HTMLElement|string} id Map container element or its ID.
      * @param {Object} [options={}] Leaflet map options, including `rotate`, `bearing`, and `pitch`.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(id, options) {
       if (options.rotate) {
@@ -730,6 +807,8 @@ var leafletRotate = (() => {
      * @param {L.Point|number[]} point Pixel coordinate in the map container.
      * 
      * @returns {L.Point} Corresponding layer-point coordinate.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     containerPointToLayerPoint(point) {
       if (!this._rotate) {
@@ -750,6 +829,8 @@ var leafletRotate = (() => {
      * @param {L.Point|number[]} point Pixel coordinate in layer-point space.
      * 
      * @returns {L.Point} Corresponding pixel coordinate in the map container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     layerPointToContainerPoint(point) {
       if (!this._rotate) {
@@ -771,7 +852,7 @@ var leafletRotate = (() => {
      * 
      * @returns {L.Point} Corresponding point in map-pane coordinates.
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     rotatedPointToMapPanePoint(point) {
       if (this._pitch) {
@@ -790,7 +871,7 @@ var leafletRotate = (() => {
      * 
      * @returns {L.Point} Corresponding point in the rotated pane.
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     mapPanePointToRotatedPoint(point) {
       if (this._pitch) {
@@ -815,7 +896,7 @@ var leafletRotate = (() => {
      * 
      * @returns {L.Bounds} Axis-aligned bounds in container-pixel coordinates.
      * 
-     * @since leaflet-rotate (v0.2)
+     * @since leaflet-rotate (v0.2.0)
      */
     mapBoundsToContainerBounds(bounds) {
       if (!this._rotate && mapProto.mapBoundsToContainerBounds) {
@@ -836,6 +917,8 @@ var leafletRotate = (() => {
      * The result is the smallest geographic bounds containing all four viewport corners.
      * 
      * @returns {L.LatLngBounds} Geographic bounds visible in the map viewport.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getBounds() {
       if (!this._rotate) {
@@ -882,7 +965,7 @@ var leafletRotate = (() => {
      * 
      * @fires L.Map#rotate
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     setBearing(theta, options) {
       if (!this._rotate) {
@@ -928,6 +1011,8 @@ var leafletRotate = (() => {
      * @param {L.LatLng} [mapCenter] Center to preserve while applying the change.
      * 
      * @fires L.Map#rotate
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _setBearing(theta, mapCenter) {
       if (!mapCenter && this._loaded) {
@@ -957,6 +1042,8 @@ var leafletRotate = (() => {
      * @param {DOMMatrix|Object} matrix Forward or inverse transformation matrix.
      * 
      * @returns {L.Point} Transformed pixel coordinate.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _transformPitchPoint(point, matrix) {
       point = toPoint(point);
@@ -972,6 +1059,8 @@ var leafletRotate = (() => {
     },
     /**
      * Apply the current pitch/bearing CSS transform and cache its forward and inverse matrices.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _updatePitchTransform() {
       if (!this._pitch || !this._rotatePane) {
@@ -1001,6 +1090,8 @@ var leafletRotate = (() => {
      * @returns {L.Map} This map instance.
      * 
      * @fires L.Map#pitch
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     setPitch(pitch) {
       this._setPitchAndBearing(pitch, this.getBearing());
@@ -1015,6 +1106,8 @@ var leafletRotate = (() => {
      * 
      * @fires L.Map#pitch
      * @fires L.Map#rotate
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _setPitchAndBearing(pitch, bearing) {
       if (!this._rotate) {
@@ -1038,6 +1131,8 @@ var leafletRotate = (() => {
      * Get the current map pitch in degrees.
      * 
      * @returns {number} Pitch angle in degrees.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     getPitch() {
       return (this._pitch || 0) * (180 / Math.PI);
@@ -1047,7 +1142,7 @@ var leafletRotate = (() => {
      * 
      * @returns {number} Bearing in degrees, normalized to [0, 360).
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     getBearing() {
       return this._bearing * (180 / Math.PI);
@@ -1061,6 +1156,8 @@ var leafletRotate = (() => {
      * @param {HTMLElement} [container] parent element
      * 
      * @returns {HTMLElement} pane container
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     // createPane(name, container) {
     //     if (!this._rotate || name == 'mapPane') {
@@ -1093,6 +1190,8 @@ var leafletRotate = (() => {
     /**
      * Create the map's panes, placing tile/vector layers in the transformed pane
      * and markers/overlays in the pane that remains upright.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _initPanes() {
       const panes = this._panes = {};
@@ -1136,6 +1235,8 @@ var leafletRotate = (() => {
      * @param {Object} [options={}] Padding options (`padding`, `paddingTopLeft`, `paddingBottomRight`).
      * 
      * @returns {L.Map} current map instance
+     * 
+     * @since leaflet-rotate (v0.1.4)
      */
     panInside(latlng, options) {
       if (!this._rotate || !this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1) {
@@ -1168,6 +1269,8 @@ var leafletRotate = (() => {
      * @param {Object} [options] Pan animation options.
      * 
      * @returns {L.Map} This map instance.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     // panInsideBounds(bounds, options) {
     //     this._enforcingBounds = true;
@@ -1237,6 +1340,8 @@ var leafletRotate = (() => {
      * @param {L.Point|number[]} [padding=[0,0]] Pixel padding around the viewport.
      * 
      * @returns {number} Zoom level satisfying the fit.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     getBoundsZoom(bounds, inside, padding) {
       if (!this._rotate || !this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1) {
@@ -1267,6 +1372,8 @@ var leafletRotate = (() => {
      * @param {L.LatLng} latlng Geographic point.
      * 
      * @returns {L.Point} Offset in layer pixels, adjusted for bearing and pitch.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _getCenterOffset(latlng) {
       let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
@@ -1283,7 +1390,7 @@ var leafletRotate = (() => {
      * 
      * @returns {L.Point} Rotated-pane position in map-pane coordinates.
      * 
-     * @since leaflet-rotate (v0.1)
+     * @since leaflet-rotate (v0.1.0)
      */
     _getRotatePanePos() {
       return this._rotatePanePos || new L.Point(0, 0);
@@ -1299,6 +1406,8 @@ var leafletRotate = (() => {
      * @param {number} zoom Target zoom level.
      * 
      * @returns {L.Point} New pixel origin.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _getNewPixelOrigin(center, zoom) {
       if (!this._rotate || L.version.startsWith("2.")) {
@@ -1315,7 +1424,7 @@ var leafletRotate = (() => {
      * 
      * @returns {L.Bounds} Pixel bounds in projected map coordinates.
      * 
-     * @since leaflet-rotate (v0.2)
+     * @since leaflet-rotate (v0.2.0)
      * 
      * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
      */
@@ -1334,7 +1443,7 @@ var leafletRotate = (() => {
       return new L.Bounds(pixelCenter.subtract(halfSize), pixelCenter.add(halfSize));
     },
     /**
-     * @since leaflet-rotate (v0.2)
+     * @since leaflet-rotate (v0.2.0)
      * 
      * @returns {L.Point} Map pivot point in pixel coordinates.
      */
@@ -1345,13 +1454,13 @@ var leafletRotate = (() => {
       return this.getSize()._divideBy(2)._subtract(this._getMapPanePos());
     },
     /**
-     * @since leaflet-rotate (v0.2)
-     * 
      * @see src\layer\vector\Renderer::_update()
      * 
      * @param {number} padding Bounds padding as a fraction of map size.
      * 
      * @returns {L.Bounds} Padded bounds in layer-point coordinates.
+     * 
+     * @since leaflet-rotate (v0.2.0)
      */
     _getPaddedPixelBounds(padding) {
       if (!this._rotate && mapProto._getPaddedPixelBounds) {
@@ -1371,6 +1480,8 @@ var leafletRotate = (() => {
      * @param {GeolocationPosition} pos Browser geolocation result.
      * 
      * @fires L.Map#locationfound
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleGeolocationResponse(pos) {
       if (!this._container._leaflet_id) {
@@ -1416,6 +1527,8 @@ var leafletRotate = (() => {
   L.Map.CompassBearing = L.Handler.extend({
     /**
      * @param {L.Map} map Map whose bearing follows device orientation.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(map) {
       this._map = map;
@@ -1428,6 +1541,8 @@ var leafletRotate = (() => {
     },
     /**
      * Subscribe to the supported device-orientation event, if available.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
       if (this._map._rotate && this.__deviceOrientationEvent) {
@@ -1438,6 +1553,8 @@ var leafletRotate = (() => {
     },
     /**
      * Unsubscribe from device orientation when the handler is disabled.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
       if (this._map._rotate && this.__deviceOrientationEvent) {
@@ -1465,6 +1582,8 @@ var leafletRotate = (() => {
      * @see https://developer.mozilla.org/en-US/docs/Web/API/Window/orientation
      *
      * @param {DeviceOrientationEvent} e Orientation reading from the browser.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onDeviceOrientation(e) {
       let angle = e.webkitCompassHeading != null ? e.webkitCompassHeading : e.alpha;
@@ -1493,6 +1612,8 @@ var leafletRotate = (() => {
      *
      * @type {Boolean}
      * 
+     * @since leaflet-rotate (v0.1.0)
+     * 
      * @see https://developer.mozilla.org/docs/Web/API/MutationObserver
      */
     trackContainerMutation: false
@@ -1500,6 +1621,8 @@ var leafletRotate = (() => {
   L.Map.ContainerMutation = L.Handler.extend({
     /**
      * Start observing the map container's style attribute.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
       if (!this._observer) {
@@ -1515,6 +1638,8 @@ var leafletRotate = (() => {
     },
     /**
      * Stop observing container mutations.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
       this._observer.disconnect();
@@ -1535,6 +1660,8 @@ var leafletRotate = (() => {
      * Whether pinch zoom may temporarily exceed min/max zoom and bounce back.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     bounceAtZoomLimits: true
   });
@@ -1543,6 +1670,8 @@ var leafletRotate = (() => {
      * Initialize the shared handler from the map's touch zoom/rotation options.
      * 
      * @param {L.Map} map Map whose touch gestures are handled.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(map) {
       this._map = map;
@@ -1551,12 +1680,16 @@ var leafletRotate = (() => {
     },
     /**
      * Listen for the start of two-finger gestures on the map container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
       L.DomEvent.on(this._map._container, "touchstart", this._onTouchStart, this);
     },
     /**
      * Remove the touch-start listener.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
       L.DomEvent.off(this._map._container, "touchstart", this._onTouchStart, this);
@@ -1565,6 +1698,8 @@ var leafletRotate = (() => {
      * Record initial touch points and start tracking a two-finger gesture.
      * 
      * @param {TouchEvent} e Touch-start event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onTouchStart(e) {
       const map = this._map;
@@ -1603,6 +1738,8 @@ var leafletRotate = (() => {
      * Update bearing and/or zoom while the two touch points move.
      * 
      * @param {TouchEvent} e Touch-move event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onTouchMove(e) {
       if (!e.touches || e.touches.length !== 2 || !(this._zooming || this._rotating)) {
@@ -1656,6 +1793,8 @@ var leafletRotate = (() => {
     },
     /**
      * Finish the gesture, settle the zoom and remove document listeners.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _onTouchEnd() {
       if (!this._moved || !(this._zooming || this._rotating)) {
@@ -1682,12 +1821,16 @@ var leafletRotate = (() => {
      * Whether the map can be rotated with a two-finger rotation gesture
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     touchRotate: false
   });
   L.Map.TouchRotate = L.Handler.extend({
     /**
      * Enable rotation handling in the map's shared touch gesture handler.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
       this._map.touchGestures.enable();
@@ -1695,6 +1838,8 @@ var leafletRotate = (() => {
     },
     /**
      * Disable rotation handling without affecting pinch zoom.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
       this._map.touchGestures.rotate = false;
@@ -1708,18 +1853,24 @@ var leafletRotate = (() => {
      * Whether Shift+wheel changes the map bearing.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     shiftKeyRotate: true,
     /**
      * Whether Ctrl+drag changes bearing and pitch.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     pitchDrag: true
   });
   L.Map.ShiftKeyRotate = L.Handler.extend({
     /**
      * @param {L.Map} map Map controlled by this handler.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     initialize(map) {
       this._map = map;
@@ -1729,6 +1880,8 @@ var leafletRotate = (() => {
     },
     /**
      * Attach enabled wheel and pointer/mouse gesture listeners.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
       if (this._map.options.shiftKeyRotate) {
@@ -1740,6 +1893,8 @@ var leafletRotate = (() => {
     },
     /**
      * Detach gesture listeners and cancel any active drag.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
       L.DomEvent.off(this._map._container, "wheel", this._handleShiftScroll, this);
@@ -1747,6 +1902,8 @@ var leafletRotate = (() => {
     },
     /**
      * Listen for the start of Ctrl+drag pitch gestures.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     addPitchHooks() {
       if (this._pitchHooksAdded) {
@@ -1758,6 +1915,8 @@ var leafletRotate = (() => {
     },
     /**
      * Stop listening for pitch gestures and remove active document listeners.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     removePitchHooks() {
       if (!this._pitchHooksAdded) {
@@ -1772,6 +1931,8 @@ var leafletRotate = (() => {
      * Rotate the map in fixed increments while Shift is held during wheel input.
      * 
      * @param {WheelEvent} e Wheel event from the map container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleShiftScroll(e) {
       if (e.shiftKey) {
@@ -1786,6 +1947,8 @@ var leafletRotate = (() => {
      * Start Ctrl+drag and capture subsequent movement outside the map.
      * 
      * @param {MouseEvent|PointerEvent} e Gesture start event.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _onMouseDown(e) {
       if (!this._map._rotate || !this._map.options.pitchDrag || !e.ctrlKey || e.button !== 0) {
@@ -1812,6 +1975,8 @@ var leafletRotate = (() => {
      * Apply pointer movement to pitch (vertical) and bearing (horizontal).
      * 
      * @param {MouseEvent|PointerEvent} e Gesture movement event.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _onMouseMove(e) {
       this._map._setPitchAndBearing(
@@ -1824,6 +1989,8 @@ var leafletRotate = (() => {
     },
     /**
      * End Ctrl+drag and clear document-level listeners.
+     * 
+     * @since leaflet-rotate (0.5.0)
      */
     _onMouseUp() {
       if (!this._pitchEvents) {
@@ -1862,6 +2029,8 @@ var leafletRotate = (() => {
      * for touch-capable web browsers.
      * 
      * @type {(Boolean|String)}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     touchZoom: L.Browser.touch,
     /**
@@ -1872,12 +2041,16 @@ var leafletRotate = (() => {
      * when pinch-zooming.
      * 
      * @type {Boolean}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     bounceAtZoomLimits: false
   });
   L.Map.TouchZoom = L.Handler.extend({
     /**
      * Enable pinch zoom handling and mark the shared touch handler as active.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
       this._map._container.classList.add("leaflet-touch-zoom");
@@ -1886,6 +2059,8 @@ var leafletRotate = (() => {
     },
     /**
      * Disable pinch zoom handling while preserving touch rotation state.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
       this._map._container.classList.remove("leaflet-touch-zoom");
@@ -1906,6 +2081,8 @@ var leafletRotate = (() => {
      * @param {L.Map} map
      * 
      * @returns {HTMLElement} Control container.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     onAdd(map) {
       const container = this._container = L.DomUtil.create("div", "leaflet-control-rotate leaflet-bar");
@@ -1935,6 +2112,8 @@ var leafletRotate = (() => {
      * Remove the map event listener when the control is detached.
      * 
      * @param {L.Map} map
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     onRemove(map) {
       map.off("rotate", this._restyle, this);
@@ -1943,6 +2122,8 @@ var leafletRotate = (() => {
      * Begin dragging the control's bearing indicator.
      * 
      * @param {MouseEvent} e Mouse-down event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleMouseDown(e) {
       L.DomEvent.stop(e);
@@ -1955,6 +2136,8 @@ var leafletRotate = (() => {
      * End bearing-indicator dragging and remove document listeners.
      * 
      * @param {MouseEvent} e Mouse-up event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleMouseUp(e) {
       L.DomEvent.stop(e);
@@ -1965,6 +2148,8 @@ var leafletRotate = (() => {
      * Set bearing from the horizontal drag distance.
      * 
      * @param {MouseEvent} e Mouse-move event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _handleMouseDrag(e) {
       if (!this.dragging) {
@@ -1978,6 +2163,8 @@ var leafletRotate = (() => {
      * Compass mode may require permission from the browser.
      * 
      * @param {Event} ev Control click event.
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _cycleState(ev) {
       if (!this._map) {
@@ -2002,6 +2189,8 @@ var leafletRotate = (() => {
      * Update the control icon and visibility to match the current mode.
      * 
      * @listens L.Map#rotate
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     _restyle() {
       if (!this._map.options.rotate) {
@@ -2035,6 +2224,8 @@ var leafletRotate = (() => {
      * or pass an options object to configure the control.
      * 
      * @type {boolean|Object}
+     * 
+     * @since leaflet-rotate (v0.1.0)
      */
     rotateControl: true
   });
