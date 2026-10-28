@@ -354,8 +354,8 @@ When('I inspect debugger geometry after resizing and moving the map', async func
       return [point.x - targets[index][0], point.y - targets[index][1]];
     });
     const pixelBounds = map.getPixelBounds();
-    const debugMin = JSON.parse(document.getElementById('ogbx').textContent);
-    const debugMax = JSON.parse(document.getElementById('ogby').textContent);
+    const debugMin = document.getElementById('ogbx').textContent.split(',').map(Number);
+    const debugMax = document.getElementById('ogby').textContent.split(',').map(Number);
     return {
       size: [size.x, size.y],
       paneSizes: ['.panebounds.rotate', '.panebounds.main'].map(selector => {
@@ -370,10 +370,10 @@ When('I inspect debugger geometry after resizing and moving the map', async func
       ],
       pixelOrigin: [read('ogx') - map._pixelOrigin.x, read('ogy') - map._pixelOrigin.y],
       pixelBounds: [
-        debugMin.x - pixelBounds.min.x,
-        debugMin.y - pixelBounds.min.y,
-        debugMax.x - pixelBounds.max.x,
-        debugMax.y - pixelBounds.max.y,
+        debugMin[0] - pixelBounds.min.x,
+        debugMin[1] - pixelBounds.min.y,
+        debugMax[0] - pixelBounds.max.x,
+        debugMax[1] - pixelBounds.max.y,
       ],
       pointer: [
         read('llx') - window.debugMouseEvent.latlng[0],
@@ -419,7 +419,7 @@ When('I use the example zoom controls', async function () {
 
 When('I rotate the example markers from the debugger', async function () {
   this.markerRotationsBefore = await this.page.evaluate(() => markers.map(marker => marker.options.rotation));
-  await this.page.getByRole('button', { name: 'Rotate Markers' }).click();
+  await this.page.getByRole('button', { name: 'Rotate', exact: true }).click();
   await this.page.waitForTimeout(600);
   this.markerRotationsAfter = await this.page.evaluate(() => markers.map(marker => marker.options.rotation));
 });

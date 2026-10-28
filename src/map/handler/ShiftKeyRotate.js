@@ -199,7 +199,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
      * @since leaflet-rotate (0.5.1)
      */
     _onContextMenu(e) {
-        if (this._moved) {
+        if (this._dragging || this._moved) {
             e.preventDefault();
             e.stopPropagation();
         }

@@ -353,6 +353,8 @@
 		$('run-all').onclick = async () => { for (const s of scenarios) await run(s); };
 		$('clear').onclick = e => { e.preventDefault(); $('results').tBodies[0].replaceChildren(); $('results-panel').classList.add('hidden'); };
 	</script>
+
+	<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github" width="163"> </a>
 </body>
 
 </html>

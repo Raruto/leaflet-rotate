@@ -651,6 +651,26 @@ Then('the map rotates counterclockwise without opening the context menu', functi
   assert.equal(this.rightDrag.contextMenus, 0);
 });
 
+When('a context menu event fires immediately on right-button press', async function () {
+  this.earlyContextMenu = await this.page.evaluate(() => {
+    let contextMenus = 0;
+    map.on('contextmenu', () => contextMenus++);
+    const pointer = L.version.startsWith('2.');
+    const Event = pointer ? PointerEvent : MouseEvent;
+    map.getContainer().dispatchEvent(new Event(pointer ? 'pointerdown' : 'mousedown', {
+      button: 2, buttons: 2, bubbles: true, cancelable: true,
+    }));
+    const menu = new MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true });
+    map.getContainer().dispatchEvent(menu);
+    document.dispatchEvent(new Event(pointer ? 'pointerup' : 'mouseup', { button: 2 }));
+    return { prevented: menu.defaultPrevented, contextMenus };
+  });
+});
+
+Then('the early context menu is suppressed', function () {
+  assert.deepEqual(this.earlyContextMenu, { prevented: true, contextMenus: 0 });
+});
+
 When('I look at a high zoom map with a high pitch', async function () {
   this.highPitch = await this.page.evaluate(async () => {
     const results = [];

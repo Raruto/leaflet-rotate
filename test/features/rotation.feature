@@ -81,6 +81,11 @@ Feature: Rotating a Leaflet map
     Then the map rotates counterclockwise without opening the context menu
 
   @issue-73
+  Scenario: Right-button press suppresses the context menu before movement
+    When a context menu event fires immediately on right-button press
+    Then the early context menu is suppressed
+
+  @issue-73
   Scenario: High pitch keeps tile loading bounded
     When I look at a high zoom map with a high pitch
     Then tile loading stays bounded and covers the visible map
