@@ -76,32 +76,62 @@ When('I rotate a map with the default rotate control', async function () {
     const displayWhenRotated = getComputedStyle(control).display;
     testMap.setBearing(0);
     const displayAfterReset = getComputedStyle(control).display;
+    testMap.setPitch(30);
+    const displayWhenPitched = getComputedStyle(control).display;
+    testMap.setPitch(0);
+    const displayAfterPitchReset = getComputedStyle(control).display;
     testMap.remove();
     container.remove();
-    return [displayAtZero, displayWhenRotated, displayAfterReset];
+    return [displayAtZero, displayWhenRotated, displayAfterReset, displayWhenPitched, displayAfterPitchReset];
   });
 });
 
 Then('the default rotate control visibility follows the bearing', function () {
-  assert.deepEqual(this.rotateControlVisibility, ['none', 'block', 'none']);
+  assert.deepEqual(this.rotateControlVisibility, ['none', 'block', 'none', 'block', 'none']);
 });
 
 When('I drag the rotate control', async function () {
-  this.controlBearing = await this.page.evaluate(() => {
-    map.setBearing(0);
-    const link = map.rotateControl._link;
-    link.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 100, clientY: 100 }));
-    document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 135, clientY: 100 }));
-    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 135, clientY: 100 }));
-    return map.getBearing();
-  });
+  await this.page.evaluate(() => { map.setPitch(0); map.setBearing(0); });
+  const box = await this.page.locator('.leaflet-control-rotate-toggle').boundingBox(),
+    x = box.x + box.width / 2,
+    y = box.y + box.height / 2;
+  await this.page.mouse.move(x, y);
+  await this.page.mouse.down();
+  await this.page.mouse.move(x + 50, y, { steps: 5 });
+  await this.page.mouse.move(x + 50, y + 200, { steps: 5 });
+  await this.page.mouse.move(x + 50, y + 160, { steps: 5 });
+  await this.page.mouse.up();
+  await this.page.waitForTimeout(700);
+  this.controlDrag = await this.page.evaluate(() => ({
+    bearing: map.getBearing(),
+    pitch: map.getPitch(),
+    arrow: map.rotateControl._arrow.style.transform,
+  }));
 });
 
-Then('the map bearing follows the control drag', function () {
-  assert.equal(this.controlBearing, 35);
+Then('the map bearing and pitch follow the control drag', function () {
+  // a drag must not be followed by the click reset
+  assert.ok(Math.abs(this.controlDrag.bearing - 40) < 1e-6, JSON.stringify(this.controlDrag));
+  assert.ok(Math.abs(this.controlDrag.pitch - 20) < 1e-6, JSON.stringify(this.controlDrag));
+  assert.match(this.controlDrag.arrow, /rotateX\((20|19\.9)[\d.]*deg\) rotate\((40|39\.9)[\d.]*deg\)/);
 });
 
-When('I activate compass mode on a permission-based device', async function () {
+When('I click the rotate control on a rotated and pitched map', async function () {
+  await this.page.evaluate(() => { map.setBearing(120); map.setPitch(45); });
+  await this.page.locator('.leaflet-control-rotate-toggle').click();
+  this.controlReset = [await this.page.evaluate(() => ({ bearing: map.getBearing(), pitch: map.getPitch() }))];
+  await this.page.waitForTimeout(800);
+  this.controlReset.push(await this.page.evaluate(() => ({ bearing: map.getBearing(), pitch: map.getPitch() })));
+});
+
+Then('the map animates back to north and zero pitch', function () {
+  const [start, end] = this.controlReset;
+  assert.ok(start.bearing > 0 || start.pitch > 0, JSON.stringify(this.controlReset));
+  assert.equal(end.bearing, 0);
+  assert.equal(end.pitch, 0);
+});
+
+When('I enable compass bearing on a permission-based device', async function () {
   this.permissionRequests = await this.page.evaluate(async () => {
     const descriptor = Object.getOwnPropertyDescriptor(window, 'DeviceOrientationEvent');
     window.permissionRequests = 0;
@@ -114,24 +144,21 @@ When('I activate compass mode on a permission-based device', async function () {
         }
       },
     });
-    const click = () => map.rotateControl._link.dispatchEvent(new MouseEvent('click', {
-      bubbles: true,
-      cancelable: true,
-    }));
-    click();
-    click();
-    await Promise.resolve();
+    map.compassBearing.disable();
+    map.compassBearing.enable();
+    await new Promise(resolve => setTimeout(resolve));
+    const enabled = map.compassBearing.enabled();
     if (descriptor) {
       Object.defineProperty(window, 'DeviceOrientationEvent', descriptor);
     } else {
       delete window.DeviceOrientationEvent;
     }
-    return window.permissionRequests;
+    return { requests: window.permissionRequests, enabled };
   });
 });
 
 Then('device-orientation permission is requested', function () {
-  assert.equal(this.permissionRequests, 1);
+  assert.deepEqual(this.permissionRequests, { requests: 1, enabled: false });
 });
 
 When('I apply compass heading readings', async function () {
@@ -327,8 +354,8 @@ When('I inspect debugger geometry after resizing and moving the map', async func
       return [point.x - targets[index][0], point.y - targets[index][1]];
     });
     const pixelBounds = map.getPixelBounds();
-    const debugMin = JSON.parse(document.getElementById('ogbx').textContent);
-    const debugMax = JSON.parse(document.getElementById('ogby').textContent);
+    const debugMin = document.getElementById('ogbx').textContent.split(',').map(Number);
+    const debugMax = document.getElementById('ogby').textContent.split(',').map(Number);
     return {
       size: [size.x, size.y],
       paneSizes: ['.panebounds.rotate', '.panebounds.main'].map(selector => {
@@ -343,10 +370,10 @@ When('I inspect debugger geometry after resizing and moving the map', async func
       ],
       pixelOrigin: [read('ogx') - map._pixelOrigin.x, read('ogy') - map._pixelOrigin.y],
       pixelBounds: [
-        debugMin.x - pixelBounds.min.x,
-        debugMin.y - pixelBounds.min.y,
-        debugMax.x - pixelBounds.max.x,
-        debugMax.y - pixelBounds.max.y,
+        debugMin[0] - pixelBounds.min.x,
+        debugMin[1] - pixelBounds.min.y,
+        debugMax[0] - pixelBounds.max.x,
+        debugMax[1] - pixelBounds.max.y,
       ],
       pointer: [
         read('llx') - window.debugMouseEvent.latlng[0],
@@ -392,7 +419,7 @@ When('I use the example zoom controls', async function () {
 
 When('I rotate the example markers from the debugger', async function () {
   this.markerRotationsBefore = await this.page.evaluate(() => markers.map(marker => marker.options.rotation));
-  await this.page.getByRole('button', { name: 'Rotate Markers' }).click();
+  await this.page.getByRole('button', { name: 'Rotate', exact: true }).click();
   await this.page.waitForTimeout(600);
   this.markerRotationsAfter = await this.page.evaluate(() => markers.map(marker => marker.options.rotation));
 });

@@ -575,3 +575,196 @@ Then('its drag callbacks match the marker and pointer coordinates', function () 
   assert.ok(Math.abs(this.markerPosition.marker.lat - lastCallback[0]) < 1e-7, JSON.stringify(this.markerPosition));
   assert.ok(Math.abs(this.markerPosition.marker.lng - lastCallback[1]) < 1e-7, JSON.stringify(this.markerPosition));
 });
+
+When('I animate a zoom from a low level on a rotated map', async function () {
+  this.lowZoomJump = await this.page.evaluate(async () => {
+    const style = document.createElement('style');
+    style.textContent = '*{transition:none!important}';
+    document.head.appendChild(style);
+    map.setView([50, 5], 1, { animate: false });
+    map.setBearing(30);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const element = circle.getElement(),
+      center = () => {
+        const bounds = element.getBoundingClientRect();
+        return [bounds.left + bounds.width / 2, bounds.top + bounds.height / 2];
+      };
+    map.setZoom(3);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const animated = center();
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const settled = center();
+    style.remove();
+    return Math.hypot(animated[0] - settled[0], animated[1] - settled[1]);
+  });
+});
+
+Then('vector layers do not jump at the end of the zoom animation', function () {
+  assert.ok(this.lowZoomJump < 3, `Vector layer jumped ${this.lowZoomJump}px`);
+});
+
+When('I zoom around an off-center point on a pitched map', async function () {
+  this.zoomAroundDrift = await this.page.evaluate(async () => {
+    map.setView([50, 5], 6, { animate: false });
+    map.setBearing(30);
+    map.setPitch(60);
+    const size = map.getSize(),
+      point = new L.Point(size.x * 0.1, size.y * 0.9),
+      latlng = map.containerPointToLatLng(point);
+    map.setZoomAround(point, 7, { animate: false });
+    const drift = map.latLngToContainerPoint(latlng).distanceTo(point);
+    let animated = false;
+    map.once('zoomanim', () => animated = true);
+    map.setZoomAround(new L.Point(size.x * 0.85, size.y * 0.15), 8);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    return { drift, animated };
+  });
+});
+
+Then('the point under the cursor stays in place', function () {
+  assert.ok(this.zoomAroundDrift.drift < 2, `Point under the cursor moved ${this.zoomAroundDrift.drift}px`);
+  assert.equal(this.zoomAroundDrift.animated, true, 'Zoom toward the horizon was not animated');
+});
+
+When('I right-drag horizontally below the map center', async function () {
+  await this.page.evaluate(() => {
+    map.setPitch(0);
+    map.setBearing(0);
+    window.__contextMenus = 0;
+    map.on('contextmenu', () => window.__contextMenus++);
+  });
+  const bounds = await this.page.locator('#map').boundingBox(),
+    start = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 + 50 };
+  await this.page.mouse.move(start.x, start.y);
+  await this.page.mouse.down({ button: 'right' });
+  await this.page.mouse.move(start.x + 50, start.y, { steps: 5 });
+  await this.page.mouse.up({ button: 'right' });
+  await this.page.locator('#map').dispatchEvent('contextmenu', { button: 2, clientX: start.x + 50, clientY: start.y });
+  this.rightDrag = await this.page.evaluate(() => ({
+    bearing: map.getBearing(),
+    contextMenus: window.__contextMenus,
+  }));
+});
+
+Then('the map rotates counterclockwise without opening the context menu', function () {
+  assert.ok(Math.abs(this.rightDrag.bearing - 320) < 1e-6, JSON.stringify(this.rightDrag));
+  assert.equal(this.rightDrag.contextMenus, 0);
+});
+
+When('a context menu event fires immediately on right-button press', async function () {
+  this.earlyContextMenu = await this.page.evaluate(() => {
+    let contextMenus = 0;
+    map.on('contextmenu', () => contextMenus++);
+    const pointer = L.version.startsWith('2.');
+    const Event = pointer ? PointerEvent : MouseEvent;
+    map.getContainer().dispatchEvent(new Event(pointer ? 'pointerdown' : 'mousedown', {
+      button: 2, buttons: 2, bubbles: true, cancelable: true,
+    }));
+    const menu = new MouseEvent('contextmenu', { button: 2, bubbles: true, cancelable: true });
+    map.getContainer().dispatchEvent(menu);
+    document.dispatchEvent(new Event(pointer ? 'pointerup' : 'mouseup', { button: 2 }));
+    return { prevented: menu.defaultPrevented, contextMenus };
+  });
+});
+
+Then('the early context menu is suppressed', function () {
+  assert.deepEqual(this.earlyContextMenu, { prevented: true, contextMenus: 0 });
+});
+
+When('I look at a high zoom map with a high pitch', async function () {
+  this.highPitch = await this.page.evaluate(async () => {
+    const results = [];
+    for (const pitch of [70, 85]) {
+      map.setView([51.45, -0.26], 18, { animate: false });
+      map.setBearing(30);
+      map.setPitch(pitch);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const layer = Object.values(map._layers).find(l => l._tiles && l._map && l._tileZoom !== undefined),
+        tileSize = layer.getTileSize(),
+        size = map.getSize(),
+        farY = map._getPitchFarY();
+      let missing = 0;
+      for (let x = 0; x <= size.x; x += size.x / 8) {
+        for (let y = Math.max(0, farY + 2); y <= size.y; y += size.y / 8) {
+          const tile = map.project(map.containerPointToLatLng([x, y]), layer._tileZoom).unscaleBy(tileSize).floor();
+          if (!layer._tiles[`${tile.x}:${tile.y}:${layer._tileZoom}`]) missing++;
+        }
+      }
+      const bounds = map.getBounds(), center = map.getCenter(), canvas = path._renderer._container;
+      results.push({
+        pitch,
+        farY,
+        missing,
+        tiles: Object.keys(layer._tiles).length,
+        canvas: [canvas.width, canvas.height],
+        boundsContainCenter: bounds.contains(center),
+        sky: map._pitchSky && map._pitchSky.style.display !== 'none',
+      });
+    }
+    return results;
+  });
+});
+
+Then('tile loading stays bounded and covers the visible map', function () {
+  for (const result of this.highPitch) {
+    const details = JSON.stringify(result);
+    assert.equal(result.missing, 0, details);
+    assert.ok(result.tiles < 300, details);
+    assert.ok(Math.max(...result.canvas) < 5000, details);
+    assert.equal(result.boundsContainCenter, true, details);
+    assert.ok(result.farY > 0, details);
+    assert.equal(result.sky, true, details);
+  }
+});
+
+When('I pan, zoom and change the pitch of a rotated map', async function () {
+  const page = this.page;
+  const setup = ([bearing, pitch]) => {
+    window.__tileErr = () => {
+      const layer = Object.values(map._layers).find(l => l._tiles && l._map && l._level),
+        level = layer._level,
+        point = new L.Point(150, 200),
+        ref = document.createElement('div'),
+        origin = map.project(map.containerPointToLatLng(point), level.zoom).round().subtract(level.origin);
+      ref.style.cssText = `position:absolute;width:0;height:0;left:${origin.x}px;top:${origin.y}px`;
+      level.el.appendChild(ref);
+      const rect = ref.getBoundingClientRect(), container = map.getContainer().getBoundingClientRect();
+      ref.remove();
+      return Math.hypot(rect.left - container.left - point.x, rect.top - container.top - point.y);
+    };
+    map.setView([51.45, -0.26], 10, { animate: false });
+    map.setBearing(bearing);
+    map.setPitch(pitch);
+    map.panBy([60, 60], { animate: false });
+  };
+  const box = await page.locator('#map').boundingBox();
+  this.tileAlignment = [];
+  for (const view of [[30, 30], [30, 0]]) {
+    await page.evaluate(setup, view);
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.6);
+    for (const delta of [-200, 200]) {
+      const zoomEnd = page.evaluate(() => new Promise(resolve => { map.once('zoomend', () => resolve()); setTimeout(resolve, 2000); }));
+      await page.mouse.wheel(0, delta);
+      await zoomEnd;
+      await page.waitForTimeout(500);
+      this.tileAlignment.push({ view, delta, error: await page.evaluate(() => window.__tileErr()) });
+    }
+  }
+  this.tileAlignment.push(await page.evaluate(async () => {
+    map.setView([51.45, -0.26], 10, { animate: false });
+    map.setPitch(85);
+    map.setView([51.45, -0.26], 10, { animate: false });
+    const centerError = map.project(map.getCenter()).distanceTo(map.project([51.45, -0.26]));
+    map.setPitch(0);
+    map.setBearing(30);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return { view: 'pitch 85 to 0', centerError, error: window.__tileErr() };
+  }));
+});
+
+Then('the map is centered and the tiles stay aligned with the map coordinates', function () {
+  for (const result of this.tileAlignment) {
+    assert.ok(result.error < 3, JSON.stringify(this.tileAlignment));
+    assert.ok(!(result.centerError > 2), JSON.stringify(this.tileAlignment));
+  }
+});

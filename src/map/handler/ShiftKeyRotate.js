@@ -1,6 +1,6 @@
 
 /**
- * Handles Shift+wheel bearing changes and Ctrl+drag bearing/pitch changes.
+ * Handles Shift+wheel bearing changes and Ctrl+drag / right-drag bearing/pitch changes.
  * 
  * @typedef L.Map.ShiftKeyRotate
  * @property {boolean} [shiftKeyRotate=true] Enable Shift+wheel bearing rotation.
@@ -20,7 +20,7 @@ L.Map.mergeOptions({
     shiftKeyRotate: true,
 
     /**
-     * Whether Ctrl+drag changes bearing and pitch.
+     * Whether Ctrl+drag (or right-button drag) changes bearing and pitch.
      * 
      * @type {Boolean}
      * 
@@ -42,6 +42,8 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         this._onMouseDownBound = this._onMouseDown.bind(this);
         this._onMouseMoveBound = this._onMouseMove.bind(this);
         this._onMouseUpBound = this._onMouseUp.bind(this);
+        this._onContextMenuBound = this._onContextMenu.bind(this);
+        this._applyBound = this._apply.bind(this);
     },
 
     /**
@@ -79,6 +81,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
             ? ['pointerdown', 'pointermove', 'pointerup pointercancel']
             : ['mousedown', 'mousemove', 'mouseup'];
         this._map._container.addEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
+        this._map._container.addEventListener('contextmenu', this._onContextMenuBound, true);
         this._pitchHooksAdded = true;
     },
 
@@ -90,6 +93,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
     removePitchHooks() {
         if (!this._pitchHooksAdded) { return; }
         this._map._container.removeEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
+        this._map._container.removeEventListener('contextmenu', this._onContextMenuBound, true);
         this._onMouseUp();
         delete this._pitchEvents;
         this._pitchHooksAdded = false;
@@ -113,14 +117,16 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
     },
 
     /**
-     * Start Ctrl+drag and capture subsequent movement outside the map.
+     * Start Ctrl+drag (or right-button drag) and capture subsequent movement outside the map.
      * 
      * @param {MouseEvent|PointerEvent} e Gesture start event.
      * 
      * @since leaflet-rotate (0.5.0)
      */
     _onMouseDown(e) {
-        if (!this._map._rotate || !this._map.options.pitchDrag || !e.ctrlKey || e.button !== 0) { return; }
+        if (this._dragging) { return; }
+        this._moved = false;
+        if (!this._map._rotate || !this._map.options.pitchDrag || !(e.button === 2 || (e.ctrlKey && e.button === 0))) { return; }
 
         const scrollWheelZoom = this._map.scrollWheelZoom;
         if (scrollWheelZoom && scrollWheelZoom._timer) {
@@ -133,8 +139,11 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
+        this._map._stopPitchBearingAnimation();
+        this._dragging = true;
         this._lastX = e.clientX;
         this._lastY = e.clientY;
+        this._pitchDelta = this._bearingDelta = 0;
         document.addEventListener(this._pitchEvents[1], this._onMouseMoveBound);
         for (const event of this._pitchEvents[2].split(' ')) {
             document.addEventListener(event, this._onMouseUpBound);
@@ -142,33 +151,75 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
     },
 
     /**
-     * Apply pointer movement to pitch (vertical) and bearing (horizontal).
+     * Accumulate pointer movement as pitch (vertical) and bearing (horizontal).
+     * Far from the horizontal center line the bearing follows the pointer angle
+     * around the map center.
      * 
      * @param {MouseEvent|PointerEvent} e Gesture movement event.
      * 
      * @since leaflet-rotate (0.5.0)
      */
     _onMouseMove(e) {
-        this._map._setPitchAndBearing(
-            this._map.getPitch() + (this._lastY - e.clientY) * 0.5,
-            this._map.getBearing() + (e.clientX - this._lastX) * 0.8
-        );
-        this._lastX = e.clientX;
-        this._lastY = e.clientY;
+        const rect = this._map._container.getBoundingClientRect(),
+            cx = rect.left + rect.width / 2,
+            cy = rect.top + rect.height / 2,
+            x = e.clientX,
+            y = e.clientY;
+
+        this._pitchDelta += (this._lastY - y) * 0.5;
+        this._bearingDelta += Math.abs(cy - this._lastY) > 100
+            ? (Math.atan2(y - cy, x - cx) - Math.atan2(y - cy, this._lastX - cx)) * (180 / Math.PI)
+            : (x - this._lastX) * 0.8 * (y < cy ? 1 : -1);
+        this._lastX = x;
+        this._lastY = y;
+        this._moved = true;
+        if (!this._frame) {
+            this._frame = requestAnimationFrame(this._applyBound);
+        }
         e.preventDefault();
     },
 
     /**
-     * End Ctrl+drag and clear document-level listeners.
+     * Apply accumulated movement once per animation frame.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _apply() {
+        this._frame = null;
+        if (!this._pitchDelta && !this._bearingDelta) { return; }
+        this._map._setPitchAndBearing(this._map.getPitch() + this._pitchDelta, this._map.getBearing() + this._bearingDelta);
+        this._pitchDelta = this._bearingDelta = 0;
+    },
+
+    /**
+     * Suppress the context menu that follows a right-button drag.
+     * 
+     * @param {MouseEvent} e Context menu event.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _onContextMenu(e) {
+        if (this._dragging || this._moved) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+    },
+
+    /**
+     * End Ctrl+drag, flush pending movement and clear document-level listeners.
      * 
      * @since leaflet-rotate (0.5.0)
      */
     _onMouseUp() {
-        if (!this._pitchEvents) { return; }
+        if (!this._pitchEvents || !this._dragging) { return; }
         document.removeEventListener(this._pitchEvents[1], this._onMouseMoveBound);
         for (const event of this._pitchEvents[2].split(' ')) {
             document.removeEventListener(event, this._onMouseUpBound);
         }
+        cancelAnimationFrame(this._frame);
+        if (this._map._mapPane) { this._apply(); }
+        this._frame = null;
+        this._dragging = false;
         delete this._lastX;
         delete this._lastY;
     },

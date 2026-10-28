@@ -64,3 +64,33 @@ Feature: Rotating a Leaflet map
   @issue-34
   Scenario: Draggable marker listeners are not duplicated
     Then the draggable marker has one drag listener and one drag-end listener
+
+  @issue-73
+  Scenario: Vector layers do not jump when zooming from a low level
+    When I animate a zoom from a low level on a rotated map
+    Then vector layers do not jump at the end of the zoom animation
+
+  @issue-73
+  Scenario: Wheel zoom keeps the cursor point on a pitched map
+    When I zoom around an off-center point on a pitched map
+    Then the point under the cursor stays in place
+
+  @issue-73
+  Scenario: Right-drag rotates around the map center
+    When I right-drag horizontally below the map center
+    Then the map rotates counterclockwise without opening the context menu
+
+  @issue-73
+  Scenario: Right-button press suppresses the context menu before movement
+    When a context menu event fires immediately on right-button press
+    Then the early context menu is suppressed
+
+  @issue-73
+  Scenario: High pitch keeps tile loading bounded
+    When I look at a high zoom map with a high pitch
+    Then tile loading stays bounded and covers the visible map
+
+  @issue-73
+  Scenario: Tiles stay aligned after panning and changing pitch
+    When I pan, zoom and change the pitch of a rotated map
+    Then the map is centered and the tiles stay aligned with the map coordinates

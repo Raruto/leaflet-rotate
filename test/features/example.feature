@@ -13,13 +13,17 @@ Feature: Rotating a Leaflet map
     Then the default rotate control visibility follows the bearing
 
   @issue-13
-  Scenario: Dragging the rotate control changes the map bearing
+  Scenario: Dragging the rotate control changes the map bearing and pitch
     When I drag the rotate control
-    Then the map bearing follows the control drag
+    Then the map bearing and pitch follow the control drag
+
+  Scenario: Clicking the rotate control resets bearing and pitch
+    When I click the rotate control on a rotated and pitched map
+    Then the map animates back to north and zero pitch
 
   @issue-44
-  Scenario: The compass control requests device-orientation permission
-    When I activate compass mode on a permission-based device
+  Scenario: Enabling compass bearing requests device-orientation permission
+    When I enable compass bearing on a permission-based device
     Then device-orientation permission is requested
 
   @issue-7

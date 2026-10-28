@@ -55,6 +55,7 @@ export * from './map/handler/CompassBearing';
 export * from './map/handler/ContainerMutation';
 export * from './map/handler/TouchGestures';
 export * from './map/handler/TouchRotate';
+export * from './map/handler/TouchPitch';
 export * from './map/handler/ShiftKeyRotate';
 export * from './map/handler/TouchZoom';
 

@@ -1,205 +1,360 @@
 <!DOCTYPE html>
 <html>
 
-	<head>
-		<title>leaflet-rotate.js</title>
-		<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-		<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<head>
+	<title>leaflet-rotate.js</title>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+	<link id="leaflet-css" rel="stylesheet">
+	<script src="../misc/route.js"></script>
+	<script src="../misc/places.js"></script>
+	<script src="../misc/loremIpsum.js"></script>
+	<style>
+		body { font: 13px sans-serif; margin: 0; padding: 8px; color: #222; }
+		header { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px 8px; }
+		header h1 { font-size: 16px; margin: 0 8px 0 0; align-self: center; }
+		header h1 a { color: inherit; text-decoration: none; }
+		fieldset { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; padding: 2px 8px 4px; border: 1px solid #ccc; border-radius: 4px; }
+		legend { color: #777; font-size: 11px; padding: 0 4px; }
+		#scenario { max-width: 22em; }
+		.hint { color: #777; margin: 6px 0; }
+		kbd { font: 11px monospace; border: 1px solid #ccc; border-radius: 3px; padding: 0 3px; background: #f6f6f6; }
+		#maps { display: flex; gap: 8px; }
+		#maps > div { flex: 1; min-width: 0; }
+		#maps h2 { font-size: 13px; margin: 0 0 2px; }
+		.map { height: 60vh; border: 1px solid #ccc; }
+		.info { font-family: monospace; padding: 2px 0; color: #555; }
+		#panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); gap: 8px; margin-top: 8px; align-items: start; }
+		details { border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; min-width: 0; overflow-x: auto; }
+		summary { cursor: pointer; font-weight: bold; }
+		summary button { font-weight: normal; margin-left: 8px; }
+		#results { border-collapse: collapse; margin-top: 6px; width: 100%; }
+		#results td, #results th { border: 1px solid #ddd; padding: 2px 6px; text-align: left; }
+		#results td.bad { background: #fdd; }
+		#results .running { background: #ffd; }
+		.hidden { display: none !important; }
+	</style>
+</head>
 
-		<link id="leaflet-css" rel="stylesheet">
+<body>
+	<header>
+		<h1><a href="https://github.com/Raruto/leaflet-rotate" title="View on GitHub">leaflet-rotate</a></h1>
+		<fieldset>
+			<legend>Setup</legend>
+			<label>Leaflet <select id="leaflet-version"><option value="1">1.9.4</option><option value="2">2.0.0-alpha.1</option></select></label>
+			<label title="Compare with MapLibre GL side by side"><input type="checkbox" id="maplibre"> MapLibre</label>
+			<label class="ml-only" title="Keep both views in sync (the hovered map drives the other one)"><input type="checkbox" id="sync" checked> sync</label>
+			<label title="Show the leaflet-rotate debug overlays and info panel"><input type="checkbox" id="debug"> debug</label>
+			<label title="MapLibre-like continuous zoom (needed for an exact view sync)"><input type="checkbox" id="snap"> zoomSnap: 0</label>
+		</fieldset>
+		<fieldset>
+			<legend>Go to</legend>
+			<select id="goto" title="Fly to a layer or place"><option value="">—</option></select>
+		</fieldset>
+		<fieldset>
+			<legend>Scenarios</legend>
+			<select id="scenario"></select>
+			<button id="run">Run</button>
+			<button id="run-all">Run all</button>
+		</fieldset>
+	</header>
+	<p class="hint"><kbd>Ctrl</kbd>+drag / right-drag: pitch + bearing &middot; <kbd>Shift</kbd>+wheel: rotate &middot; <kbd>Ctrl</kbd>+wheel: trackpad pinch &middot; click the compass to reset bearing + pitch</p>
+	<main id="maps">
+		<div><h2 class="ml-only">leaflet-rotate</h2><div id="lf" class="map"></div><div id="lf-info" class="info"></div></div>
+		<div class="ml-only"><h2>MapLibre GL</h2><div id="ml" class="map"></div><div id="ml-info" class="info"></div></div>
+	</main>
+	<section id="panels">
+		<details id="results-panel" class="hidden" open>
+			<summary>Scenario results <button id="clear">Clear</button></summary>
+			<table id="results">
+				<thead><tr><th>Scenario</th><th>leaflet-rotate z / bearing / pitch</th><th>drift</th><th class="ml-only">MapLibre z / bearing / pitch</th><th class="ml-only">drift</th></tr></thead>
+				<tbody></tbody>
+			</table>
+		</details>
+	</section>
 
-		<!-- include some miscellaneous -->
-		<script src="../misc/route.js"></script>
-		<script src="../misc/places.js"></script>
-		<script src="../misc/loremIpsum.js"></script>
+	<script type="module">
+		const $ = id => document.getElementById(id);
+		const params = new URLSearchParams(location.search);
+		$('leaflet-version').value = params.get('leaflet') === '2' ? '2' : '1';
+		$('maplibre').checked = params.get('maplibre') !== '0';
+		$('debug').checked = params.get('debug') !== '0';
+		$('snap').checked = params.get('snap') === '0';
+		const reload = () => {
+			const query = new URLSearchParams({ leaflet: $('leaflet-version').value });
+			if (!$('maplibre').checked) query.set('maplibre', '0');
+			if (!$('debug').checked) query.set('debug', '0');
+			if ($('snap').checked) query.set('snap', '0');
+			location.search = query;
+		};
+		for (const id of ['leaflet-version', 'maplibre', 'debug', 'snap']) $(id).onchange = reload;
+		const compare = $('maplibre').checked;
+		for (const el of document.querySelectorAll('.ml-only')) el.classList.toggle('hidden', !compare);
 
-		<style>
-			#map {
-				width: 100%;
-				height: 600px;
-				border: 1px solid #ccc;
-				max-height: 50vh;
-			}
-			/* TODO: fix incorrect map corners position when map has some margin */
-			html, body {
-				/* margin: 0; */
-				/* padding: 0; */
-			}
-		</style>
-	</head>
+		const loadScript = src => new Promise((resolve, reject) => {
+			const script = Object.assign(document.createElement('script'), { src, onload: resolve, onerror: () => reject(new Error(`Could not load ${src}`)) });
+			document.head.appendChild(script);
+		});
+		const loadStyle = href => document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href }));
+		const v2 = $('leaflet-version').value === '2';
+		$('leaflet-css').href = `https://unpkg.com/leaflet@${v2 ? '2.0.0-alpha.1' : '1.9.4'}/dist/leaflet.css`;
+		await loadScript(`https://unpkg.com/leaflet@${v2 ? '2.0.0-alpha.1/dist/leaflet-global-src.js' : '1.9.4/dist/leaflet-src.js'}`);
+		if (v2) globalThis.L = globalThis.leaflet;
+		await loadScript('../dist/leaflet-rotate-src.js');
+		if ($('debug').checked) await loadScript('../lib/debug.js');
+		if (compare) {
+			loadStyle('https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css');
+			await loadScript('https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js');
+		}
+		const L = globalThis.L;
 
-	<body>
+		const tiles = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+		const polygonLatLngs = [[48, -3], [50, -4], [52, 4]];
 
-		<label for="leaflet-version">Leaflet version:</label>
-		<select id="leaflet-version">
-			<option value="1">1.9.4</option>
-			<option value="2">2.0.0-alpha.1</option>
-		</select>
+		// leaflet-rotate
+		const esri = window.esri = new L.TileLayer(tiles, {
+			maxZoom: 24,
+			maxNativeZoom: 18,
+			attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+		});
+		const osm = window.osm = new L.TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+			maxZoom: 24,
+			maxNativeZoom: 19,
+			attribution: '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+		});
+		const lf = window.lf = window.map = new L.Map('lf', {
+			center: [55, 10],
+			zoom: 2,
+			maxZoom: 20,
+			layers: [esri],
+			rotate: true,
+			bearing: 30,
+			rotateControl: { closeOnZeroBearing: false },
+			compassBearing: !compare,
+			touchRotate: true,
+			touchPitch: true,
+			zoomSnap: $('snap').checked ? 0 : 1,
+		});
+		window.layers = new L.Control.Layers({ 'Empty': new L.TileLayer(''), 'Streets': osm, 'Satellite': esri }, null, { collapsed: false }).addTo(lf);
+		window.markers = Object.keys(places).map((name, i) => new L.Marker(places[name], { draggable: true })
+			.bindPopup(`<b>${name}</b><br>${loremIpsum}`)
+			.bindTooltip(`<b>${name}</b>`, i ? {} : { direction: 'right', permanent: true })
+			.addTo(lf));
+		window.path = new L.Polyline(route, { color: 'yellow', renderer: new L.Canvas() }).addTo(lf);
+		window.circle = new L.Circle([53, 4], 111111).addTo(lf);
+		window.polygon = new L.Polygon(polygonLatLngs).addTo(lf);
+		window.rectangle = new L.Rectangle([[60.81123, 25.71632], [60.81028, 25.73166], [60.7997, 25.72892], [60.80061, 25.71362]]).addTo(lf);
+		const goto = {
+			'Circle': () => lf.flyToBounds(circle.getBounds()),
+			'Polygon': () => lf.flyToBounds(polygon.getBounds()),
+			'Path': () => lf.flyToBounds(path.getBounds()),
+			...Object.fromEntries(Object.keys(places).map(name => [name, () => lf.flyTo(places[name], 10)])),
+			// DEBUG: map.setZoom(0) && map.getBoundsZoom(rectangle.getBounds())
+			'Rectangle (fit from z 0)': () => { lf.setZoom(0, { animate: false }); setTimeout(() => lf.fitBounds(rectangle.getBounds(), { animate: false }), 1000); },
+		};
+		for (const name in goto) $('goto').add(new Option(name, name));
+		$('goto').onchange = e => { goto[e.target.value](); e.target.value = ''; };
+		if ($('debug').checked) {
+			L.Rotate.debug(lf, { container: $('panels') });
+		}
 
-		<div id="map"></div>
-
-		<hr>
-
-		<div>
-			<p>
-				<strong>Fly to bounds: </strong>
-				<button onclick="map.flyToBounds(circle.getBounds());">CIRCLE</button>
-				<button onclick="map.flyToBounds(polygon.getBounds());"> POLYGON</button>
-				<button onclick="map.flyToBounds(path.getBounds());">PATH</button>
-			</p>
-			<p>
-				<strong>Fly to: </strong>
-				<button onclick="map.flyTo(places['Kyiv'], 10);">Kyiv</button>
-				<button onclick="map.flyTo(places['London'], 10);">London</button>
-				<button onclick="map.flyTo(places['San Francisco'], 10);">San Francisco</button>
-				<button onclick="map.flyTo(places['Washington'], 10);">Washington</button>
-				<button onclick="map.flyTo(places['Trondheim'], 10);">Trondheim</button>
-			</p>
-			<p>
-				<strong>Fit bounds (z = 0): </strong>
-				<button onclick="map.setZoom(0, {animate: false}) && setTimeout(() => map.fitBounds(rectangle.getBounds(), { animate: false }), 1000);" title="DEBUG: map.setZoom(0) && map.getBoundsZoom(rectangle.getBounds())">RECTANGLE</button>
-			</p>
-		</div>
-
-		<script type="module">
-			const versionSelect = document.getElementById('leaflet-version');
-			const params = new URLSearchParams(location.search);
-			versionSelect.value = params.get('leaflet') === '2' ? '2' : '1';
-			versionSelect.addEventListener('change', () => {
-				location.search = `?leaflet=${versionSelect.value}`;
-			});
-
-			const loadScript = src => new Promise((resolve, reject) => {
-				const script = document.createElement('script');
-				script.src = src;
-				script.onload = resolve;
-				script.onerror = () => reject(new Error(`Could not load ${src}`));
-				document.head.appendChild(script);
-			});
-
-			const version = versionSelect.value;
-			document.getElementById('leaflet-css').href = version === '2'
-				? 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css'
-				: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-
-			if (version === '2') {
-				await loadScript('https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js');
-				globalThis.L = globalThis.leaflet;
-			} else {
-				await loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.js');
-			}
-			await loadScript('../dist/leaflet-rotate-src.js');
-			await loadScript('../lib/debug.js');
-			const L = globalThis.L;
-
-			const esri = new L.TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-				id: 'mapbox.streets',
-				maxZoom: 24,
-				maxNativeZoom: 18,
-				attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-				// noWrap: true
-			});
-
-			const osm = new L.TileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-				maxZoom: 24,
-				maxNativeZoom: 19,
-				attribution: '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-				// noWrap: true
-			});
-
-			const map = new L.Map('map', {
-				center: [55, 10],
-				zoom: 2,
-				layers: [esri],
-				// worldCopyJump: true,
-				// preferCanvas: false,
-				zoomAnimation: false, /* DEBUG: L.Renderer._updateTransform() */
-				rotate: true,
-				rotateControl: {
-					closeOnZeroBearing: false,
-					// position: 'bottomleft',
+		// MapLibre (512px zoom levels => zoom - 1, bearing sign is inverted)
+		const ml = window.ml = compare ? new maplibregl.Map({
+			container: 'ml', center: [5, 50], zoom: 3, maxPitch: 85, maxZoom: 19,
+			style: {
+				version: 8,
+				sources: {
+					esri: { type: 'raster', tiles: [tiles], tileSize: 256, maxzoom: 18 },
+					polygon: { type: 'geojson', data: { type: 'Polygon', coordinates: [[...polygonLatLngs, polygonLatLngs[0]].map(([lat, lng]) => [lng, lat])] } },
+					route: { type: 'geojson', data: { type: 'LineString', coordinates: route.map(([lat, lng]) => [lng, lat]) } },
 				},
-				bearing: 30,
-				// attributionControl: false,
-				// zoomControl: false,
-				compassBearing: true,
-				// trackContainerMutation: false,
-				// shiftKeyRotate: false,
-				// touchGestures: true,
-				touchRotate: true,
-				// touchZoom: true
-			});
-			window.map = map;
-			window.esri = esri;
-			window.osm = osm;
+				layers: [
+					{ id: 'esri', type: 'raster', source: 'esri' },
+					{ id: 'polygon', type: 'fill', source: 'polygon', paint: { 'fill-color': '#3388ff', 'fill-opacity': 0.2 } },
+					{ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#3388ff', 'line-width': 3 } },
+					{ id: 'route', type: 'line', source: 'route', paint: { 'line-color': 'yellow', 'line-width': 3 } },
+				],
+			},
+		}) : null;
+		if (ml) {
+			ml.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
+			for (const name in places) new maplibregl.Marker().setLngLat([places[name][1], places[name][0]]).setPopup(new maplibregl.Popup().setText(name)).addTo(ml);
+		}
 
-			// map.setBearing(90);
-			// map.touchRotate.enable();
+		// unified view access: { lat, lng, zoom (leaflet scale), bearing (leaflet sign), pitch }
+		const maps = {
+			lf: {
+				el: lf.getContainer(),
+				get: () => { const c = lf.getCenter(); return { lat: c.lat, lng: c.lng, zoom: lf.getZoom(), bearing: lf.getBearing(), pitch: lf.getPitch() }; },
+				set: v => { lf.setView([v.lat, v.lng], v.zoom, { animate: false }); lf.setPitch(v.pitch); lf.setBearing(v.bearing); },
+				toLatLng: p => { const ll = lf.containerPointToLatLng(p); return [ll.lat, ll.lng]; },
+				toPoint: ([lat, lng]) => { const p = lf.latLngToContainerPoint([lat, lng]); return [p.x, p.y]; },
+			},
+		};
+		if (ml) maps.ml = {
+			el: ml.getContainer(),
+			get: () => { const c = ml.getCenter(); return { lat: c.lat, lng: c.lng, zoom: ml.getZoom() + 1, bearing: (360 - ml.getBearing()) % 360, pitch: ml.getPitch() }; },
+			set: v => ml.jumpTo({ center: [v.lng, v.lat], zoom: v.zoom - 1, bearing: -v.bearing, pitch: v.pitch }),
+			toLatLng: p => { const ll = ml.unproject(p); return [ll.lat, ll.lng]; },
+			toPoint: ([lat, lng]) => { const p = ml.project([lng, lat]); return [p.x, p.y]; },
+		};
 
-			// map.touchZoom.disable()
-			// map.compassBearing.disable()
-			// map.touchGestures.enable()
+		// view sync: the last hovered map drives the other one
+		let source = 'lf', syncing = false, running = false;
+		const fmt = v => `z ${v.zoom.toFixed(2)}  bearing ${v.bearing.toFixed(1)}  pitch ${v.pitch.toFixed(1)}  ${v.lat.toFixed(4)}, ${v.lng.toFixed(4)}`;
+		const onView = key => () => {
+			$(`${key}-info`).textContent = fmt(maps[key].get());
+			if (!ml || key !== source || syncing || running || !$('sync').checked) return;
+			syncing = true;
+			const other = key === 'lf' ? 'ml' : 'lf';
+			maps[other].set(maps[key].get());
+			$(`${other}-info`).textContent = fmt(maps[other].get());
+			syncing = false;
+		};
+		lf.on('move zoom rotate pitch', onView('lf'));
+		onView('lf')();
+		if (ml) ml.on('move', onView('ml'));
+		for (const key in maps) maps[key].el.addEventListener('pointerenter', () => source = key);
 
-			// map.zoomControl.setPosition('bottomleft');
-			// map.rotateControl.setPosition('bottomleft');
-			// map.setMaxBounds([[-90,-180], [90,180]]);
+		// synthetic input driver, coordinates are fractions of the map container
+		const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+		const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+		const driver = key => {
+			const el = maps[key].el;
+			let pressed = 0, button = 0;
+			const at = (fx, fy) => {
+				const r = el.getBoundingClientRect();
+				return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy };
+			};
+			const target = ({ clientX, clientY }) => {
+				const hit = document.elementFromPoint(clientX, clientY);
+				return hit && el.contains(hit) ? hit : document.body;
+			};
+			const fire = (type, pos, mods = {}) => {
+				const init = { bubbles: true, cancelable: true, composed: true, view: window, ...pos, button, buttons: pressed, ...mods };
+				const t = target(pos);
+				t.dispatchEvent(new PointerEvent(`pointer${type}`, { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+				t.dispatchEvent(new MouseEvent(`mouse${type}`, init));
+			};
+			let last = at(0.5, 0.5);
+			return {
+				async down(fx, fy, mods = {}) {
+					button = mods.button || 0;
+					pressed = button === 2 ? 2 : 1;
+					fire('down', last = at(fx, fy), mods);
+					await frame();
+				},
+				async move(fx, fy, mods = {}, steps = 10) {
+					const from = last, to = at(fx, fy);
+					for (let i = 1; i <= steps; i++) {
+						last = { clientX: from.clientX + (to.clientX - from.clientX) * i / steps, clientY: from.clientY + (to.clientY - from.clientY) * i / steps };
+						fire('move', last, mods);
+						await frame();
+					}
+				},
+				async up(mods = {}) {
+					pressed = 0;
+					fire('up', last, mods);
+					if (button === 2) target(last).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...last, button: 2, ...mods }));
+					await frame();
+				},
+				async wheel(fx, fy, deltaY, mods = {}, count = 1, interval = 16) {
+					last = at(fx, fy);
+					for (let i = 0; i < count; i++) {
+						target(last).dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ...last, deltaY, deltaMode: 0, ...mods }));
+						await sleep(interval);
+					}
+				},
+				wait: sleep,
+			};
+		};
 
-			const layers = new L.Control.Layers({
-				'Empty': new L.TileLayer(''),
-				'Streets': osm,
-				'Satellite': esri,
-			}, null, {
-				collapsed: false
-			}).addTo(map);
-			window.layers = layers;
+		// scenarios: view = initial view (leaflet units), anchor = [from, to] screen fractions that should keep the same latlng
+		const ctrl = { ctrlKey: true }, right = { button: 2 };
+		const ctrlDrag = (from, to, steps, mods = ctrl) => async d => { await d.down(...from, mods); await d.move(...to, mods, steps); await d.up(mods); };
+		const flat = { lat: 50, lng: 5, zoom: 5, bearing: 0, pitch: 0 };
+		const scenarios = [
+			{ name: 'Ctrl+drag up: pitch from center', run: ctrlDrag([0.5, 0.5], [0.5, 0.3]) },
+			{ name: 'Ctrl+drag down: pitch clamps at 0', view: { pitch: 20 }, run: ctrlDrag([0.5, 0.4], [0.5, 0.9]) },
+			{ name: 'Ctrl+drag far up: pitch clamps at max', run: ctrlDrag([0.5, 0.95], [0.5, 0.0], 30) },
+			{ name: 'Ctrl+drag right, just above center', run: ctrlDrag([0.3, 0.45], [0.7, 0.45]) },
+			{ name: 'Ctrl+drag right, just below center', run: ctrlDrag([0.3, 0.55], [0.7, 0.55]) },
+			{ name: 'Ctrl+drag right, far above center (angular)', run: ctrlDrag([0.2, 0.05], [0.8, 0.05]) },
+			{ name: 'Ctrl+drag right, far below center (angular)', run: ctrlDrag([0.2, 0.95], [0.8, 0.95]) },
+			{ name: 'Ctrl+drag diagonal, pitched + rotated', view: { bearing: 40, pitch: 30 }, run: ctrlDrag([0.3, 0.7], [0.7, 0.3]) },
+			{ name: 'Ctrl+drag fast (2 big steps)', run: ctrlDrag([0.2, 0.8], [0.8, 0.2], 2) },
+			{
+				name: 'Ctrl+drag full circle around center', run: async d => {
+					await d.down(0.5, 0.1, ctrl);
+					for (let a = 0; a <= 360; a += 30) await d.move(0.5 + 0.4 * Math.sin(a * Math.PI / 180), 0.5 - 0.4 * Math.cos(a * Math.PI / 180), ctrl, 3);
+					await d.up(ctrl);
+				},
+			},
+			{ name: 'Ctrl+drag leaving the map', run: ctrlDrag([0.5, 0.5], [1.3, 0.2], 20) },
+			{ name: 'Ctrl+drag starting on a marker', view: { lat: places.London[0], lng: places.London[1], zoom: 6 }, run: ctrlDrag([0.5, 0.49], [0.7, 0.3]) },
+			{ name: 'Ctrl released mid-drag', run: async d => { await d.down(0.5, 0.6, ctrl); await d.move(0.6, 0.5, ctrl, 5); await d.move(0.7, 0.4, {}, 5); await d.up(); } },
+			{ name: 'Ctrl pressed mid-pan (should keep panning)', anchor: [[0.5, 0.5], [0.7, 0.4]], run: async d => { await d.down(0.5, 0.5); await d.move(0.6, 0.45, {}, 5); await d.move(0.7, 0.4, ctrl, 5); await d.up(ctrl); } },
+			{ name: 'Right-drag up + right', run: ctrlDrag([0.4, 0.6], [0.6, 0.4], 10, right) },
+			{ name: 'Ctrl+drag then plain pan', anchor: [[0.4, 0.5], [0.6, 0.6]], run: async d => { await ctrlDrag([0.5, 0.5], [0.6, 0.4])(d); await d.down(0.4, 0.5); await d.move(0.6, 0.6); await d.up(); } },
+			{ name: 'Wheel in at top-right, flat (control case)', anchor: [[0.85, 0.15], [0.85, 0.15]], run: async d => { await d.wheel(0.85, 0.15, -100, {}, 3, 30); } },
+			{ name: 'Wheel in at top-right, rotated', view: { bearing: 30 }, anchor: [[0.85, 0.15], [0.85, 0.15]], run: async d => { await d.wheel(0.85, 0.15, -100, {}, 3, 30); } },
+			{ name: 'Wheel in at top-right, pitch 60', view: { bearing: 30, pitch: 60 }, anchor: [[0.85, 0.15], [0.85, 0.15]], run: async d => { await d.wheel(0.85, 0.15, -100, {}, 3, 30); } },
+			{ name: 'Wheel out at bottom-left, pitch 45', view: { bearing: 200, pitch: 45, zoom: 7 }, anchor: [[0.1, 0.9], [0.1, 0.9]], run: async d => { await d.wheel(0.1, 0.9, 100, {}, 3, 30); } },
+			{ name: 'Wheel near horizon, pitch 75', view: { pitch: 75 }, anchor: [[0.5, 0.25], [0.5, 0.25]], run: async d => { await d.wheel(0.5, 0.25, -100, {}, 2, 30); } },
+			{ name: 'Ctrl+wheel pinch-in burst (trackpad), pitch 50', view: { bearing: 20, pitch: 50 }, anchor: [[0.8, 0.7], [0.8, 0.7]], run: async d => { await d.wheel(0.8, 0.7, -4, ctrl, 30); } },
+			{ name: 'Ctrl+wheel pinch-out burst (trackpad), rotated', view: { bearing: 60, zoom: 7 }, anchor: [[0.2, 0.3], [0.2, 0.3]], run: async d => { await d.wheel(0.2, 0.3, 4, ctrl, 30); } },
+			{ name: 'Ctrl+wheel mouse notches at center', view: { pitch: 40 }, anchor: [[0.5, 0.5], [0.5, 0.5]], run: async d => { await d.wheel(0.5, 0.5, -100, ctrl, 2, 200); } },
+			{ name: 'Shift+wheel rotate', run: async d => { await d.wheel(0.5, 0.5, 100, { shiftKey: true }, 6, 30); } },
+			{ name: 'Wheel then Ctrl+drag while zoom pending', run: async d => { await d.wheel(0.9, 0.1, -100); await ctrlDrag([0.5, 0.5], [0.55, 0.4], 4)(d); } },
+			{ name: 'Wheel during Ctrl+drag', run: async d => { await d.down(0.5, 0.6, ctrl); await d.move(0.55, 0.5, ctrl, 4); await d.wheel(0.55, 0.5, -100, ctrl); await d.move(0.6, 0.4, ctrl, 4); await d.up(ctrl); } },
+			{ name: 'Low zoom rotated, wheel in (layer jump check)', view: { zoom: 1, bearing: 30 }, anchor: [[0.6, 0.4], [0.6, 0.4]], run: async d => { await d.wheel(0.6, 0.4, -100, {}, 1); await d.wait(400); await d.wheel(0.6, 0.4, -100, {}, 1); } },
+			{ name: 'Pan pitched 70', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.3, 0.5]], run: async d => { await d.down(0.5, 0.7); await d.move(0.3, 0.5); await d.up(); } },
+		];
+		for (const [i, s] of scenarios.entries()) $('scenario').add(new Option(s.name, i));
 
-			const markers = [];
-			for (const i in places) {
-				markers.push(new L.Marker(places[i], {
-						draggable: true
-					})
-					.bindPopup('<b>' + i + '</b><br>' + loremIpsum)
-					.bindTooltip('<b>' + i + '</b>',
-						markers.length ? {} : {
-							direction: 'right',
-							permanent: true
-						}
-					)
-					.addTo(map));
+		const runOn = async (key, scenario) => {
+			const m = maps[key];
+			m.set({ ...flat, ...scenario.view });
+			await sleep(300);
+			const anchor = scenario.anchor && (() => {
+				const r = m.el.getBoundingClientRect();
+				return scenario.anchor.map(([fx, fy]) => [r.width * fx, r.height * fy]);
+			})();
+			const latlng = anchor && m.toLatLng(anchor[0]);
+			await scenario.run(driver(key));
+			await sleep(900);
+			const end = m.get(), p = anchor && m.toPoint(latlng);
+			return { end, drift: anchor ? Math.hypot(p[0] - anchor[1][0], p[1] - anchor[1][1]) : null };
+		};
+		const run = async scenario => {
+			running = true;
+			$('run').disabled = $('run-all').disabled = true;
+			$('results-panel').classList.remove('hidden');
+			const row = $('results').tBodies[0].insertRow();
+			row.className = 'running';
+			row.insertCell().textContent = scenario.name;
+			// sequential: both libraries listen on document/window while dragging
+			const results = [];
+			for (const key in maps) results.push(await runOn(key, scenario));
+			for (const r of results) {
+				row.insertCell().textContent = `${r.end.zoom.toFixed(2)} / ${r.end.bearing.toFixed(1)} / ${r.end.pitch.toFixed(1)}`;
+				const cell = row.insertCell();
+				cell.textContent = r.drift == null ? '' : `${r.drift.toFixed(1)}px`;
+				cell.classList.toggle('bad', r.drift > 3);
 			}
-			window.markers = markers;
+			row.className = '';
+			running = false;
+			$('run').disabled = $('run-all').disabled = false;
+			return results;
+		};
+		window.scenarios = scenarios;
+		window.runScenario = run;
+		$('run').onclick = () => run(scenarios[$('scenario').value]);
+		$('run-all').onclick = async () => { for (const s of scenarios) await run(s); };
+		$('clear').onclick = e => { e.preventDefault(); $('results').tBodies[0].replaceChildren(); $('results-panel').classList.add('hidden'); };
+	</script>
 
-			const path = new L.Polyline(route, {
-				renderer: new L.Canvas()
-			}).addTo(map);
-			window.path = path;
-
-			const circle = new L.Circle([53, 4], 111111)
-				.addTo(map);
-			window.circle = circle;
-
-			const polygon = new L.Polygon([
-				[48, -3],
-				[50, -4],
-				[52, 4]
-			]).addTo(map);
-			window.polygon = polygon;
-
-			const rectangle = new L.Rectangle([
-				[60.81123, 25.71632],
-				[60.81028, 25.73166],
-				[60.7997, 25.72892],
-				[60.80061, 25.71362]
-			]).addTo(map);
-			window.rectangle = rectangle;
-
-			// Display some debug info
-			L.Rotate.debug(map);
-		</script>
-
-		<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github"
-			  width="163"> </a>
-
-	</body>
+	<a href="https://github.com/Raruto/leaflet-rotate" class="view-on-github" style="position: fixed;bottom: 10px;left: calc(50% - 60px);z-index: 9999;"> <img alt="View on Github" src="https://raruto.github.io/img/view-on-github.png" title="View on Github" width="163"> </a>
+</body>
 
 </html>

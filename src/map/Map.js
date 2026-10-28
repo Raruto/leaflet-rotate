@@ -47,6 +47,15 @@ L.Map.mergeOptions({
      */
     pitch: 0,
 
+    /**
+     * @type {number} Maximum distance of the pitched map plane from the map center, in multiples
+     *                of the map height. Tiles, vectors and `getBounds()` stop there (and always
+     *                before the horizon); a `.leaflet-pitch-sky` element fills the area above.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    pitchMaxDistance: 3,
+
 });
 
 L.Map.include({
@@ -86,6 +95,7 @@ L.Map.include({
         mapProto.initialize.apply(this, arguments);
         if (this.options.rotate) {
             this.on('resize', this._updatePitchTransform, this);
+            this.on('move', this._updatePitchSky, this);
             this.setBearing(this.options.bearing);
             this.setPitch(this.options.pitch);
         }
@@ -253,13 +263,64 @@ L.Map.include({
 
         // LatLngBounds' constructor automatically
         // extends the bounds to fit the passed points
-        const size = this.getSize();
+        const [min, max] = this._getPitchedContainerBounds(0);
         return new L.LatLngBounds([
-            this.containerPointToLatLng([0, 0]),           // topleft
-            this.containerPointToLatLng([size.x, 0]),      // topright 
-            this.containerPointToLatLng([size.x, size.y]), // bottomright
-            this.containerPointToLatLng([0, size.y]),      // bottomleft
+            this.containerPointToLatLng([min.x, min.y]), // topleft
+            this.containerPointToLatLng([max.x, min.y]), // topright 
+            this.containerPointToLatLng([max.x, max.y]), // bottomright
+            this.containerPointToLatLng([min.x, max.y]), // bottomleft
         ]);
+    },
+
+    /**
+     * Return the container rectangle covering the visible map plane, optionally padded by a
+     * fraction of the map size. When pitched, its top is cut at the far plane (see `pitchMaxDistance`)
+     * so that it never reaches the horizon, where the plane would extend to infinity.
+     * 
+     * @param {number} padding Padding as a fraction of the map size.
+     * 
+     * @returns {L.Point[]} Top-left and bottom-right container points.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _getPitchedContainerBounds(padding) {
+        const size = this.getSize(),
+            min = size.multiplyBy(-padding),
+            max = size.multiplyBy(1 + padding);
+        if (this._pitch) {
+            min.y = Math.min(Math.max(min.y, this._getPitchFarY()), max.y);
+        }
+        return [min, max];
+    },
+
+    /**
+     * Return the container y coordinate of the far plane: points above it are farther than
+     * `pitchMaxDistance` from the map center, or beyond the horizon.
+     * 
+     * @returns {number} Container y coordinate (`-Infinity` when the whole map is close enough).
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _getPitchFarY() {
+        const size = this.getSize(),
+            inverse = this._pitchInverseTransform,
+            panePos = this._getMapPanePos(),
+            x = size.x / 2 - panePos.x,
+            centerY = size.y / 2 - panePos.y,
+            maxDistance = this.options.pitchMaxDistance * size.y,
+            w = y => inverse.g * x + inverse.h * y + inverse.i,
+            centerW = w(centerY),
+            center = this._transformPitchPoint([x, centerY], inverse),
+            // the horizon is horizontal on screen (bearing is applied before the pitch)
+            isNear = y => w(y) * centerW > 0 && this._transformPitchPoint([x, y], inverse).distanceTo(center) <= maxDistance;
+
+        let far = -size.y - panePos.y, near = centerY;
+        if (isNear(far)) { return -Infinity; }
+        for (let i = 0; i < 20; i++) {
+            const mid = (far + near) / 2;
+            if (isNear(mid)) { near = mid; } else { far = mid; }
+        }
+        return near + panePos.y;
     },
 
     /**
@@ -298,48 +359,110 @@ L.Map.include({
         if (!this._rotate) { return; }
 
         if (options && options.animate) {
-            this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
-            const animationId = this._bearingAnimationId;
-            if (this._bearingAnimationFrame) {
-                cancelAnimationFrame(this._bearingAnimationFrame);
-            }
-
-            const startBearing = this.getBearing(),
-                endBearing = L.Util.wrapNum(theta, [0, 360]),
-                delta = ((endBearing - startBearing + 540) % 360) - 180,
-                duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1000,
-                easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2),
-                startTime = performance.now();
-
-            const animate = function() {
-                if (!this._mapPane) {
-                    delete this._bearingAnimationFrame;
-                    return;
-                }
-
-                const progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
-                    eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
-
-                this._setBearing(progress === 1 ? endBearing : startBearing + delta * eased);
-                if (this._bearingAnimationId !== animationId) { return; }
-                if (progress < 1) {
-                    this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
-                } else {
-                    delete this._bearingAnimationFrame;
-                }
-            };
-
-            this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
+            this._animatePitchBearing(this.getPitch(), theta, options);
             return;
         }
 
+        this._stopPitchBearingAnimation();
+        this._setBearing(theta);
+    },
+
+    /**
+     * Animate pitch and bearing together (bearing follows the shortest path).
+     * 
+     * @param {number} pitch Target pitch in degrees.
+     * @param {number} bearing Target bearing in degrees.
+     * @param {Object} [options] Animation options.
+     * @param {number} [options.duration=0.25] Animation duration in seconds.
+     * @param {number} [options.easeLinearity=0.5] Easing curve linearity.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _animatePitchBearing(pitch, bearing, options) {
+        this._stopPitchBearingAnimation();
+        const animationId = this._bearingAnimationId;
+
+        const startBearing = this.getBearing(),
+            startPitch = this.getPitch(),
+            endBearing = L.Util.wrapNum(bearing, [0, 360]),
+            endPitch = Math.max(0, Math.min(pitch, 85)),
+            delta = ((endBearing - startBearing + 540) % 360) - 180,
+            duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1000,
+            easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2),
+            startTime = performance.now();
+
+        const animate = function() {
+            if (!this._mapPane || this._bearingAnimationId !== animationId) {
+                return;
+            }
+
+            const progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
+                eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
+
+            if (progress < 1) {
+                this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
+            } else {
+                delete this._bearingAnimationFrame;
+            }
+            this._setPitchAndBearing(
+                progress === 1 ? endPitch : startPitch + (endPitch - startPitch) * eased,
+                progress === 1 ? endBearing : startBearing + delta * eased
+            );
+        };
+
+        this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
+    },
+
+    /**
+     * Cancel a running pitch/bearing animation.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _stopPitchBearingAnimation() {
         this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
         if (this._bearingAnimationFrame) {
             cancelAnimationFrame(this._bearingAnimationFrame);
             delete this._bearingAnimationFrame;
         }
+    },
 
-        this._setBearing(theta);
+    /**
+     * Rotate the map back to north (bearing 0), animated by default.
+     * 
+     * @param {Object} [options] Animation options (`animate`, `duration`, `easeLinearity`).
+     * 
+     * @returns {L.Map} This map instance.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    resetNorth(options) {
+        options = Object.assign({ animate: true, duration: 0.5 }, options);
+        if (options.animate) {
+            this._animatePitchBearing(this.getPitch(), 0, options);
+        } else {
+            this.setBearing(0);
+        }
+        return this;
+    },
+
+    /**
+     * Rotate the map back to north and remove the pitch, animated by default.
+     * 
+     * @param {Object} [options] Animation options (`animate`, `duration`, `easeLinearity`).
+     * 
+     * @returns {L.Map} This map instance.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    resetNorthPitch(options) {
+        options = Object.assign({ animate: true, duration: 0.5 }, options);
+        if (options.animate) {
+            this._animatePitchBearing(0, 0, options);
+        } else {
+            this._stopPitchBearingAnimation();
+            this._setPitchAndBearing(0, 0);
+        }
+        return this;
     },
 
     /**
@@ -422,7 +545,8 @@ L.Map.include({
 
         this._rotatePane.style.transformOrigin = '0 0';
         this._rotatePane.style.transform = transform;
-        const matrix = this._pitchTransform = new DOMMatrix(getComputedStyle(this._rotatePane).transform),
+        // parse the transform directly: getComputedStyle() would force a style recalculation on every frame
+        const matrix = this._pitchTransform = new DOMMatrix(transform),
             a = matrix.m11, b = matrix.m21, c = matrix.m41,
             d = matrix.m12, e = matrix.m22, f = matrix.m42,
             g = matrix.m14, h = matrix.m24, i = matrix.m44,
@@ -439,12 +563,38 @@ L.Map.include({
             h: (b * g - a * h) / determinant,
             i: (a * e - b * d) / determinant,
         };
+        this._updatePitchSky();
+    },
+
+    /**
+     * Fill the area above the far plane (where no tiles are loaded) with a sky gradient.
+     * Style it through the `.leaflet-pitch-sky` class.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _updatePitchSky() {
+        const farY = this._pitch && this._pitchInverseTransform ? this._getPitchFarY() : -Infinity;
+        if (farY <= 0) {
+            if (this._pitchSky) { this._pitchSky.style.display = 'none'; }
+            return;
+        }
+        if (!this._pitchSky) {
+            this._pitchSky = L.DomUtil.create('div', 'leaflet-pitch-sky', this._container);
+            Object.assign(this._pitchSky.style, {
+                position: 'absolute', left: 0, top: 0, width: '100%', zIndex: 0, pointerEvents: 'none',
+                background: 'linear-gradient(#9ec5e8, #dfe9f0)',
+            });
+        }
+        this._pitchSky.style.display = '';
+        // overlap the far edge slightly to hide antialiasing gaps
+        this._pitchSky.style.height = `${Math.ceil(farY) + 1}px`;
     },
 
     /**
      * Set the map pitch in degrees. Values are clamped to the range 0–85.
      *
      * @param {number} pitch Pitch angle in degrees; clamped to [0, 85].
+     * @param {Object} [options] Animation options (`animate`, `duration`, `easeLinearity`).
      * 
      * @returns {L.Map} This map instance.
      * 
@@ -452,7 +602,12 @@ L.Map.include({
      * 
      * @since leaflet-rotate (0.5.0)
      */
-    setPitch(pitch) {
+    setPitch(pitch, options) {
+        if (options && options.animate) {
+            this._animatePitchBearing(pitch, this.getBearing(), options);
+            return this;
+        }
+        this._stopPitchBearingAnimation();
         this._setPitchAndBearing(pitch, this.getBearing());
         return this;
     },
@@ -484,6 +639,7 @@ L.Map.include({
         }
         this._setBearing(bearing, mapCenter);
         if (pitchChanged) {
+            if (!this._pitch) { this._updatePitchSky(); }
             this.fire('pitch');
         }
     },
@@ -497,6 +653,38 @@ L.Map.include({
      */
     getPitch() {
         return (this._pitch || 0) * (180 / Math.PI);
+    },
+
+    /**
+     * Zoom while keeping the given point fixed on screen, also when the map is pitched.
+     *
+     * Leaflet interpolates in container space, which is not linear under perspective;
+     * interpolating in layer space keeps the point under the cursor.
+     *
+     * @param {L.LatLng|L.Point} latlng Geographic point or container point to keep fixed.
+     * @param {number} zoom Target zoom level.
+     * @param {Object} [options] Zoom options.
+     *
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.1)
+     */
+    setZoomAround(latlng, zoom, options) {
+        if (!this._pitch) {
+            return mapProto.setZoomAround.apply(this, arguments);
+        }
+        const scale = this.getZoomScale(zoom),
+            size = this.getSize(),
+            center = this.containerPointToLayerPoint(size.divideBy(2)),
+            containerPoint = latlng instanceof L.Point ? latlng : this.latLngToContainerPoint(latlng),
+            point = this.containerPointToLayerPoint(containerPoint),
+            newCenter = this.layerPointToLatLng(center.add(point.subtract(center).multiplyBy(1 - 1 / scale)));
+        options = Object.assign({}, options);
+        // Leaflet skips the animation when the origin is "far" in layer space, which is always the case near the horizon.
+        if (options.animate === undefined && new L.Bounds(new L.Point(0, 0), size).contains(containerPoint)) {
+            options.animate = true;
+        }
+        return this.setView(newCenter, zoom, { zoom: options });
     },
 
     /**
@@ -782,20 +970,15 @@ L.Map.include({
      * 
      * @param {L.LatLng} latlng Geographic point.
      * 
-     * @returns {L.Point} Offset in layer pixels, adjusted for bearing and pitch.
+     * @returns {L.Point} Offset in container pixels (the map pane is panned in screen space), adjusted for bearing and pitch.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     _getCenterOffset(latlng) {
-        let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
-        if (this._pitch) {
-            const center = this.getSize()._divideBy(2);
-            centerOffset = this.containerPointToLayerPoint(center.add(centerOffset))
-                .subtract(this.containerPointToLayerPoint(center));
-        } else if (this._rotate) {
-            centerOffset = centerOffset.rotate(this._bearing);
+        if (!this._rotate) {
+            return mapProto._getCenterOffset.apply(this, arguments);
         }
-        return centerOffset;
+        return this.latLngToContainerPoint(latlng)._subtract(this.getSize()._divideBy(2));
     },
 
     /**
@@ -826,16 +1009,13 @@ L.Map.include({
      * @since leaflet-rotate (v0.1.0)
      */
     _getNewPixelOrigin(center, zoom) {
-        if (!this._rotate || L.version.startsWith('2.')) {
+        if (!this._rotate) {
             return mapProto._getNewPixelOrigin.apply(this, arguments);
         }
-        const viewHalf = this.getSize()._divideBy(2);
+        // the layer point under the view center doesn't depend on zoom (pane transforms only rotate/pitch around the pivot),
+        // so this matches `_setBearing` also when the pivot is no longer the view center (eg. after panning)
         return this.project(center, zoom)
-            .rotate(this._bearing)
-            ._subtract(viewHalf)
-            ._add(this._getMapPanePos())
-            ._add(this._getRotatePanePos())
-            .rotate(-this._bearing)
+            ._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)))
             ._round();
     },
 
@@ -860,13 +1040,17 @@ L.Map.include({
         const mapZoom = this._animatingZoom ? Math.max(this._animateToZoom, this.getZoom()) : this.getZoom(),
             scale = this.getZoomScale(mapZoom, zoom),
             pixelCenter = this.project(center, zoom).floor(),
-            size = this.getSize(),
-            halfSize = new L.Bounds([
-                this.containerPointToLayerPoint([0, 0]).floor(),
-                this.containerPointToLayerPoint([size.x, 0]).floor(),
-                this.containerPointToLayerPoint([0, size.y]).floor(),
-                this.containerPointToLayerPoint([size.x, size.y]).floor()
-            ]).getSize().divideBy(scale * 2);
+            [min, max] = this._getPitchedContainerBounds(0),
+            corners = [[min.x, min.y], [max.x, min.y], [min.x, max.y], [max.x, max.y]]
+                .map(point => this.containerPointToLayerPoint(point));
+
+        if (this._pitch) {
+            // the pitched view is not symmetric: the far side covers much more than the near one
+            const viewCenter = this.containerPointToLayerPoint(this.getSize()._divideBy(2));
+            return new L.Bounds(corners.map(point => pixelCenter.add(point.subtract(viewCenter).divideBy(scale))));
+        }
+
+        const halfSize = new L.Bounds(corners.map(point => point.floor())).getSize().divideBy(scale * 2);
 
         return new L.Bounds(pixelCenter.subtract(halfSize), pixelCenter.add(halfSize));
     },
@@ -896,11 +1080,7 @@ L.Map.include({
         if (!this._rotate && mapProto._getPaddedPixelBounds) {
             return mapProto._getPaddedPixelBounds.apply(this, arguments);
         }
-        const p = padding,
-            size = this.getSize(),
-            padMin = size.multiplyBy(-p),
-            padMax = size.multiplyBy(1 + p);
-            //min = this.containerPointToLayerPoint(size.multiplyBy(-p)).round();
+        const [padMin, padMax] = this._getPitchedContainerBounds(padding);
 
         return new L.Bounds([
             this.containerPointToLayerPoint([padMin.x, padMin.y]).floor(),

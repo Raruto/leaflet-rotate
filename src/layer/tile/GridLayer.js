@@ -27,9 +27,28 @@ L.GridLayer.include({
             if (!this._onRotate) {
                 this._onRotate = L.Util.throttle(this._onMoveEnd, this.options.updateInterval, this);
             }
-            events.rotate = this._onRotate;
+            events.rotate = this._onRotateEvent;
         }
         return events;
+    },
+
+    /**
+     * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
+     * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).
+     * 
+     * @listens L.Map~rotate
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _onRotateEvent() {
+        const map = this._map;
+        if (!map) { return; }
+        const origin = map.getPixelOrigin();
+        if (this._rotateOrigin && !this._rotateOrigin.equals(origin) && !map._animatingZoom && this._levels) {
+            this._setZoomTransforms(map.getCenter(), map.getZoom());
+        }
+        this._rotateOrigin = origin;
+        this._onRotate();
     },
 
     /**

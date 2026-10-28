@@ -30,13 +30,41 @@ L.Renderer.include({
     },
 
     /**
-     * Reproject vector paths and refresh renderer bounds after bearing changes.
+     * Refresh renderer bounds after bearing or pitch changes.
+     * 
+     * Paths are reprojected only when the pixel origin actually changed (eg. fractional centers
+     * after an off-center zoom), since reprojection is the main cost with long polylines.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     _onRotate() {
         if (!this._map._rotate) { return; }
-        this._onZoomEnd();
+        const origin = this._map.getPixelOrigin();
+        if (!this._rotateOrigin || !this._rotateOrigin.equals(origin)) {
+            this._rotateOrigin = origin;
+            clearTimeout(this._rotateTimer);
+            this._onZoomEnd();
+            this._updateAfterRotate();
+            return;
+        }
+        // paths are still aligned: only redraw when the view leaves the already drawn area
+        if (this._bounds && this._bounds.contains(this._map._getPaddedPixelBounds(0))) { return; }
+        clearTimeout(this._rotateTimer);
+        const wait = (this._lastRotateUpdate || 0) + 100 - performance.now();
+        if (wait > 0) {
+            this._rotateTimer = setTimeout(() => this._map && this._updateAfterRotate(), wait);
+        } else {
+            this._updateAfterRotate();
+        }
+    },
+
+    /**
+     * Recalculate renderer bounds and redraw after bearing or pitch changes.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _updateAfterRotate() {
+        this._lastRotateUpdate = performance.now();
         if (L.version.startsWith('2.')) {
             this._onMoveEnd();
         } else {
@@ -63,24 +91,10 @@ L.Renderer.include({
 
     /**
      * Update the renderer transform during zoom animation, accounting for rotated coordinates.
-     *
-     * @FIXME layer drifts on `map.setZoom()` (eg. zoom during animation)
-     * 
-     * the main cause seems to be related to `this._updateTransform(path._center, path._zoom))`
-     * and `this._topLeft = this._map.layerPointToLatLng(this._bounds.min);`
-     * 
-     * @example
-     *   map.setZoom(2);
-     *   path._renderer._update();
-     *   path._renderer._updateTransform(path._renderer._center, path._renderer._zoom);
      * 
      * @see https://github.com/Leaflet/Leaflet/pull/8794
      * @see https://github.com/Leaflet/Leaflet/pull/8103
      * @see https://github.com/Leaflet/Leaflet/issues/7466
-     * 
-     * @TODO recheck these changes against leaflet@v1.9.3
-     * 
-     * @see https://github.com/Leaflet/Leaflet/compare/v1.7.0...v1.9.3
      * 
      * @param {L.LatLng} center Target map center.
      * @param {number} zoom Target zoom level.
@@ -88,32 +102,20 @@ L.Renderer.include({
      * @since leaflet-rotate (v0.1.0)
      */
     _updateTransform(center, zoom) {
-        if (L.version.startsWith('2.')) {
-            if (this._map._rotate) {
-                const scale = this._map.getZoomScale(zoom, this._zoom),
-                    offset = this._topLeftPoint.multiplyBy(scale)
-                        .subtract(this._map._getNewPixelOrigin(center, zoom));
-
-                L.DomUtil.setTransform(this._container, offset, scale);
-                return;
-            }
-            return rendererBase._updateTransform.apply(this, arguments);
-        }
+        const v2 = L.version.startsWith('2.');
         if (!this._map._rotate) {
-            return rendererProto._updateTransform.apply(this, arguments);
+            return (v2 ? rendererBase : rendererProto)._updateTransform.apply(this, arguments);
         }
-        if (zoom === this._zoom) {
+        if (!v2 && zoom === this._zoom) {
             // _reset() has already repositioned the renderer at the current zoom.
             return;
         }
-        /**
-         * @FIXME see path._renderer._reset();
-         */
+        // Stay in pixel space: round-tripping `_topLeft` through lat/lng clamps at low zooms (layers jump).
         const scale = this._map.getZoomScale(zoom, this._zoom),
-            offset = this._map._latLngToNewLayerPoint(this._topLeft, zoom, center);
+            offset = this._topLeftPoint.multiplyBy(scale)
+                .subtract(this._map._getNewPixelOrigin(center, zoom));
 
         L.DomUtil.setTransform(this._container, offset, scale);
-        
     },
 
     /**
@@ -211,6 +213,7 @@ L.Renderer.include({
         this._topLeft = this._map.layerPointToLatLng(this._bounds.min);
         this._center = this._map.getCenter();
         this._zoom = this._map.getZoom();
+        this._topLeftPoint = this._map._getNewPixelOrigin(this._center, this._zoom).add(this._bounds.min);
     },
 
 });

@@ -27,12 +27,19 @@ L.Map.CompassBearing = L.Handler.extend({
 
     /**
      * Subscribe to the supported device-orientation event, if available.
+     * On iOS, permission is requested first (call `enable()` from a user gesture).
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
         if (this._map._rotate && this.__deviceOrientationEvent) {
             L.DomEvent.on(window, this.__deviceOrientationEvent, this._throttled, this);
+            const DOE = window.DeviceOrientationEvent;
+            if (DOE && DOE.requestPermission) {
+                DOE.requestPermission()
+                    .then(state => 'denied' === state && this.enabled() && this.disable())
+                    .catch(() => {});
+            }
         } else {
             // L.Map.CompassBearing handler will be automatically
             // disabled if device orientation is not supported.

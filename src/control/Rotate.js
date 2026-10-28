@@ -1,17 +1,19 @@
 /**
- * Leaflet control for changing map rotation and selecting a rotation mode.
- * Its modes are:
+ * Leaflet control showing the map bearing and pitch, MapLibre-like (`NavigationControl` compass):
  * 
- * - Locked: rotation gestures are disabled.
- * - Touch: two-finger rotation is enabled.
- * - Compass: bearing follows device orientation when supported and permitted.
+ * - Click: animate back to north (and to zero pitch when `visualizePitch` is enabled).
+ * - Drag: horizontal movement changes the bearing, vertical movement changes the pitch.
+ * 
+ * Touch rotation and compass bearing are configured with the `touchRotate` and `compassBearing`
+ * map handlers (eg. `map.compassBearing.enable()`).
  * 
  * @class L.Control.Rotate
  * 
  * @extends L.Control
  * 
  * @property {string} [position='topleft'] Leaflet control position.
- * @property {boolean} [closeOnZeroBearing=true] Hide the control when bearing is zero.
+ * @property {boolean} [closeOnZeroBearing=true] Hide the control when both bearing and pitch are zero.
+ * @property {boolean} [visualizePitch=true] Tilt the icon with the pitch, reset the pitch on click and change it on drag.
  * 
  * @since leaflet-rotate (v0.1.0)
  */
@@ -20,11 +22,12 @@ L.Control.Rotate = L.Control.extend({
 
     options: {
         position: 'topleft',
-        closeOnZeroBearing: true
+        closeOnZeroBearing: true,
+        visualizePitch: true,
     },
 
     /**
-     * Create the control element and subscribe to map rotation.
+     * Create the control element and subscribe to map rotation and pitch.
      * 
      * @param {L.Map} map
      * 
@@ -35,46 +38,42 @@ L.Control.Rotate = L.Control.extend({
     onAdd(map) {
         const container = this._container = L.DomUtil.create('div', 'leaflet-control-rotate leaflet-bar');
 
-        // this.button = L.Control.Zoom.prototype._createButton.call(this, 'R', 'leaflet-control-rotate', 'leaflet-control-rotate', container, this._toggleLock);
-
         const arrow = this._arrow = L.DomUtil.create('span', 'leaflet-control-rotate-arrow');
 
         arrow.style.backgroundImage = `url("data:image/svg+xml;charset=utf-8,%3Csvg width='29' height='29' viewBox='0 0 29 29' xmlns='http://www.w3.org/2000/svg' fill='%23333'%3E%3Cpath d='M10.5 14l4-8 4 8h-8z'/%3E%3Cpath d='M10.5 16l4 8 4-8h-8z' fill='%23ccc'/%3E%3C/svg%3E")`;
-        arrow.style.cursor = 'grab';
         arrow.style.display = 'block';
         arrow.style.width = '100%';
         arrow.style.height = '100%';
         arrow.style.backgroundRepeat = 'no-repeat';
         arrow.style.backgroundPosition = '50%';
+        arrow.style.pointerEvents = 'none';
 
-        // Copy-pasted from L.Control.Zoom
         const link = this._link = L.DomUtil.create('a', 'leaflet-control-rotate-toggle', container);
         link.appendChild(arrow);
         link.href = '#';
-        link.title = 'Rotate map';
+        link.title = this.options.visualizePitch ? 'Reset bearing and pitch' : 'Reset bearing to north';
+        link.setAttribute('role', 'button');
+        link.setAttribute('aria-label', link.title);
+        link.style.cursor = 'grab';
+        link.style.touchAction = 'none';
+
+        this._onPointerMoveBound = this._onPointerMove.bind(this);
+        this._onPointerUpBound = this._onPointerUp.bind(this);
 
         L.DomEvent
-            .on(link, 'dblclick', L.DomEvent.stopPropagation)
-            .on(link, 'mousedown', this._handleMouseDown, this)
+            .on(link, 'dblclick contextmenu', L.DomEvent.stop)
             .on(link, 'click', L.DomEvent.stop)
-            .on(link, 'click', this._cycleState, this)
+            .on(link, 'click', this._onClick, this)
             .on(link, 'click', this._refocusOnMap, this);
+        link.addEventListener('pointerdown', this._onPointerDown.bind(this));
 
+        map.on('rotate pitch', this._restyle, this);
+        this._map = map;
         this._restyle();
-
-        map.on('rotate', this._restyle, this);
-
-        // State flag
-        this._follow = false;
-        this._canFollow = false;
-
-        if (this.options.closeOnZeroBearing && map.getBearing() === 0) {
-            container.style.display = 'none';
-        }
 
         return container;
     },
-    
+
     /**
      * Remove the map event listener when the control is detached.
      * 
@@ -83,138 +82,122 @@ L.Control.Rotate = L.Control.extend({
      * @since leaflet-rotate (v0.1.0)
      */
     onRemove(map) {
-        map.off('rotate', this._restyle, this);
+        this._onPointerUp();
+        map.off('rotate pitch', this._restyle, this);
     },
 
     /**
-     * Begin dragging the control's bearing indicator.
+     * Reset bearing (and pitch) unless the click ends a drag.
      * 
-     * @param {MouseEvent} e Mouse-down event.
-     * 
-     * @since leaflet-rotate (v0.1.0)
+     * @since leaflet-rotate (0.5.1)
      */
-    _handleMouseDown(e) {
-        L.DomEvent.stop(e);
-        this.dragging = true;
-        this.dragstartX = e.pageX;
-        this.dragstartY = e.pageY;
-        L.DomEvent
-            .on(document, 'mousemove', this._handleMouseDrag, this)
-            .on(document, 'mouseup', this._handleMouseUp, this);
-    },
-
-    /**
-     * End bearing-indicator dragging and remove document listeners.
-     * 
-     * @param {MouseEvent} e Mouse-up event.
-     * 
-     * @since leaflet-rotate (v0.1.0)
-     */
-    _handleMouseUp(e) {
-        L.DomEvent.stop(e);
-        this.dragging = false;
-
-        L.DomEvent
-            .off(document, 'mousemove', this._handleMouseDrag, this)
-            .off(document, 'mouseup', this._handleMouseUp, this);
-    },
-
-    /**
-     * Set bearing from the horizontal drag distance.
-     * 
-     * @param {MouseEvent} e Mouse-move event.
-     * 
-     * @since leaflet-rotate (v0.1.0)
-     */
-    _handleMouseDrag(e) {
-        if (!this.dragging) { return; }
-        const deltaX = e.clientX - this.dragstartX;
-        this._map.setBearing(deltaX);
-    },
-
-    /**
-     * Cycle through touch, compass, and locked rotation modes.
-     * Compass mode may require permission from the browser.
-     * 
-     * @param {Event} ev Control click event.
-     * 
-     * @since leaflet-rotate (v0.1.0)
-     */
-    _cycleState(ev) {
-        if (!this._map) {
+    _onClick() {
+        if (this._moved) {
+            this._moved = false;
             return;
         }
-
-        const map = this._map;
-
-        // Touch mode
-        if (!map.touchRotate.enabled() && !map.compassBearing.enabled()) {
-            map.touchRotate.enable();
+        if (!this._map || !this._map._rotate) { return; }
+        if (this.options.visualizePitch) {
+            this._map.resetNorthPitch();
+        } else {
+            this._map.resetNorth();
         }
-        
-        // Compass mode
-        else if (!map.compassBearing.enabled()) {
-            map.touchRotate.disable();
-            (
-                DeviceOrientationEvent && DeviceOrientationEvent.requestPermission
-                    ? DeviceOrientationEvent.requestPermission() // iOS compass
-                    : Promise.resolve('granted')                 // others
-            ).then(state => "granted" === state && map.compassBearing.enable())
-        }
-
-        // Locked mode
-        else {
-            map.compassBearing.disable();
-            map.setBearing(0);
-            if (this.options.closeOnZeroBearing) {
-                map.touchRotate.enable();
-            }
-        }
-        this._restyle();
     },
 
     /**
-     * Update the control icon and visibility to match the current mode.
+     * Start dragging the control (mouse, pen or touch).
+     * 
+     * @param {PointerEvent} e
+     * 
+     * @since leaflet-rotate (v0.1.0)
+     */
+    _onPointerDown(e) {
+        if (!this._map || !this._map._rotate || e.button > 0 || this._pointerId != null) { return; }
+        e.preventDefault();
+        e.stopPropagation();
+        this._pointerId = e.pointerId;
+        this._startX = this._lastX = e.clientX;
+        this._startY = this._lastY = e.clientY;
+        this._moved = false;
+        this._link.style.cursor = 'grabbing';
+        document.addEventListener('pointermove', this._onPointerMoveBound);
+        document.addEventListener('pointerup', this._onPointerUpBound);
+        document.addEventListener('pointercancel', this._onPointerUpBound);
+    },
+
+    /**
+     * Horizontal movement changes the bearing, vertical movement the pitch.
+     * 
+     * @param {PointerEvent} e
+     * 
+     * @since leaflet-rotate (v0.1.0)
+     */
+    _onPointerMove(e) {
+        if (e.pointerId !== this._pointerId) { return; }
+        e.preventDefault();
+        if (!this._moved && Math.hypot(e.clientX - this._startX, e.clientY - this._startY) < 3) { return; }
+        if (!this._moved) {
+            this._moved = true;
+            this._map._stopPitchBearingAnimation();
+        }
+        const map = this._map,
+            pitch = this.options.visualizePitch ? map.getPitch() + (this._lastY - e.clientY) * 0.5 : map.getPitch();
+        map._setPitchAndBearing(pitch, map.getBearing() + (e.clientX - this._lastX) * 0.8);
+        this._lastX = e.clientX;
+        this._lastY = e.clientY;
+    },
+
+    /**
+     * Stop dragging and remove document listeners.
+     * 
+     * @param {PointerEvent} [e]
+     * 
+     * @since leaflet-rotate (v0.1.0)
+     */
+    _onPointerUp(e) {
+        if (e && e.pointerId !== this._pointerId) { return; }
+        document.removeEventListener('pointermove', this._onPointerMoveBound);
+        document.removeEventListener('pointerup', this._onPointerUpBound);
+        document.removeEventListener('pointercancel', this._onPointerUpBound);
+        // a drag ending outside the button produces no click
+        if (e && this._moved && !this._link.contains(e.target)) { this._moved = false; }
+        delete this._pointerId;
+        if (this._link) {
+            this._link.style.cursor = 'grab';
+            this._restyle();
+        }
+    },
+
+    /**
+     * Update the icon (bearing and pitch) and the control visibility.
      * 
      * @listens L.Map#rotate
+     * @listens L.Map#pitch
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     _restyle() {
-        if (!this._map.options.rotate) {
+        const map = this._map;
+        if (!map) { return; }
+        if (!map.options.rotate) {
             this._link.classList.add('leaflet-disabled');
-        } else {
-            const map = this._map;
-            const bearing = map.getBearing();
+            return;
+        }
 
-            this._arrow.style.transform = 'rotate(' + bearing + 'deg)';
+        const bearing = map.getBearing(),
+            pitch = map.getPitch();
 
-            if (bearing && this.options.closeOnZeroBearing) {
-                this._container.style.display = 'block';
-            }
+        this._arrow.style.transform = this.options.visualizePitch && pitch
+            ? `scale(${1 / Math.sqrt(Math.cos(pitch * Math.PI / 180))}) rotateX(${pitch}deg) rotate(${bearing}deg)`
+            : `rotate(${bearing}deg)`;
 
-            // Compass mode
-            if (map.compassBearing.enabled()) {
-                this._link.style.backgroundColor = 'orange';
-            }
-            
-            // Touch mode
-            else if (map.touchRotate.enabled()) {
-                this._link.style.backgroundColor = null;
-            }
-
-            // Locked mode
-            else {
-                this._link.style.backgroundColor = 'grey';
-                if (0 === bearing && this.options.closeOnZeroBearing) {
-                    this._container.style.display = 'none';
-                }
-            }
+        if (this.options.closeOnZeroBearing) {
+            const hidden = !bearing && !(this.options.visualizePitch && pitch) && this._pointerId == null;
+            this._container.style.display = hidden ? 'none' : 'block';
         }
     },
 
 });
-
 if (L.control) {
     L.control.rotate = options => new L.Control.Rotate(options);
 }
@@ -243,3 +226,4 @@ L.Map.addInitHook(function() {
         this.addControl(this.rotateControl);
     }
 });
+
