@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title>leaflet-rotate vs MapLibre</title>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+	<link id="leaflet-css" rel="stylesheet">
+	<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+	<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+	<script src="../misc/route.js"></script>
+	<script src="../misc/places.js"></script>
+	<style>
+		body { font: 13px sans-serif; margin: 8px; }
+		#maps { display: flex; gap: 8px; }
+		#maps > div { flex: 1; min-width: 0; }
+		.map { height: 55vh; border: 1px solid #ccc; }
+		.info { font-family: monospace; padding: 2px 0; }
+		#bar > * { margin: 2px 4px 2px 0; }
+		table { border-collapse: collapse; margin-top: 6px; }
+		td, th { border: 1px solid #ddd; padding: 2px 6px; text-align: left; }
+		td.bad { background: #fdd; }
+		.running { background: #ffd; }
+	</style>
+</head>
+
+<body>
+	<div id="bar">
+		<label>Leaflet <select id="leaflet-version"><option value="1">1.9.4</option><option value="2">2.0.0-alpha.1</option></select></label>
+		<label title="MapLibre-like continuous zoom (needed for an exact view sync)"><input type="checkbox" id="snap"> Leaflet zoomSnap: 0</label>
+		<label><input type="checkbox" id="sync" checked> sync views</label>
+		<select id="scenario"></select>
+		<button id="run">Run</button>
+		<button id="run-all">Run all</button>
+		<span>Manual: Ctrl+drag / right-drag = pitch + bearing, Shift+wheel = rotate (Leaflet), Ctrl+wheel = trackpad pinch</span>
+	</div>
+	<div id="maps">
+		<div><b>leaflet-rotate</b><div id="lf" class="map"></div><div id="lf-info" class="info"></div></div>
+		<div><b>MapLibre GL</b><div id="ml" class="map"></div><div id="ml-info" class="info"></div></div>
+	</div>
+	<table id="results">
+		<tr><th>Scenario</th><th>leaflet-rotate z / bearing / pitch</th><th>drift</th><th>MapLibre z / bearing / pitch</th><th>drift</th></tr>
+	</table>
+
+	<script type="module">
+		const $ = id => document.getElementById(id);
+		const params = new URLSearchParams(location.search);
+		const reload = () => location.search = `?leaflet=${$('leaflet-version').value}${$('snap').checked ? '&snap=0' : ''}`;
+		$('leaflet-version').value = params.get('leaflet') === '2' ? '2' : '1';
+		$('snap').checked = params.get('snap') === '0';
+		$('leaflet-version').onchange = $('snap').onchange = reload;
+
+		const loadScript = src => new Promise((resolve, reject) => {
+			const script = Object.assign(document.createElement('script'), { src, onload: resolve, onerror: reject });
+			document.head.appendChild(script);
+		});
+		const v2 = $('leaflet-version').value === '2';
+		$('leaflet-css').href = `https://unpkg.com/leaflet@${v2 ? '2.0.0-alpha.1' : '1.9.4'}/dist/leaflet.css`;
+		await loadScript(`https://unpkg.com/leaflet@${v2 ? '2.0.0-alpha.1/dist/leaflet-global-src.js' : '1.9.4/dist/leaflet-src.js'}`);
+		if (v2) globalThis.L = globalThis.leaflet;
+		await loadScript('../dist/leaflet-rotate-src.js');
+
+		const tiles = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+		const polygonLatLngs = [[48, -3], [50, -4], [52, 4]];
+
+		// leaflet-rotate
+		const lf = window.lf = new L.Map('lf', {
+			center: [50, 5], zoom: 4, rotate: true, bearing: 0, rotateControl: { closeOnZeroBearing: false },
+			touchRotate: true, compassBearing: false, maxZoom: 20,
+			zoomSnap: $('snap').checked ? 0 : 1,
+		});
+		new L.TileLayer(tiles, { maxNativeZoom: 18, maxZoom: 20 }).addTo(lf);
+		new L.Polygon(polygonLatLngs).addTo(lf);
+		new L.Polyline(route, { color: 'yellow' }).addTo(lf);
+		for (const name in places) new L.Marker(places[name]).bindTooltip(name).addTo(lf);
+
+		// MapLibre (512px zoom levels => zoom - 1, bearing sign is inverted)
+		const ml = window.ml = new maplibregl.Map({
+			container: 'ml', center: [5, 50], zoom: 3, maxPitch: 85, maxZoom: 19,
+			style: {
+				version: 8,
+				sources: {
+					esri: { type: 'raster', tiles: [tiles], tileSize: 256, maxzoom: 18 },
+					polygon: { type: 'geojson', data: { type: 'Polygon', coordinates: [[...polygonLatLngs, polygonLatLngs[0]].map(([lat, lng]) => [lng, lat])] } },
+					route: { type: 'geojson', data: { type: 'LineString', coordinates: route.map(([lat, lng]) => [lng, lat]) } },
+				},
+				layers: [
+					{ id: 'esri', type: 'raster', source: 'esri' },
+					{ id: 'polygon', type: 'fill', source: 'polygon', paint: { 'fill-color': '#3388ff', 'fill-opacity': 0.2 } },
+					{ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#3388ff', 'line-width': 3 } },
+					{ id: 'route', type: 'line', source: 'route', paint: { 'line-color': 'yellow', 'line-width': 3 } },
+				],
+			},
+		});
+		ml.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
+		for (const name in places) new maplibregl.Marker().setLngLat([places[name][1], places[name][0]]).setPopup(new maplibregl.Popup().setText(name)).addTo(ml);
+
+		// unified view access: { lat, lng, zoom (leaflet scale), bearing (leaflet sign), pitch }
+		const maps = {
+			lf: {
+				el: lf.getContainer(),
+				get: () => { const c = lf.getCenter(); return { lat: c.lat, lng: c.lng, zoom: lf.getZoom(), bearing: lf.getBearing(), pitch: lf.getPitch() }; },
+				set: v => { lf.setView([v.lat, v.lng], v.zoom, { animate: false }); lf.setPitch(v.pitch); lf.setBearing(v.bearing); },
+				toLatLng: p => { const ll = lf.containerPointToLatLng(p); return [ll.lat, ll.lng]; },
+				toPoint: ([lat, lng]) => { const p = lf.latLngToContainerPoint([lat, lng]); return [p.x, p.y]; },
+			},
+			ml: {
+				el: ml.getContainer(),
+				get: () => { const c = ml.getCenter(); return { lat: c.lat, lng: c.lng, zoom: ml.getZoom() + 1, bearing: (360 - ml.getBearing()) % 360, pitch: ml.getPitch() }; },
+				set: v => ml.jumpTo({ center: [v.lng, v.lat], zoom: v.zoom - 1, bearing: -v.bearing, pitch: v.pitch }),
+				toLatLng: p => { const ll = ml.unproject(p); return [ll.lat, ll.lng]; },
+				toPoint: ([lat, lng]) => { const p = ml.project([lng, lat]); return [p.x, p.y]; },
+			},
+		};
+
+		// view sync: the last hovered map drives the other one
+		let source = 'lf', syncing = false, running = false;
+		const fmt = v => `z ${v.zoom.toFixed(2)}  bearing ${v.bearing.toFixed(1)}  pitch ${v.pitch.toFixed(1)}  ${v.lat.toFixed(4)}, ${v.lng.toFixed(4)}`;
+		const onView = key => () => {
+			$(`${key}-info`).textContent = fmt(maps[key].get());
+			if (key !== source || syncing || running || !$('sync').checked) return;
+			syncing = true;
+			const other = key === 'lf' ? 'ml' : 'lf';
+			maps[other].set(maps[key].get());
+			$(`${other}-info`).textContent = fmt(maps[other].get());
+			syncing = false;
+		};
+		lf.on('move zoom rotate pitch', onView('lf'));
+		ml.on('move', onView('ml'));
+		for (const key in maps) maps[key].el.addEventListener('pointerenter', () => source = key);
+
+		// synthetic input driver, coordinates are fractions of the map container
+		const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+		const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+		const driver = key => {
+			const el = maps[key].el;
+			let pressed = 0, button = 0;
+			const at = (fx, fy) => {
+				const r = el.getBoundingClientRect();
+				return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy };
+			};
+			const target = ({ clientX, clientY }) => {
+				const hit = document.elementFromPoint(clientX, clientY);
+				return hit && el.contains(hit) ? hit : document.body;
+			};
+			const fire = (type, pos, mods = {}) => {
+				const init = { bubbles: true, cancelable: true, composed: true, view: window, ...pos, button, buttons: pressed, ...mods };
+				const t = target(pos);
+				t.dispatchEvent(new PointerEvent(`pointer${type}`, { ...init, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+				t.dispatchEvent(new MouseEvent(`mouse${type}`, init));
+			};
+			let last = at(0.5, 0.5);
+			return {
+				async down(fx, fy, mods = {}) {
+					button = mods.button || 0;
+					pressed = button === 2 ? 2 : 1;
+					fire('down', last = at(fx, fy), mods);
+					await frame();
+				},
+				async move(fx, fy, mods = {}, steps = 10) {
+					const from = last, to = at(fx, fy);
+					for (let i = 1; i <= steps; i++) {
+						last = { clientX: from.clientX + (to.clientX - from.clientX) * i / steps, clientY: from.clientY + (to.clientY - from.clientY) * i / steps };
+						fire('move', last, mods);
+						await frame();
+					}
+				},
+				async up(mods = {}) {
+					pressed = 0;
+					fire('up', last, mods);
+					if (button === 2) target(last).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...last, button: 2, ...mods }));
+					await frame();
+				},
+				async wheel(fx, fy, deltaY, mods = {}, count = 1, interval = 16) {
+					last = at(fx, fy);
+					for (let i = 0; i < count; i++) {
+						target(last).dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ...last, deltaY, deltaMode: 0, ...mods }));
+						await sleep(interval);
+					}
+				},
+				wait: sleep,
+			};
+		};
+
+		// scenarios: view = initial view (leaflet units), anchor = [from, to] screen fractions that should keep the same latlng
+		const ctrl = { ctrlKey: true }, right = { button: 2 };
+		const ctrlDrag = (from, to, steps, mods = ctrl) => async d => { await d.down(...from, mods); await d.move(...to, mods, steps); await d.up(mods); };
+		const flat = { lat: 50, lng: 5, zoom: 5, bearing: 0, pitch: 0 };
+		const scenarios = [
+			{ name: 'Ctrl+drag up: pitch from center', run: ctrlDrag([0.5, 0.5], [0.5, 0.3]) },
+			{ name: 'Ctrl+drag down: pitch clamps at 0', view: { pitch: 20 }, run: ctrlDrag([0.5, 0.4], [0.5, 0.9]) },
+			{ name: 'Ctrl+drag far up: pitch clamps at max', run: ctrlDrag([0.5, 0.95], [0.5, 0.0], 30) },
+			{ name: 'Ctrl+drag right, just above center', run: ctrlDrag([0.3, 0.45], [0.7, 0.45]) },
+			{ name: 'Ctrl+drag right, just below center', run: ctrlDrag([0.3, 0.55], [0.7, 0.55]) },
+			{ name: 'Ctrl+drag right, far above center (angular)', run: ctrlDrag([0.2, 0.05], [0.8, 0.05]) },
+			{ name: 'Ctrl+drag right, far below center (angular)', run: ctrlDrag([0.2, 0.95], [0.8, 0.95]) },
+			{ name: 'Ctrl+drag diagonal, pitched + rotated', view: { bearing: 40, pitch: 30 }, run: ctrlDrag([0.3, 0.7], [0.7, 0.3]) },
+			{ name: 'Ctrl+drag fast (2 big steps)', run: ctrlDrag([0.2, 0.8], [0.8, 0.2], 2) },
+			{
+				name: 'Ctrl+drag full circle around center', run: async d => {
+					await d.down(0.5, 0.1, ctrl);
+					for (let a = 0; a <= 360; a += 30) await d.move(0.5 + 0.4 * Math.sin(a * Math.PI / 180), 0.5 - 0.4 * Math.cos(a * Math.PI / 180), ctrl, 3);
+					await d.up(ctrl);
+				},
+			},
+			{ name: 'Ctrl+drag leaving the map', run: ctrlDrag([0.5, 0.5], [1.3, 0.2], 20) },
+			{ name: 'Ctrl+drag starting on a marker', view: { lat: places.London[0], lng: places.London[1], zoom: 6 }, run: ctrlDrag([0.5, 0.49], [0.7, 0.3]) },
+			{ name: 'Ctrl released mid-drag', run: async d => { await d.down(0.5, 0.6, ctrl); await d.move(0.6, 0.5, ctrl, 5); await d.move(0.7, 0.4, {}, 5); await d.up(); } },
+			{ name: 'Ctrl pressed mid-pan (should keep panning)', anchor: [[0.5, 0.5], [0.7, 0.4]], run: async d => { await d.down(0.5, 0.5); await d.move(0.6, 0.45, {}, 5); await d.move(0.7, 0.4, ctrl, 5); await d.up(ctrl); } },
+			{ name: 'Right-drag up + right', run: ctrlDrag([0.4, 0.6], [0.6, 0.4], 10, right) },
+			{ name: 'Ctrl+drag then plain pan', anchor: [[0.4, 0.5], [0.6, 0.6]], run: async d => { await ctrlDrag([0.5, 0.5], [0.6, 0.4])(d); await d.down(0.4, 0.5); await d.move(0.6, 0.6); await d.up(); } },
+			{ name: 'Wheel in at top-right, flat (control case)', anchor: [[0.85, 0.15], [0.85, 0.15]], run: async d => { await d.wheel(0.85, 0.15, -100, {}, 3, 30); } },
+			{ name: 'Wheel in at top-right, rotated', view: { bearing: 30 }, anchor: [[0.85, 0.15], [0.85, 0.15]], run: async d => { await d.wheel(0.85, 0.15, -100, {}, 3, 30); } },
+			{ name: 'Wheel in at top-right, pitch 60', view: { bearing: 30, pitch: 60 }, anchor: [[0.85, 0.15], [0.85, 0.15]], run: async d => { await d.wheel(0.85, 0.15, -100, {}, 3, 30); } },
+			{ name: 'Wheel out at bottom-left, pitch 45', view: { bearing: 200, pitch: 45, zoom: 7 }, anchor: [[0.1, 0.9], [0.1, 0.9]], run: async d => { await d.wheel(0.1, 0.9, 100, {}, 3, 30); } },
+			{ name: 'Wheel near horizon, pitch 75', view: { pitch: 75 }, anchor: [[0.5, 0.25], [0.5, 0.25]], run: async d => { await d.wheel(0.5, 0.25, -100, {}, 2, 30); } },
+			{ name: 'Ctrl+wheel pinch-in burst (trackpad), pitch 50', view: { bearing: 20, pitch: 50 }, anchor: [[0.8, 0.7], [0.8, 0.7]], run: async d => { await d.wheel(0.8, 0.7, -4, ctrl, 30); } },
+			{ name: 'Ctrl+wheel pinch-out burst (trackpad), rotated', view: { bearing: 60, zoom: 7 }, anchor: [[0.2, 0.3], [0.2, 0.3]], run: async d => { await d.wheel(0.2, 0.3, 4, ctrl, 30); } },
+			{ name: 'Ctrl+wheel mouse notches at center', view: { pitch: 40 }, anchor: [[0.5, 0.5], [0.5, 0.5]], run: async d => { await d.wheel(0.5, 0.5, -100, ctrl, 2, 200); } },
+			{ name: 'Shift+wheel rotate', run: async d => { await d.wheel(0.5, 0.5, 100, { shiftKey: true }, 6, 30); } },
+			{ name: 'Wheel then Ctrl+drag while zoom pending', run: async d => { await d.wheel(0.9, 0.1, -100); await ctrlDrag([0.5, 0.5], [0.55, 0.4], 4)(d); } },
+			{ name: 'Wheel during Ctrl+drag', run: async d => { await d.down(0.5, 0.6, ctrl); await d.move(0.55, 0.5, ctrl, 4); await d.wheel(0.55, 0.5, -100, ctrl); await d.move(0.6, 0.4, ctrl, 4); await d.up(ctrl); } },
+			{ name: 'Low zoom rotated, wheel in (layer jump check)', view: { zoom: 1, bearing: 30 }, anchor: [[0.6, 0.4], [0.6, 0.4]], run: async d => { await d.wheel(0.6, 0.4, -100, {}, 1); await d.wait(400); await d.wheel(0.6, 0.4, -100, {}, 1); } },
+			{ name: 'Pan pitched 70', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.3, 0.5]], run: async d => { await d.down(0.5, 0.7); await d.move(0.3, 0.5); await d.up(); } },
+		];
+		for (const [i, s] of scenarios.entries()) $('scenario').add(new Option(s.name, i));
+
+		const runOn = async (key, scenario) => {
+			const m = maps[key];
+			m.set({ ...flat, ...scenario.view });
+			await sleep(300);
+			const anchor = scenario.anchor && (() => {
+				const r = m.el.getBoundingClientRect();
+				return scenario.anchor.map(([fx, fy]) => [r.width * fx, r.height * fy]);
+			})();
+			const latlng = anchor && m.toLatLng(anchor[0]);
+			await scenario.run(driver(key));
+			await sleep(900);
+			const end = m.get(), p = anchor && m.toPoint(latlng);
+			return { end, drift: anchor ? Math.hypot(p[0] - anchor[1][0], p[1] - anchor[1][1]) : null };
+		};
+		const run = async scenario => {
+			running = true;
+			$('run').disabled = $('run-all').disabled = true;
+			const row = $('results').insertRow();
+			row.className = 'running';
+			row.insertCell().textContent = scenario.name;
+			// sequential: both libraries listen on document/window while dragging
+			const a = await runOn('lf', scenario), b = await runOn('ml', scenario);
+			for (const r of [a, b]) {
+				row.insertCell().textContent = `${r.end.zoom.toFixed(2)} / ${r.end.bearing.toFixed(1)} / ${r.end.pitch.toFixed(1)}`;
+				const cell = row.insertCell();
+				cell.textContent = r.drift == null ? '' : `${r.drift.toFixed(1)}px`;
+				cell.classList.toggle('bad', r.drift > 3);
+			}
+			row.className = '';
+			running = false;
+			$('run').disabled = $('run-all').disabled = false;
+			return [a, b];
+		};
+		window.scenarios = scenarios;
+		window.runScenario = run;
+		$('run').onclick = () => run(scenarios[$('scenario').value]);
+		$('run-all').onclick = async () => { for (const s of scenarios) await run(s); };
+	</script>
+</body>
+
+</html>

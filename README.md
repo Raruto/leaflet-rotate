@@ -60,9 +60,10 @@ console.log(map.getBearing(), map.getPitch());
 | `rotate` | `false` | Enables map rotation and pitch. |
 | `bearing` | `0` | Initial map bearing, in degrees. |
 | `pitch` | `0` | Initial map pitch, in degrees (clamped to `0`–`85`). |
+| `pitchMaxDistance` | `3` | Far plane for pitched maps, in multiples of the map height: farther areas (and anything beyond the horizon) are not loaded and are covered by the `.leaflet-pitch-sky` element. Lower values load fewer tiles. |
 | `rotateControl` | `true` | Adds the rotation control. Set to `false` to hide it, or pass options such as `{ closeOnZeroBearing: false }`. |
 | `shiftKeyRotate` | `true` | Enables bearing changes with Shift + mouse wheel. |
-| `pitchDrag` | `true` | Enables bearing and pitch changes with Ctrl + mouse drag. |
+| `pitchDrag` | `true` | Enables bearing and pitch changes with Ctrl + mouse drag or right-button drag (MapLibre-like: vertical = pitch, horizontal = bearing around the map center). |
 | `touchRotate` | `false` | Enables rotation with a two-finger touch gesture. |
 
 #### Map methods and events
