@@ -84,3 +84,8 @@ Feature: Rotating a Leaflet map
   Scenario: High pitch keeps tile loading bounded
     When I look at a high zoom map with a high pitch
     Then tile loading stays bounded and covers the visible map
+
+  @issue-72
+  Scenario: Tiles stay aligned after panning and changing pitch
+    When I pan, zoom and change the pitch of a rotated map
+    Then the map is centered and the tiles stay aligned with the map coordinates

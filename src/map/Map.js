@@ -970,20 +970,15 @@ L.Map.include({
      * 
      * @param {L.LatLng} latlng Geographic point.
      * 
-     * @returns {L.Point} Offset in layer pixels, adjusted for bearing and pitch.
+     * @returns {L.Point} Offset in container pixels (the map pane is panned in screen space), adjusted for bearing and pitch.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     _getCenterOffset(latlng) {
-        let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
-        if (this._pitch) {
-            const center = this.getSize()._divideBy(2);
-            centerOffset = this.containerPointToLayerPoint(center.add(centerOffset))
-                .subtract(this.containerPointToLayerPoint(center));
-        } else if (this._rotate) {
-            centerOffset = centerOffset.rotate(this._bearing);
+        if (!this._rotate) {
+            return mapProto._getCenterOffset.apply(this, arguments);
         }
-        return centerOffset;
+        return this.latLngToContainerPoint(latlng)._subtract(this.getSize()._divideBy(2));
     },
 
     /**
@@ -1014,16 +1009,13 @@ L.Map.include({
      * @since leaflet-rotate (v0.1.0)
      */
     _getNewPixelOrigin(center, zoom) {
-        if (!this._rotate || L.version.startsWith('2.')) {
+        if (!this._rotate) {
             return mapProto._getNewPixelOrigin.apply(this, arguments);
         }
-        const viewHalf = this.getSize()._divideBy(2);
+        // the layer point under the view center doesn't depend on zoom (pane transforms only rotate/pitch around the pivot),
+        // so this matches `_setBearing` also when the pivot is no longer the view center (eg. after panning)
         return this.project(center, zoom)
-            .rotate(this._bearing)
-            ._subtract(viewHalf)
-            ._add(this._getMapPanePos())
-            ._add(this._getRotatePanePos())
-            .rotate(-this._bearing)
+            ._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)))
             ._round();
     },
 

@@ -696,3 +696,55 @@ Then('tile loading stays bounded and covers the visible map', function () {
     assert.equal(result.sky, true, details);
   }
 });
+
+When('I pan, zoom and change the pitch of a rotated map', async function () {
+  const page = this.page;
+  const setup = ([bearing, pitch]) => {
+    window.__tileErr = () => {
+      const layer = Object.values(map._layers).find(l => l._tiles && l._map && l._level),
+        level = layer._level,
+        point = new L.Point(150, 200),
+        ref = document.createElement('div'),
+        origin = map.project(map.containerPointToLatLng(point), level.zoom).round().subtract(level.origin);
+      ref.style.cssText = `position:absolute;width:0;height:0;left:${origin.x}px;top:${origin.y}px`;
+      level.el.appendChild(ref);
+      const rect = ref.getBoundingClientRect(), container = map.getContainer().getBoundingClientRect();
+      ref.remove();
+      return Math.hypot(rect.left - container.left - point.x, rect.top - container.top - point.y);
+    };
+    map.setView([51.45, -0.26], 10, { animate: false });
+    map.setBearing(bearing);
+    map.setPitch(pitch);
+    map.panBy([60, 60], { animate: false });
+  };
+  const box = await page.locator('#map').boundingBox();
+  this.tileAlignment = [];
+  for (const view of [[30, 30], [30, 0]]) {
+    await page.evaluate(setup, view);
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.6);
+    for (const delta of [-200, 200]) {
+      const zoomEnd = page.evaluate(() => new Promise(resolve => { map.once('zoomend', () => resolve()); setTimeout(resolve, 2000); }));
+      await page.mouse.wheel(0, delta);
+      await zoomEnd;
+      await page.waitForTimeout(500);
+      this.tileAlignment.push({ view, delta, error: await page.evaluate(() => window.__tileErr()) });
+    }
+  }
+  this.tileAlignment.push(await page.evaluate(async () => {
+    map.setView([51.45, -0.26], 10, { animate: false });
+    map.setPitch(85);
+    map.setView([51.45, -0.26], 10, { animate: false });
+    const centerError = map.project(map.getCenter()).distanceTo(map.project([51.45, -0.26]));
+    map.setPitch(0);
+    map.setBearing(30);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    return { view: 'pitch 85 to 0', centerError, error: window.__tileErr() };
+  }));
+});
+
+Then('the map is centered and the tiles stay aligned with the map coordinates', function () {
+  for (const result of this.tileAlignment) {
+    assert.ok(result.error < 3, JSON.stringify(this.tileAlignment));
+    assert.ok(!(result.centerError > 2), JSON.stringify(this.tileAlignment));
+  }
+});

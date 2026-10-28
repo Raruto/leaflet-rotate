@@ -537,9 +537,29 @@ var leafletRotate = (() => {
         if (!this._onRotate) {
           this._onRotate = L.Util.throttle(this._onMoveEnd, this.options.updateInterval, this);
         }
-        events.rotate = this._onRotate;
+        events.rotate = this._onRotateEvent;
       }
       return events;
+    },
+    /**
+     * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
+     * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).
+     * 
+     * @listens L.Map~rotate
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _onRotateEvent() {
+      const map = this._map;
+      if (!map) {
+        return;
+      }
+      const origin = map.getPixelOrigin();
+      if (this._rotateOrigin && !this._rotateOrigin.equals(origin) && !map._animatingZoom && this._levels) {
+        this._setZoomTransforms(map.getCenter(), map.getZoom());
+      }
+      this._rotateOrigin = origin;
+      this._onRotate();
     },
     /**
      * Return tile pixel bounds that cover the rotated viewport.
@@ -1549,19 +1569,15 @@ var leafletRotate = (() => {
      * 
      * @param {L.LatLng} latlng Geographic point.
      * 
-     * @returns {L.Point} Offset in layer pixels, adjusted for bearing and pitch.
+     * @returns {L.Point} Offset in container pixels (the map pane is panned in screen space), adjusted for bearing and pitch.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     _getCenterOffset(latlng) {
-      let centerOffset = mapProto._getCenterOffset.apply(this, arguments);
-      if (this._pitch) {
-        const center = this.getSize()._divideBy(2);
-        centerOffset = this.containerPointToLayerPoint(center.add(centerOffset)).subtract(this.containerPointToLayerPoint(center));
-      } else if (this._rotate) {
-        centerOffset = centerOffset.rotate(this._bearing);
+      if (!this._rotate) {
+        return mapProto._getCenterOffset.apply(this, arguments);
       }
-      return centerOffset;
+      return this.latLngToContainerPoint(latlng)._subtract(this.getSize()._divideBy(2));
     },
     /**
      * Return the current position of the rotated pane.
@@ -1588,11 +1604,10 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1.0)
      */
     _getNewPixelOrigin(center, zoom) {
-      if (!this._rotate || L.version.startsWith("2.")) {
+      if (!this._rotate) {
         return mapProto._getNewPixelOrigin.apply(this, arguments);
       }
-      const viewHalf = this.getSize()._divideBy(2);
-      return this.project(center, zoom).rotate(this._bearing)._subtract(viewHalf)._add(this._getMapPanePos())._add(this._getRotatePanePos()).rotate(-this._bearing)._round();
+      return this.project(center, zoom)._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)))._round();
     },
     /**
      * Calculate the pixel bounds needed to cover the transformed viewport.
