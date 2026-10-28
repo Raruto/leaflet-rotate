@@ -3,7 +3,7 @@ import { After, AfterAll, Before, BeforeAll, Given, setDefaultTimeout } from '@c
 import { chromium } from 'playwright';
 import { startServer } from '../../build/server.js';
 
-setDefaultTimeout(60000);
+setDefaultTimeout(10000);
 
 let server;
 let browser;
