@@ -7,6 +7,10 @@ Feature: Rotating a Leaflet map
     When I move a two-finger pinch gesture
     Then the zoom transition ends before the gesture ends
 
+  Scenario: Two fingers dragged vertically change the pitch, pinching does not
+    When I drag two fingers vertically and then pinch with touch pitch enabled
+    Then only the vertical two-finger drag changes the pitch
+
   @issue-43
   Scenario: Vector paths follow a rotated two-finger gesture
     When I rotate and zoom two fingers over a vector path

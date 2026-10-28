@@ -66,7 +66,7 @@
 		// leaflet-rotate
 		const lf = window.lf = new L.Map('lf', {
 			center: [50, 5], zoom: 4, rotate: true, bearing: 0, rotateControl: { closeOnZeroBearing: false },
-			touchRotate: true, compassBearing: false, maxZoom: 20,
+			touchRotate: true, touchPitch: true, compassBearing: false, maxZoom: 20,
 			zoomSnap: $('snap').checked ? 0 : 1,
 		});
 		new L.TileLayer(tiles, { maxNativeZoom: 18, maxZoom: 20 }).addTo(lf);

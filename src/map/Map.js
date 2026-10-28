@@ -359,48 +359,110 @@ L.Map.include({
         if (!this._rotate) { return; }
 
         if (options && options.animate) {
-            this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
-            const animationId = this._bearingAnimationId;
-            if (this._bearingAnimationFrame) {
-                cancelAnimationFrame(this._bearingAnimationFrame);
-            }
-
-            const startBearing = this.getBearing(),
-                endBearing = L.Util.wrapNum(theta, [0, 360]),
-                delta = ((endBearing - startBearing + 540) % 360) - 180,
-                duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1000,
-                easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2),
-                startTime = performance.now();
-
-            const animate = function() {
-                if (!this._mapPane) {
-                    delete this._bearingAnimationFrame;
-                    return;
-                }
-
-                const progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
-                    eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
-
-                this._setBearing(progress === 1 ? endBearing : startBearing + delta * eased);
-                if (this._bearingAnimationId !== animationId) { return; }
-                if (progress < 1) {
-                    this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
-                } else {
-                    delete this._bearingAnimationFrame;
-                }
-            };
-
-            this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
+            this._animatePitchBearing(this.getPitch(), theta, options);
             return;
         }
 
+        this._stopPitchBearingAnimation();
+        this._setBearing(theta);
+    },
+
+    /**
+     * Animate pitch and bearing together (bearing follows the shortest path).
+     * 
+     * @param {number} pitch Target pitch in degrees.
+     * @param {number} bearing Target bearing in degrees.
+     * @param {Object} [options] Animation options.
+     * @param {number} [options.duration=0.25] Animation duration in seconds.
+     * @param {number} [options.easeLinearity=0.5] Easing curve linearity.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _animatePitchBearing(pitch, bearing, options) {
+        this._stopPitchBearingAnimation();
+        const animationId = this._bearingAnimationId;
+
+        const startBearing = this.getBearing(),
+            startPitch = this.getPitch(),
+            endBearing = L.Util.wrapNum(bearing, [0, 360]),
+            endPitch = Math.max(0, Math.min(pitch, 85)),
+            delta = ((endBearing - startBearing + 540) % 360) - 180,
+            duration = Math.max(0, options.duration == null ? 0.25 : options.duration) * 1000,
+            easeLinearity = Math.max(options.easeLinearity || 0.5, 0.2),
+            startTime = performance.now();
+
+        const animate = function() {
+            if (!this._mapPane || this._bearingAnimationId !== animationId) {
+                return;
+            }
+
+            const progress = duration ? Math.min((performance.now() - startTime) / duration, 1) : 1,
+                eased = 1 - Math.pow(1 - progress, 1 / easeLinearity);
+
+            if (progress < 1) {
+                this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
+            } else {
+                delete this._bearingAnimationFrame;
+            }
+            this._setPitchAndBearing(
+                progress === 1 ? endPitch : startPitch + (endPitch - startPitch) * eased,
+                progress === 1 ? endBearing : startBearing + delta * eased
+            );
+        };
+
+        this._bearingAnimationFrame = requestAnimationFrame(animate.bind(this));
+    },
+
+    /**
+     * Cancel a running pitch/bearing animation.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    _stopPitchBearingAnimation() {
         this._bearingAnimationId = (this._bearingAnimationId || 0) + 1;
         if (this._bearingAnimationFrame) {
             cancelAnimationFrame(this._bearingAnimationFrame);
             delete this._bearingAnimationFrame;
         }
+    },
 
-        this._setBearing(theta);
+    /**
+     * Rotate the map back to north (bearing 0), animated by default.
+     * 
+     * @param {Object} [options] Animation options (`animate`, `duration`, `easeLinearity`).
+     * 
+     * @returns {L.Map} This map instance.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    resetNorth(options) {
+        options = Object.assign({ animate: true, duration: 0.5 }, options);
+        if (options.animate) {
+            this._animatePitchBearing(this.getPitch(), 0, options);
+        } else {
+            this.setBearing(0);
+        }
+        return this;
+    },
+
+    /**
+     * Rotate the map back to north and remove the pitch, animated by default.
+     * 
+     * @param {Object} [options] Animation options (`animate`, `duration`, `easeLinearity`).
+     * 
+     * @returns {L.Map} This map instance.
+     * 
+     * @since leaflet-rotate (0.5.1)
+     */
+    resetNorthPitch(options) {
+        options = Object.assign({ animate: true, duration: 0.5 }, options);
+        if (options.animate) {
+            this._animatePitchBearing(0, 0, options);
+        } else {
+            this._stopPitchBearingAnimation();
+            this._setPitchAndBearing(0, 0);
+        }
+        return this;
     },
 
     /**
@@ -532,6 +594,7 @@ L.Map.include({
      * Set the map pitch in degrees. Values are clamped to the range 0–85.
      *
      * @param {number} pitch Pitch angle in degrees; clamped to [0, 85].
+     * @param {Object} [options] Animation options (`animate`, `duration`, `easeLinearity`).
      * 
      * @returns {L.Map} This map instance.
      * 
@@ -539,7 +602,12 @@ L.Map.include({
      * 
      * @since leaflet-rotate (0.5.0)
      */
-    setPitch(pitch) {
+    setPitch(pitch, options) {
+        if (options && options.animate) {
+            this._animatePitchBearing(pitch, this.getBearing(), options);
+            return this;
+        }
+        this._stopPitchBearingAnimation();
         this._setPitchAndBearing(pitch, this.getBearing());
         return this;
     },

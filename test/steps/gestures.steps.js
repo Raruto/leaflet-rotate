@@ -53,6 +53,61 @@ When('I move a two-finger pinch gesture', async function () {
   });
 });
 
+When('I drag two fingers vertically and then pinch with touch pitch enabled', async function () {
+  this.touchPitch = await this.page.evaluate(() => {
+    map.setView([55, 10], 6, { animate: false });
+    map.setPitch(0);
+    map.setBearing(20);
+    map.touchPitch.enable();
+    const container = map.getContainer();
+    const rect = container.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const touches = (x1, y1, x2, y2) => [
+      new Touch({ identifier: 1, target: container, clientX: centerX + x1, clientY: centerY + y1 }),
+      new Touch({ identifier: 2, target: container, clientX: centerX + x2, clientY: centerY + y2 }),
+    ];
+    const dispatch = (target, type, activeTouches, changedTouches = activeTouches) => {
+      target.dispatchEvent(new TouchEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        touches: activeTouches,
+        targetTouches: activeTouches,
+        changedTouches,
+      }));
+    };
+    const state = () => ({ pitch: map.getPitch(), bearing: map.getBearing(), zoom: map.getZoom() });
+
+    // both fingers up by 60px: pitch +30°
+    dispatch(container, 'touchstart', touches(-40, 0, 40, 0));
+    for (let dy = -10; dy >= -60; dy -= 10) {
+      dispatch(document, 'touchmove', touches(-40, dy, 40, dy));
+    }
+    dispatch(document, 'touchend', [], touches(-40, -60, 40, -60));
+    const afterPitch = state();
+
+    // fingers spreading apart vertically: pinch, pitch unchanged
+    dispatch(container, 'touchstart', touches(-40, 0, 40, 0));
+    for (let d = 10; d <= 40; d += 10) {
+      dispatch(document, 'touchmove', touches(-40 - d, -d, 40 + d, d));
+    }
+    dispatch(document, 'touchend', [], touches(-80, -40, 80, 40));
+    const afterPinch = state();
+
+    map.touchPitch.disable();
+    map.setPitch(0);
+    return { afterPitch, afterPinch };
+  });
+});
+
+Then('only the vertical two-finger drag changes the pitch', function () {
+  const { afterPitch, afterPinch } = this.touchPitch;
+  assert.ok(Math.abs(afterPitch.pitch - 30) < 1e-6, JSON.stringify(this.touchPitch));
+  assert.ok(Math.abs(afterPitch.bearing - 20) < 1e-6, JSON.stringify(this.touchPitch));
+  assert.equal(afterPitch.zoom, 6);
+  assert.ok(Math.abs(afterPinch.pitch - 30) < 1e-6, JSON.stringify(this.touchPitch));
+});
+
 When('I drag a constrained marker on a rotated map', async function () {
   await this.page.evaluate(() => {
     map.options.zoomAnimation = false;

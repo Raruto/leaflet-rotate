@@ -63,8 +63,10 @@ console.log(map.getBearing(), map.getPitch());
 | `pitchMaxDistance` | `3` | Far plane for pitched maps, in multiples of the map height: farther areas (and anything beyond the horizon) are not loaded and are covered by the `.leaflet-pitch-sky` element. Lower values load fewer tiles. |
 | `rotateControl` | `true` | Adds the rotation control. Set to `false` to hide it, or pass options such as `{ closeOnZeroBearing: false }`. |
 | `shiftKeyRotate` | `true` | Enables bearing changes with Shift + mouse wheel. |
-| `pitchDrag` | `true` | Enables bearing and pitch changes with Ctrl + mouse drag or right-button drag (MapLibre-like: vertical = pitch, horizontal = bearing around the map center). |
+| `pitchDrag` | `true` | Enables bearing and pitch changes with Ctrl + mouse drag or right-button drag. |
 | `touchRotate` | `false` | Enables rotation with a two-finger touch gesture. |
+| `touchPitch` | `false` | Enables pitch changes by dragging two fingers vertically. |
+| `compassBearing` | `false` | Makes the bearing follow the device compass. On iOS, enable it from a user gesture (e.g. `map.compassBearing.enable()` in a button click) so that the orientation permission can be requested. |
 
 #### Map methods and events
 
@@ -72,14 +74,22 @@ console.log(map.getBearing(), map.getPitch());
 | --- | --- |
 | `map.setBearing(degrees, options?)` | Sets the bearing. Use `{ animate: true, duration: 0.5 }` for an animated change; `duration` is in seconds. |
 | `map.getBearing()` | Returns the current bearing in degrees. |
-| `map.setPitch(degrees)` | Sets the pitch, clamped to `0`–`85` degrees. |
+| `map.setPitch(degrees, options?)` | Sets the pitch, clamped to `0`–`85` degrees. Accepts the same animation options as `setBearing`. |
 | `map.getPitch()` | Returns the current pitch in degrees. |
+| `map.resetNorth(options?)` | Animates the bearing back to `0` (pass `{ animate: false }` to skip the animation). |
+| `map.resetNorthPitch(options?)` | Animates both bearing and pitch back to `0`. |
 | `rotate` event | Fired when the bearing changes. |
 | `pitch` event | Fired when the pitch changes. |
 
 #### Rotation control
 
-The control is available as `L.Control.Rotate` or `L.control.rotate(options)`. The map option `rotateControl` adds it automatically; its `position` follows Leaflet control positions, and `closeOnZeroBearing` (default `true`) hides it when the bearing is zero.
+The control is available as `L.Control.Rotate` or `L.control.rotate(options)`. Click it to reset bearing and pitch (`map.resetNorthPitch()`), drag it horizontally to rotate and vertically to change the pitch. The map option `rotateControl` adds it automatically.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `position` | `'topleft'` | Leaflet control position. |
+| `closeOnZeroBearing` | `true` | Hides the control when both bearing and pitch are zero. |
+| `visualizePitch` | `true` | Tilts the icon with the pitch; when `false`, clicking only resets the bearing and dragging only rotates. |
 
 #### Marker options
 

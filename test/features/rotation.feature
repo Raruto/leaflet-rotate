@@ -76,7 +76,7 @@ Feature: Rotating a Leaflet map
     Then the point under the cursor stays in place
 
   @issue-72
-  Scenario: Right-drag rotates around the map center like MapLibre
+  Scenario: Right-drag rotates around the map center
     When I right-drag horizontally below the map center
     Then the map rotates counterclockwise without opening the context menu
 

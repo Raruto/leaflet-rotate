@@ -58,6 +58,7 @@ L.Map.TouchGestures = L.Handler.extend({
         this._map = map;
         this.rotate = !!this._map.options.touchRotate;
         this.zoom = !!this._map.options.touchZoom;
+        this.pitch = !!this._map.options.touchPitch;
     },
 
     /**
@@ -88,11 +89,19 @@ L.Map.TouchGestures = L.Handler.extend({
     _onTouchStart(e) {
         const map = this._map;
 
-        if (!e.touches || e.touches.length !== 2 || map._animatingZoom || this._zooming || this._rotating) { return; }
+        if (!e.touches || e.touches.length !== 2 || map._animatingZoom || this._zooming || this._rotating || this._gesture) { return; }
 
         const p1 = touchToContainerPoint(map, e.touches[0]),
             p2 = touchToContainerPoint(map, e.touches[1]),
             vector = p1.subtract(p2);
+
+        // Two horizontally aligned fingers moving vertically together change the pitch
+        const canPitch = this.pitch && map._rotate && Math.abs(vector.x) > Math.abs(vector.y);
+        if (!canPitch && !this.zoom && !this.rotate) { return; }
+        this._gesture = canPitch ? 'pending' : 'pinch';
+        this._startP1 = p1;
+        this._startP2 = p2;
+        map._stopPitchBearingAnimation();
 
         this._centerPoint = map.getSize()._divideBy(2);
         this._startLatLng = map.containerPointToLatLng(this._centerPoint);
@@ -136,7 +145,7 @@ L.Map.TouchGestures = L.Handler.extend({
      * @since leaflet-rotate (v0.1.0)
      */
     _onTouchMove(e) {
-        if (!e.touches || e.touches.length !== 2 || !(this._zooming || this._rotating)) { return; }
+        if (!e.touches || e.touches.length !== 2 || !this._gesture) { return; }
 
         const map = this._map,
             p1 = touchToContainerPoint(map, e.touches[0]),
@@ -144,6 +153,33 @@ L.Map.TouchGestures = L.Handler.extend({
             vector = p1.subtract(p2),
             scale = p1.distanceTo(p2) / this._startDist;
         let delta;
+
+        if (this._gesture === 'pending') {
+            const d1 = p1.subtract(this._startP1),
+                d2 = p2.subtract(this._startP2);
+            if (Math.max(d1.x * d1.x + d1.y * d1.y, d2.x * d2.x + d2.y * d2.y) < 25) {
+                L.DomEvent.preventDefault(e);
+                return;
+            }
+            const vertical = d => Math.abs(d.y) > Math.abs(d.x);
+            if (vertical(d1) && vertical(d2) && Math.sign(d1.y) === Math.sign(d2.y)) {
+                this._gesture = 'pitch';
+                this._lastPitchY = (this._startP1.y + this._startP2.y) / 2;
+                this._zooming = this._rotating = false;
+            } else {
+                this._gesture = 'pinch';
+            }
+        }
+
+        if (this._gesture === 'pitch') {
+            const y = (p1.y + p2.y) / 2;
+            map._setPitchAndBearing(map.getPitch() - (y - this._lastPitchY) * 0.5, map.getBearing());
+            this._lastPitchY = y;
+            L.DomEvent.preventDefault(e);
+            return;
+        }
+
+        if (!(this._zooming || this._rotating)) { return; }
 
         if (this._rotating) {
             const theta = Math.atan(vector.x / vector.y);
@@ -214,8 +250,14 @@ L.Map.TouchGestures = L.Handler.extend({
      * @since leaflet-rotate (v0.1.0)
      */
     _onTouchEnd() {
-        if (!this._moved || !(this._zooming || this._rotating)) {
+        const gesture = this._gesture;
+        delete this._gesture;
+        if (gesture === 'pitch' || gesture === 'pending' || !this._moved || !(this._zooming || this._rotating)) {
             this._zooming = false;
+            this._rotating = false;
+            L.DomEvent
+                .off(document, 'touchmove', this._onTouchMove, this)
+                .off(document, 'touchend touchcancel', this._onTouchEnd, this);
             return;
         }
 

@@ -139,6 +139,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
+        this._map._stopPitchBearingAnimation();
         this._dragging = true;
         this._lastX = e.clientX;
         this._lastY = e.clientY;
@@ -150,8 +151,9 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
     },
 
     /**
-     * Accumulate pointer movement as pitch (vertical) and bearing (horizontal), MapLibre-style:
-     * far from the horizontal center line the bearing follows the pointer angle around the map center.
+     * Accumulate pointer movement as pitch (vertical) and bearing (horizontal).
+     * Far from the horizontal center line the bearing follows the pointer angle
+     * around the map center.
      * 
      * @param {MouseEvent|PointerEvent} e Gesture movement event.
      * 
