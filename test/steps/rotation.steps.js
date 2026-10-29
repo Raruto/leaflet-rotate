@@ -245,6 +245,8 @@ Then('vector layers stay aligned with their map coordinates', function () {
 });
 
 When('I pan a highly pitched map in several directions', { timeout: 30000 }, async function () {
+  this.pitchPanErrors = [];
+  this.page.on('pageerror', error => this.pitchPanErrors.push(error.message));
   await this.page.evaluate(() => {
     map.setView([50, 5], 5, { animate: false });
     map.setBearing(45);
@@ -309,6 +311,7 @@ When('I pan a highly pitched map in several directions', { timeout: 30000 }, asy
 });
 
 Then('releasing the map does not jump or reset its layers', function () {
+  assert.deepEqual(this.pitchPanErrors, [], 'Pitched dragging must not throw JavaScript errors');
   assert.ok(this.pitchPanToError < 1.5, `panTo missed its target by ${this.pitchPanToError}px`);
   for (const result of this.pitchReleases) {
     assert.equal(result.resets, 0, 'Releasing a pan must not reset the view or reload its tiles');

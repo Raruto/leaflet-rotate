@@ -610,7 +610,9 @@ L.Map.include({
         if (!this._pitch || !this._loaded) { return; }
         const draggable = this.dragging && this.dragging._draggable,
             anchor = e.type === 'dragstart' && draggable
-                ? this.mouseEventToContainerPoint({ clientX: draggable._startPoint.x, clientY: draggable._startPoint.y })
+                ? (this.pointerEventToContainerPoint || this.mouseEventToContainerPoint).call(this, {
+                    clientX: draggable._startPoint.x, clientY: draggable._startPoint.y,
+                })
                 : this.getSize().divideBy(2),
             panePos = this._getMapPanePos().clone();
         this._pitchPan = {
