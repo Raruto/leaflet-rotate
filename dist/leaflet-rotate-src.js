@@ -1217,6 +1217,8 @@ var leafletRotate = (() => {
      * inverting the full 4x4 matrix at screen z = 0 would not undo perspective.
      *
      * @param {string} transform CSS transform list, including a serialized DOMMatrix.
+     * 
+     * @since leaflet-rotate (0.5.2)
      */
     _setPitchTransform(transform) {
       this._rotatePane.style.transformOrigin = "0 0";
@@ -1244,6 +1246,8 @@ var leafletRotate = (() => {
      * Pane positions are in screen pixels and the baseline matrices stay unchanged.
      *
      * @param {L.Event} e Leaflet `movestart` or `dragstart` event.
+     * 
+     * @since leaflet-rotate (0.5.2)
      */
     _startPitchPan(e) {
       if (!this._pitch || !this._loaded) {
@@ -1272,6 +1276,8 @@ var leafletRotate = (() => {
      * pane movement, while the right translation moves geography before perspective.
      * Always derive this from the baseline, not the previous frame, to avoid drift.
      * Zoom frames are handled by Leaflet's zoom/origin updates instead.
+     * 
+     * @since leaflet-rotate (0.5.2)
      */
     _updatePitchPan() {
       const pan = this._pitchPan;
@@ -1292,6 +1298,8 @@ var leafletRotate = (() => {
      * Discard the baseline only at `moveend`, after any drag inertia has completed.
      * Keep the final transform and pixel origin: resetting the view here would
      * reproject layers abruptly and cause a visible jump on release.
+     * 
+     * @since leaflet-rotate (0.5.2)
      */
     _endPitchPan() {
       delete this._pitchPan;
