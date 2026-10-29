@@ -48,10 +48,6 @@
 			<label title="MapLibre-like continuous zoom (needed for an exact view sync)"><input type="checkbox" id="snap"> zoomSnap: 0</label>
 		</fieldset>
 		<fieldset>
-			<legend>Go to</legend>
-			<select id="goto" title="Fly to a layer or place"><option value="">—</option></select>
-		</fieldset>
-		<fieldset>
 			<legend>Scenarios</legend>
 			<select id="scenario"></select>
 			<button id="run">Run</button>
@@ -67,19 +63,29 @@
 		<details id="results-panel" class="hidden" open>
 			<summary>Scenario results <button id="clear">Clear</button></summary>
 			<table id="results">
-				<thead><tr><th>Scenario</th><th>leaflet-rotate z / bearing / pitch</th><th>drift</th><th class="ml-only">MapLibre z / bearing / pitch</th><th class="ml-only">drift</th></tr></thead>
+				<thead><tr><th>Scenario</th><th>leaflet-rotate z / bearing / pitch</th><th>drift</th><th class="ml-only">MapLibre z / bearing / pitch</th><th class="ml-only">drift</th><th class="ml-only">view Δ</th><th class="ml-only" title="Largest change in the relative positions of six geographic probes, compared with the other renderer.">max spatial Δ</th></tr></thead>
 				<tbody></tbody>
 			</table>
 		</details>
 	</section>
 
 	<script type="module">
+		/**
+		 * Interactive regression harness, optionally comparing Leaflet with MapLibre.
+		 * Setup is persisted through query parameters: `leaflet=2`, `maplibre=0`,
+		 * `debug=0`, and `snap=0` (continuous Leaflet zoom). Defaults enable comparison
+		 * and debugging with Leaflet 1 and integer zoom snapping.
+		 *
+		 * Manual view sync is suspended during scenarios: each renderer receives the
+		 * same starting view and input independently, then its results are measured.
+		 */
 		const $ = id => document.getElementById(id);
 		const params = new URLSearchParams(location.search);
 		$('leaflet-version').value = params.get('leaflet') === '2' ? '2' : '1';
 		$('maplibre').checked = params.get('maplibre') !== '0';
 		$('debug').checked = params.get('debug') !== '0';
 		$('snap').checked = params.get('snap') === '0';
+		/** Reload the harness with the selected library/debug/zoom configuration. */
 		const reload = () => {
 			const query = new URLSearchParams({ leaflet: $('leaflet-version').value });
 			if (!$('maplibre').checked) query.set('maplibre', '0');
@@ -91,6 +97,7 @@
 		const compare = $('maplibre').checked;
 		for (const el of document.querySelectorAll('.ml-only')) el.classList.toggle('hidden', !compare);
 
+		/** Load scripts in dependency order; reject explicitly if a CDN or local file fails. */
 		const loadScript = src => new Promise((resolve, reject) => {
 			const script = Object.assign(document.createElement('script'), { src, onload: resolve, onerror: () => reject(new Error(`Could not load ${src}`)) });
 			document.head.appendChild(script);
@@ -144,16 +151,6 @@
 		window.circle = new L.Circle([53, 4], 111111).addTo(lf);
 		window.polygon = new L.Polygon(polygonLatLngs).addTo(lf);
 		window.rectangle = new L.Rectangle([[60.81123, 25.71632], [60.81028, 25.73166], [60.7997, 25.72892], [60.80061, 25.71362]]).addTo(lf);
-		const goto = {
-			'Circle': () => lf.flyToBounds(circle.getBounds()),
-			'Polygon': () => lf.flyToBounds(polygon.getBounds()),
-			'Path': () => lf.flyToBounds(path.getBounds()),
-			...Object.fromEntries(Object.keys(places).map(name => [name, () => lf.flyTo(places[name], 10)])),
-			// DEBUG: map.setZoom(0) && map.getBoundsZoom(rectangle.getBounds())
-			'Rectangle (fit from z 0)': () => { lf.setZoom(0, { animate: false }); setTimeout(() => lf.fitBounds(rectangle.getBounds(), { animate: false }), 1000); },
-		};
-		for (const name in goto) $('goto').add(new Option(name, name));
-		$('goto').onchange = e => { goto[e.target.value](); e.target.value = ''; };
 		if ($('debug').checked) {
 			L.Rotate.debug(lf, { container: $('panels') });
 		}
@@ -181,7 +178,20 @@
 			for (const name in places) new maplibregl.Marker().setLngLat([places[name][1], places[name][0]]).setPopup(new maplibregl.Popup().setText(name)).addTo(ml);
 		}
 
-		// unified view access: { lat, lng, zoom (leaflet scale), bearing (leaflet sign), pitch }
+		/**
+		 * @typedef {Object} View
+		 * @property {number} lat Center latitude in degrees.
+		 * @property {number} lng Center longitude in degrees.
+		 * @property {number} zoom Leaflet zoom scale (256px world at zoom 0).
+		 * @property {number} bearing Leaflet bearing sign, in degrees.
+		 * @property {number} pitch Pitch in degrees.
+		 */
+		/**
+		 * Renderer adapters use View values and [lat, lng] geographic arrays.
+		 * `get`/`set` read/apply a view without animation; `toLatLng`/`toPoint` convert
+		 * container pixels to/from geography. MapLibre uses 512px zoom levels,
+		 * the opposite bearing sign, and [lng, lat] arrays internally.
+		 */
 		const maps = {
 			lf: {
 				el: lf.getContainer(),
@@ -202,6 +212,7 @@
 		// view sync: the last hovered map drives the other one
 		let source = 'lf', syncing = false, running = false;
 		const fmt = v => `z ${v.zoom.toFixed(2)}  bearing ${v.bearing.toFixed(1)}  pitch ${v.pitch.toFixed(1)}  ${v.lat.toFixed(4)}, ${v.lng.toFixed(4)}`;
+		/** Create a view listener; the hovered renderer drives sync, without recursive updates. */
 		const onView = key => () => {
 			$(`${key}-info`).textContent = fmt(maps[key].get());
 			if (!ml || key !== source || syncing || running || !$('sync').checked) return;
@@ -216,16 +227,27 @@
 		if (ml) ml.on('move', onView('ml'));
 		for (const key in maps) maps[key].el.addEventListener('pointerenter', () => source = key);
 
-		// synthetic input driver, coordinates are fractions of the map container
 		const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 		const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+		/**
+		 * Create synthetic mouse/pointer/wheel input for one renderer.
+		 * Positions are container fractions (0..1 inside, outside values allowed).
+		 * Emit both pointer and mouse events for the supported library versions.
+		 * These untrusted events exercise handlers, not native browser input behavior;
+		 * animation-frame pacing also depends on tab visibility.
+		 *
+		 * @param {'lf'|'ml'} key Renderer receiving the input.
+		 * @returns {Object} Async down/move/up/wheel methods and a millisecond wait helper.
+		 */
 		const driver = key => {
 			const el = maps[key].el;
 			let pressed = 0, button = 0;
+			/** Convert fractional container coordinates to viewport client pixels. */
 			const at = (fx, fy) => {
 				const r = el.getBoundingClientRect();
 				return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy };
 			};
+			/** Hit-test layers/markers; use body outside this map so document listeners still run. */
 			const target = ({ clientX, clientY }) => {
 				const hit = document.elementFromPoint(clientX, clientY);
 				return hit && el.contains(hit) ? hit : document.body;
@@ -238,12 +260,14 @@
 			};
 			let last = at(0.5, 0.5);
 			return {
+				/** Press the selected mouse button at a fractional container position. */
 				async down(fx, fy, mods = {}) {
 					button = mods.button || 0;
 					pressed = button === 2 ? 2 : 1;
 					fire('down', last = at(fx, fy), mods);
 					await frame();
 				},
+				/** Interpolate from the last position, yielding one animation frame per step. */
 				async move(fx, fy, mods = {}, steps = 10) {
 					const from = last, to = at(fx, fy);
 					for (let i = 1; i <= steps; i++) {
@@ -252,12 +276,14 @@
 						await frame();
 					}
 				},
+				/** Release at the last position, including contextmenu for right-button gestures. */
 				async up(mods = {}) {
 					pressed = 0;
 					fire('up', last, mods);
 					if (button === 2) target(last).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...last, button: 2, ...mods }));
 					await frame();
 				},
+				/** Send a wheel burst with pixel deltas and a millisecond interval between events. */
 				async wheel(fx, fy, deltaY, mods = {}, count = 1, interval = 16) {
 					last = at(fx, fy);
 					for (let i = 0; i < count; i++) {
@@ -269,9 +295,22 @@
 			};
 		};
 
-		// scenarios: view = initial view (leaflet units), anchor = [from, to] screen fractions that should keep the same latlng
+		/**
+		 * @typedef {Object} Scenario
+		 * @property {string} name Display label.
+		 * @property {Partial<View>} [view] Overrides of the shared `flat` starting view.
+		 * @property {number[][]} [anchor] [from, to] container fractions expected to hold
+		 *     the same geographic point; absent when cursor anchoring is not measured.
+		 * @property {boolean} [noInertia] Disable/stop inertia for endpoint measurements.
+		 * @property {function(Object): Promise<void>} [run] Synthetic gesture using a driver.
+		 * @property {string} [goTo] Navigation destination, used instead of `run`.
+		 * @property {number} [settle=900] Milliseconds to wait after input/navigation completes.
+		 */
 		const ctrl = { ctrlKey: true }, right = { button: 2 };
+		/** Build a modified drag, using Ctrl by default or an explicit right-button modifier. */
 		const ctrlDrag = (from, to, steps, mods = ctrl) => async d => { await d.down(...from, mods); await d.move(...to, mods, steps); await d.up(mods); };
+		/** Build one uninterrupted plain drag through fractional-container waypoints. */
+		const panPath = (...points) => async d => { await d.down(...points[0]); for (const point of points.slice(1)) await d.move(...point, {}, 12); await d.up(); };
 		const flat = { lat: 50, lng: 5, zoom: 5, bearing: 0, pitch: 0 };
 		const scenarios = [
 			{ name: 'Ctrl+drag up: pitch from center', run: ctrlDrag([0.5, 0.5], [0.5, 0.3]) },
@@ -308,24 +347,170 @@
 			{ name: 'Wheel then Ctrl+drag while zoom pending', run: async d => { await d.wheel(0.9, 0.1, -100); await ctrlDrag([0.5, 0.5], [0.55, 0.4], 4)(d); } },
 			{ name: 'Wheel during Ctrl+drag', run: async d => { await d.down(0.5, 0.6, ctrl); await d.move(0.55, 0.5, ctrl, 4); await d.wheel(0.55, 0.5, -100, ctrl); await d.move(0.6, 0.4, ctrl, 4); await d.up(ctrl); } },
 			{ name: 'Low zoom rotated, wheel in (layer jump check)', view: { zoom: 1, bearing: 30 }, anchor: [[0.6, 0.4], [0.6, 0.4]], run: async d => { await d.wheel(0.6, 0.4, -100, {}, 1); await d.wait(400); await d.wheel(0.6, 0.4, -100, {}, 1); } },
-			{ name: 'Pan pitched 70', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.3, 0.5]], run: async d => { await d.down(0.5, 0.7); await d.move(0.3, 0.5); await d.up(); } },
+			{ name: 'Pan pitched 70', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.3, 0.5]], noInertia: true, run: async d => { await d.down(0.5, 0.7); await d.move(0.3, 0.5); await d.up(); } },
+			{ name: 'Pan pitched 70: vertical up', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.5, 0.5]], noInertia: true, run: panPath([0.5, 0.7], [0.5, 0.5]) },
+			{ name: 'Pan pitched 70: vertical down', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.3], [0.5, 0.5]], noInertia: true, run: panPath([0.5, 0.3], [0.5, 0.5]) },
+			{ name: 'Pan pitched 70: horizontal left', view: { bearing: 45, pitch: 70 }, anchor: [[0.7, 0.5], [0.5, 0.5]], noInertia: true, run: panPath([0.7, 0.5], [0.5, 0.5]) },
+			{ name: 'Pan pitched 70: horizontal right', view: { bearing: 45, pitch: 70 }, anchor: [[0.3, 0.5], [0.5, 0.5]], noInertia: true, run: panPath([0.3, 0.5], [0.5, 0.5]) },
+			{ name: 'Pan pitched 70: diagonal up-right', view: { bearing: 45, pitch: 70 }, anchor: [[0.3, 0.7], [0.5, 0.5]], noInertia: true, run: panPath([0.3, 0.7], [0.5, 0.5]) },
+			{ name: 'Pan pitched 70: diagonal down-left', view: { bearing: 45, pitch: 70 }, anchor: [[0.7, 0.3], [0.5, 0.5]], noInertia: true, run: panPath([0.7, 0.3], [0.5, 0.5]) },
+			{ name: 'Pan pitched 70: reverse vertical drag', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.5, 0.4]], noInertia: true, run: panPath([0.5, 0.7], [0.5, 0.5], [0.5, 0.7], [0.5, 0.4]) },
+			{ name: 'Pan pitched 70: multi-direction loop', view: { bearing: 45, pitch: 70 }, anchor: [[0.5, 0.7], [0.5, 0.7]], noInertia: true, run: panPath([0.5, 0.7], [0.7, 0.5], [0.3, 0.5], [0.5, 0.7]) },
+			{ name: 'Pan pitched 70, bearing 225: diagonal', view: { bearing: 225, pitch: 70 }, anchor: [[0.3, 0.7], [0.7, 0.3]], noInertia: true, run: panPath([0.3, 0.7], [0.7, 0.3]) },
 		];
+		scenarios.push(...['Circle', 'Polygon', 'Path', ...Object.keys(places), 'Rectangle (fit from z 0)'].map(name => ({
+			name: `Go to: ${name}`,
+			goTo: name,
+			view: { bearing: 45, pitch: 70 },
+			settle: 300,
+		})));
 		for (const [i, s] of scenarios.entries()) $('scenario').add(new Option(s.name, i));
 
+		/**
+		 * Run equivalent fly/fit navigation, preserving each renderer's bearing and pitch.
+		 * Wait for moveend (8s timeout), not a fixed flight duration. Fit algorithms and
+		 * zoom snapping differ between renderers, so final views need not match exactly.
+		 *
+		 * @param {'lf'|'ml'} key Renderer to navigate.
+		 * @param {string} name Layer bounds, a `places` key, or the rectangle reset case.
+		 */
+		const runGoTo = async (key, name) => {
+			const map = key === 'lf' ? lf : ml,
+				// Subscribe before invoking the action: nonanimated fits can end synchronously.
+				finishMove = action => {
+					const finished = new Promise((resolve, reject) => {
+						const onMoveEnd = () => {
+							clearTimeout(timer);
+							resolve();
+						};
+						const timer = setTimeout(() => {
+							map.off('moveend', onMoveEnd);
+							reject(new Error(`Go to "${name}" did not finish moving`));
+						}, 8000);
+						map.once('moveend', onMoveEnd);
+					});
+					action();
+					return finished;
+				},
+				view = maps[key].get(),
+				mapLibreCamera = { bearing: -view.bearing, pitch: view.pitch };
+			if (name === 'Circle' || name === 'Polygon' || name === 'Path') {
+				const bounds = name === 'Circle' ? circle.getBounds() : name === 'Polygon' ? polygon.getBounds() : path.getBounds();
+				if (key === 'lf') {
+					await finishMove(() => lf.flyToBounds(bounds));
+				} else {
+					await finishMove(() => ml.fitBounds([[bounds.getWest(), bounds.getSouth()], [bounds.getEast(), bounds.getNorth()]], { ...mapLibreCamera, duration: 1000 }));
+				}
+			} else if (name === 'Rectangle (fit from z 0)') {
+				if (key === 'lf') {
+					lf.setZoom(0, { animate: false });
+					await sleep(1000);
+					await finishMove(() => lf.fitBounds(rectangle.getBounds(), { animate: false }));
+				} else {
+					ml.setZoom(-1);
+					await sleep(1000);
+					const bounds = rectangle.getBounds();
+					await finishMove(() => ml.fitBounds([[bounds.getWest(), bounds.getSouth()], [bounds.getEast(), bounds.getNorth()]], { ...mapLibreCamera, duration: 0 }));
+				}
+			} else {
+				const latlng = places[name];
+				if (key === 'lf') {
+					await finishMove(() => lf.flyTo(latlng, 10));
+				} else {
+					await finishMove(() => ml.flyTo({ center: [latlng[1], latlng[0]], zoom: 9, ...mapLibreCamera, duration: 1000 }));
+				}
+			}
+		};
+
+		/**
+		 * Reset both views, run one renderer, and measure its independent final state.
+		 *
+		 * Drift is the screen distance between the original geographic anchor and its
+		 * expected endpoint. For spatial delta, first sync the other renderer to the
+		 * final view, then compare six fixed geographic probes relative to viewport
+		 * centers, subtracting each probe's initial cross-renderer difference.
+		 * Initially non-finite probes are excluded; a valid probe becoming non-finite
+		 * produces Infinity. After large flights, probes can be offscreen/near the
+		 * horizon: spatial delta is a diagnostic, not a viewport-wide accuracy bound.
+		 *
+		 * @param {'lf'|'ml'} key Renderer whose input is being tested.
+		 * @param {Scenario} scenario Gesture or navigation definition.
+		 * @returns {Promise<{end: View, drift: ?number, spatialDelta: ?number}>}
+		 *     Final view and pixel errors; null denotes an unavailable measurement.
+		 */
 		const runOn = async (key, scenario) => {
 			const m = maps[key];
-			m.set({ ...flat, ...scenario.view });
+			const initialView = { ...flat, ...scenario.view },
+				other = maps[key === 'lf' ? 'ml' : 'lf'];
+			for (const map of Object.values(maps)) map.set(initialView);
 			await sleep(300);
+			let relativePoints, initialDifferences;
+			if (other) {
+				const probes = [[0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8], [0.5, 0.25], [0.5, 0.75]]
+					.map(([x, y]) => {
+						const r = m.el.getBoundingClientRect();
+						return m.toLatLng([r.width * x, r.height * y]);
+					});
+				// Center-relative coordinates remove the offset from unequal container sizes.
+				relativePoints = map => {
+					const r = map.el.getBoundingClientRect();
+					return probes.map(ll => {
+						const p = map.toPoint(ll);
+						return p.every(Number.isFinite) ? [p[0] - r.width / 2, p[1] - r.height / 2] : null;
+					});
+				};
+				const initialLf = relativePoints(maps.lf), initialMl = relativePoints(maps.ml);
+				initialDifferences = initialLf.map((p, i) => p && initialMl[i]
+					? [p[0] - initialMl[i][0], p[1] - initialMl[i][1]]
+					: null);
+				if (!initialDifferences.some(Boolean)) throw new Error('No common finite geographic probes for this view');
+			}
 			const anchor = scenario.anchor && (() => {
 				const r = m.el.getBoundingClientRect();
 				return scenario.anchor.map(([fx, fy]) => [r.width * fx, r.height * fy]);
 			})();
 			const latlng = anchor && m.toLatLng(anchor[0]);
-			await scenario.run(driver(key));
-			await sleep(900);
+			const inertia = key === 'lf' && scenario.noInertia ? lf.options.inertia : undefined;
+			if (inertia !== undefined) lf.options.inertia = false;
+			try {
+				if (scenario.goTo) await runGoTo(key, scenario.goTo);
+				else await scenario.run(driver(key));
+				if (key === 'ml' && scenario.noInertia) ml.stop();
+				await sleep(scenario.settle || 900);
+			} finally {
+				if (inertia !== undefined) lf.options.inertia = inertia;
+			}
 			const end = m.get(), p = anchor && m.toPoint(latlng);
-			return { end, drift: anchor ? Math.hypot(p[0] - anchor[1][0], p[1] - anchor[1][1]) : null };
+			let spatialDelta = null;
+			if (other) {
+				other.set(end);
+				await sleep(100);
+				const endLf = relativePoints(maps.lf), endMl = relativePoints(maps.ml);
+				spatialDelta = Math.max(...initialDifferences.map((baseline, i) => {
+					if (!baseline) return 0;
+					if (!endLf[i] || !endMl[i]) return Infinity;
+					const point = endLf[i];
+					const dx = point[0] - endMl[i][0] - initialDifferences[i][0],
+						dy = point[1] - endMl[i][1] - initialDifferences[i][1];
+					return Math.hypot(dx, dy);
+				}));
+			}
+			return {
+				end,
+				drift: anchor ? Math.hypot(p[0] - anchor[1][0], p[1] - anchor[1][1]) : null,
+				spatialDelta,
+			};
 		};
+		/**
+		 * Run a scenario sequentially on each enabled renderer and append a result row.
+		 * Compare independent final views before spatial synchronization affects them:
+		 * center distance uses wrapped Web Mercator pixels at the mean Leaflet zoom.
+		 * Red cells flag drift/spatial/center errors >3px, zoom differences >0.05,
+		 * or bearing/pitch differences >0.1 degrees; these are diagnostic thresholds.
+		 *
+		 * @param {Scenario} scenario Selected test case.
+		 * @returns {Promise<Object[]>} Per-renderer measurements in adapter iteration order.
+		 */
 		const run = async scenario => {
 			running = true;
 			$('run').disabled = $('run-all').disabled = true;
@@ -342,11 +527,45 @@
 				cell.textContent = r.drift == null ? '' : `${r.drift.toFixed(1)}px`;
 				cell.classList.toggle('bad', r.drift > 3);
 			}
+			let viewDelta = null, viewMismatch = false;
+			if (ml) {
+				const [lfView, mlView] = results.map(result => result.end),
+					// Normalized Web Mercator world coordinates, clamped to its latitude limit.
+					project = ({ lat, lng }, zoom) => {
+						const sin = Math.sin(Math.max(-85.05112878, Math.min(85.05112878, lat)) * Math.PI / 180);
+						return [
+							(lng + 180) / 360,
+							0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI),
+						];
+					},
+					zoom = (lfView.zoom + mlView.zoom) / 2,
+					a = project(lfView, zoom),
+					b = project(mlView, zoom),
+					dx = ((a[0] - b[0] + 0.5) % 1 + 1) % 1 - 0.5,
+					dy = a[1] - b[1],
+					centerDelta = Math.hypot(dx, dy) * 256 * 2 ** zoom,
+					zoomDelta = Math.abs(lfView.zoom - mlView.zoom),
+					bearingDelta = Math.abs(((lfView.bearing - mlView.bearing + 180) % 360 + 360) % 360 - 180),
+					pitchDelta = Math.abs(lfView.pitch - mlView.pitch);
+				viewDelta = `${centerDelta.toFixed(1)}px / z ${zoomDelta.toFixed(2)}`;
+				viewMismatch = centerDelta > 3 || zoomDelta > 0.05 || bearingDelta > 0.1 || pitchDelta > 0.1;
+			}
+			const viewCell = row.insertCell();
+			viewCell.className = 'ml-only';
+			viewCell.classList.toggle('hidden', !ml);
+			viewCell.textContent = viewDelta || '';
+			viewCell.classList.toggle('bad', viewMismatch);
+			const spatialCell = row.insertCell();
+			spatialCell.className = 'ml-only';
+			spatialCell.classList.toggle('hidden', !ml);
+			spatialCell.textContent = ml ? `${Math.max(...results.map(r => r.spatialDelta)).toFixed(1)}px` : '';
+			spatialCell.classList.toggle('bad', results.some(r => r.spatialDelta > 3));
 			row.className = '';
 			running = false;
 			$('run').disabled = $('run-all').disabled = false;
 			return results;
 		};
+		// Expose the same cases/runner to browser automation and the interactive controls.
 		window.scenarios = scenarios;
 		window.runScenario = run;
 		$('run').onclick = () => run(scenarios[$('scenario').value]);

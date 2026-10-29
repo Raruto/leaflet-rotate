@@ -36,6 +36,11 @@ Feature: Rotating a Leaflet map
     When I drag the pitched map
     Then vector layers stay aligned with their map coordinates
 
+  @issue-74
+  Scenario: Pitched panning does not jump or reset the view on release
+    When I pan a highly pitched map in several directions
+    Then releasing the map does not jump or reset its layers
+
   @issue-72
   Scenario: Vector layers stay aligned after off-center zoom and rotation
     When I zoom off-center then rotate the map

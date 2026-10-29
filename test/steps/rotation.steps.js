@@ -167,10 +167,8 @@ When('I drag the pitched map', async function () {
       rect = container.getBoundingClientRect(),
       start = [rect.left + rect.width / 2, rect.top + rect.height / 2];
     const vectorScreenPoint = () => {
-      const bounds = element.getBBox();
-      const point = new DOMPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-        .matrixTransform(element.getScreenCTM());
-      return [point.x, point.y];
+      const bounds = element.getBoundingClientRect();
+      return [bounds.left + bounds.width / 2, bounds.top + bounds.height / 2];
     };
     const before = vectorScreenPoint(),
       pinBoundsBefore = pinElement.getBoundingClientRect(),
@@ -183,18 +181,42 @@ When('I drag the pitched map', async function () {
   await this.page.mouse.move(dragStart[0] + 70, dragStart[1] + 35, { steps: 4 });
   await this.page.mouse.up();
   this.pitchedDrag = await this.page.evaluate(() => {
-    const { pinElement, vectorScreenPoint, before, pinBefore } = window.__pitchPanTest,
+    const { pinElement, vectorScreenPoint } = window.__pitchPanTest,
       after = vectorScreenPoint(),
       pinBoundsAfter = pinElement.getBoundingClientRect(),
-      pinAfter = [pinBoundsAfter.left + pinBoundsAfter.width / 2, pinBoundsAfter.top + pinBoundsAfter.height / 2];
-    delete window.__pitchPanTest;
+      pinAfter = [pinBoundsAfter.left + pinBoundsAfter.width / 2, pinBoundsAfter.top + pinBoundsAfter.height / 2],
+      container = map.getContainer().getBoundingClientRect(),
+      expected = map.latLngToContainerPoint(new L.LatLng(55, 10));
     return {
-      vectorDelta: [after[0] - before[0], after[1] - before[1]],
-      pinDelta: [pinAfter[0] - pinBefore[0], pinAfter[1] - pinBefore[1]],
-      expected: map.latLngToContainerPoint(new L.LatLng(55, 10)),
-      pointerDelta: [70, 35],
+      vector: [after[0] - container.left, after[1] - container.top],
+      expected: [expected.x, expected.y],
+      vectorError: Math.hypot(after[0] - container.left - expected.x, after[1] - container.top - expected.y),
+      pinError: Math.hypot(pinAfter[0] - container.left - expected.x, pinAfter[1] - container.top - expected.y),
     };
   });
+  this.repeatedPitchPanErrors = [];
+  for (let i = 0; i < 2; i++) {
+    const bounds = await this.page.locator('#map').boundingBox(),
+      center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    await this.page.mouse.move(center.x, center.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(center.x + 40, center.y + 20, { steps: 3 });
+    await this.page.mouse.up();
+    this.repeatedPitchPanErrors.push(await this.page.evaluate(() => {
+      const { element, pinElement } = window.__pitchPanTest,
+        bounds = element.getBoundingClientRect(),
+        vector = [bounds.left + bounds.width / 2, bounds.top + bounds.height / 2],
+        pinBounds = pinElement.getBoundingClientRect(),
+        pin = [pinBounds.left + pinBounds.width / 2, pinBounds.top + pinBounds.height / 2],
+        container = map.getContainer().getBoundingClientRect(),
+        expected = map.latLngToContainerPoint(new L.LatLng(55, 10));
+      return [
+        Math.hypot(vector[0] - container.left - expected.x, vector[1] - container.top - expected.y),
+        Math.hypot(pin[0] - container.left - expected.x, pin[1] - container.top - expected.y),
+      ];
+    }));
+  }
+  await this.page.evaluate(() => { delete window.__pitchPanTest; });
 });
 
 Then('vector layers stay aligned with their map coordinates', function () {
@@ -215,10 +237,89 @@ Then('vector layers stay aligned with their map coordinates', function () {
     }
     return;
   }
-  const { vectorDelta, pinDelta, pointerDelta } = this.pitchedDrag;
-  for (const delta of [vectorDelta, pinDelta]) {
-    assert.ok(Math.abs(delta[0] - pointerDelta[0]) < 2, JSON.stringify(this.pitchedDrag));
-    assert.ok(Math.abs(delta[1] - pointerDelta[1]) < 2, JSON.stringify(this.pitchedDrag));
+  assert.ok(this.pitchedDrag.vectorError < 2, JSON.stringify(this.pitchedDrag));
+  assert.ok(this.pitchedDrag.pinError < 2, JSON.stringify(this.pitchedDrag));
+  for (const errors of this.repeatedPitchPanErrors) {
+    assert.ok(errors[0] < 2 && errors[1] < 2, JSON.stringify(this.repeatedPitchPanErrors));
+  }
+});
+
+When('I pan a highly pitched map in several directions', { timeout: 30000 }, async function () {
+  await this.page.evaluate(() => {
+    map.setView([50, 5], 5, { animate: false });
+    map.setBearing(45);
+    map.setPitch(70);
+    map.options.inertia = false;
+    const size = map.getSize(),
+      locations = [[0.35, 0.35], [0.65, 0.35], [0.35, 0.65], [0.65, 0.65]]
+        .map(([x, y]) => map.containerPointToLatLng([size.x * x, size.y * y])),
+      marker = new L.Marker(locations[0]).addTo(map),
+      vector = new L.CircleMarker(locations[0], { radius: 4 }).addTo(map),
+      bounds = element => {
+        const rect = element.getBoundingClientRect();
+        return [rect.x, rect.y, rect.width, rect.height];
+      };
+    window.__pitchRelease = {
+      locations,
+      resets: 0,
+      measure: () => ({
+        points: locations.map(ll => map.latLngToContainerPoint(ll)),
+        marker: bounds(marker.getElement()),
+        vector: bounds(vector.getElement()),
+      }),
+    };
+    map.on('viewreset', () => window.__pitchRelease.resets++);
+  });
+  this.pitchReleases = [];
+  for (const [dx, dy] of [[0, -60], [-60, 0], [30, 50], [30, 10]]) {
+    const bounds = await this.page.locator('#map').boundingBox(),
+      x = bounds.x + bounds.width / 2,
+      y = bounds.y + bounds.height / 2;
+    await this.page.mouse.move(x, y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(x + dx, y + dy, { steps: 10 });
+    const before = await this.page.evaluate(() => window.__pitchRelease.measure());
+    await this.page.mouse.up();
+    await this.page.waitForTimeout(50);
+    this.pitchReleases.push(await this.page.evaluate(before => {
+      const state = window.__pitchRelease,
+        after = state.measure(),
+        center = map.project(map.getCenter()),
+        size = map.getSize(),
+        bearing = map.getBearing() * Math.PI / 180,
+        pitch = map.getPitch() * Math.PI / 180,
+        perspective = size.y * 1.5,
+        projectionErrors = state.locations.map(ll => {
+          const point = map.project(ll).subtract(center),
+            x = point.x * Math.cos(bearing) - point.y * Math.sin(bearing),
+            y = point.x * Math.sin(bearing) + point.y * Math.cos(bearing),
+            scale = perspective / (perspective - y * Math.sin(pitch)),
+            actual = map.latLngToContainerPoint(ll);
+          return Math.hypot(actual.x - size.x / 2 - x * scale, actual.y - size.y / 2 - y * Math.cos(pitch) * scale);
+        });
+      return { before, after, resets: state.resets, projectionErrors };
+    }, before));
+  }
+  this.pitchPanToError = await this.page.evaluate(() => {
+    const center = map.getCenter(),
+      target = new L.LatLng(center.lat + 0.1, center.lng + 0.1);
+    map.panTo(target, { animate: false });
+    return map.latLngToContainerPoint(target).distanceTo(map.getSize().divideBy(2));
+  });
+});
+
+Then('releasing the map does not jump or reset its layers', function () {
+  assert.ok(this.pitchPanToError < 1.5, `panTo missed its target by ${this.pitchPanToError}px`);
+  for (const result of this.pitchReleases) {
+    assert.equal(result.resets, 0, 'Releasing a pan must not reset the view or reload its tiles');
+    for (let i = 0; i < result.before.points.length; i++) {
+      const before = result.before.points[i], after = result.after.points[i];
+      assert.ok(Math.hypot(before.x - after.x, before.y - after.y) < 0.1, JSON.stringify(result));
+    }
+    for (const layer of ['marker', 'vector']) {
+      assert.ok(result.before[layer].every((value, i) => Math.abs(value - result.after[layer][i]) < 0.1), JSON.stringify(result));
+    }
+    assert.ok(result.projectionErrors.every(error => error < 1.5), JSON.stringify(result));
   }
 });
 
