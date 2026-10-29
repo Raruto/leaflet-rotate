@@ -1,6 +1,17 @@
 /**
  * Extends Leaflet maps with bearing rotation and 3D pitch.
  *
+ * Coordinate spaces used by the overrides below:
+ * - projected pixels: CRS coordinates at a given zoom;
+ * - layer points: projected pixels minus `_pixelOrigin`, on the flat ground plane;
+ * - map-pane points: layer points after bearing/pitch, before the outer pane translation;
+ * - container points: map-pane points plus `_getMapPanePos()`, in viewport pixels.
+ *
+ * Tiles and vectors share `rotatePane`; upright markers and popups use `norotatePane`
+ * and the same point conversions. Public angles are degrees; `_bearing` and `_pitch`
+ * are radians. With pitch enabled, CSS and coordinate conversions must use the same
+ * projective transform, including while the outer map pane is being dragged.
+ *
  * @external L.Map
  * 
  * @since leaflet-rotate (v0.1.0)
@@ -95,6 +106,9 @@ L.Map.include({
         mapProto.initialize.apply(this, arguments);
         if (this.options.rotate) {
             this.on('resize', this._updatePitchTransform, this);
+            this.on('movestart dragstart', this._startPitchPan, this);
+            this.on('move', this._updatePitchPan, this);
+            this.on('moveend', this._endPitchPan, this);
             this.on('move', this._updatePitchSky, this);
             this.setBearing(this.options.bearing);
             this.setPitch(this.options.pitch);
@@ -242,7 +256,8 @@ L.Map.include({
     /**
      * Return the geographic bounds of the current viewport, accounting for rotation and pitch.
      * 
-     * The result is the smallest geographic bounds containing all four viewport corners.
+     * The result encloses the four corners of the visible ground rectangle. With pitch,
+     * the rectangle stops at the configured far plane, excluding the sky.
      * 
      * @returns {L.LatLngBounds} Geographic bounds visible in the map viewport.
      * 
@@ -507,10 +522,12 @@ L.Map.include({
     },
 
     /**
-     * Transform a point with a projective matrix, accepting DOMMatrix or its 2D inverse.
+     * Transform a ground-plane point with a DOMMatrix, or reverse its screen projection.
+     * Both branches divide by the homogeneous coordinate after applying the matrix.
      * 
      * @param {L.Point|number[]} point Input pixel coordinate.
-     * @param {DOMMatrix|Object} matrix Forward or inverse transformation matrix.
+     * @param {DOMMatrix|Object} matrix Forward CSS matrix or inverse homography with
+     *                                row-major coefficients `a` through `i`.
      * 
      * @returns {L.Point} Transformed pixel coordinate.
      * 
@@ -543,6 +560,21 @@ L.Map.include({
             position = this._rotatePane._leaflet_pos || new L.Point(0, 0),
             transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
 
+        this._setPitchTransform(transform);
+    },
+
+    /**
+     * Apply the CSS transform and cache matching forward/inverse point conversions.
+     *
+     * Ground points have z = 0, so the 4x4 CSS matrix reduces to the homography
+     * [a b c; d e f; g h i]. Its inverse maps screen points back onto that plane;
+     * inverting the full 4x4 matrix at screen z = 0 would not undo perspective.
+     *
+     * @param {string} transform CSS transform list, including a serialized DOMMatrix.
+     * 
+     * @since leaflet-rotate (0.5.2)
+     */
+    _setPitchTransform(transform) {
         this._rotatePane.style.transformOrigin = '0 0';
         this._rotatePane.style.transform = transform;
         // parse the transform directly: getComputedStyle() would force a style recalculation on every frame
@@ -564,6 +596,76 @@ L.Map.include({
             i: (a * e - b * d) / determinant,
         };
         this._updatePitchSky();
+    },
+
+    /**
+     * Capture a fixed projection baseline for a pitched drag or programmatic pan.
+     *
+     * `movestart` uses the viewport center; `dragstart` replaces it with the original
+     * pointer position. Store both the screen anchor and its ground-plane coordinate
+     * so subsequent frames can keep the grabbed geographic point under the pointer.
+     * Pane positions are in screen pixels and the baseline matrices stay unchanged.
+     *
+     * @param {L.Event} e Leaflet `movestart` or `dragstart` event.
+     * 
+     * @since leaflet-rotate (0.5.2)
+     */
+    _startPitchPan(e) {
+        if (!this._pitch || !this._loaded) { return; }
+        const draggable = this.dragging && this.dragging._draggable,
+            anchor = e.type === 'dragstart' && draggable
+                ? (this.pointerEventToContainerPoint || this.mouseEventToContainerPoint).call(this, {
+                    clientX: draggable._startPoint.x, clientY: draggable._startPoint.y,
+                })
+                : this.getSize().divideBy(2),
+            panePos = this._getMapPanePos().clone();
+        this._pitchPan = {
+            anchor,
+            panePos,
+            lastPanePos: panePos,
+            matrix: this._pitchTransform,
+            inverse: this._pitchInverseTransform,
+            layerAnchor: this.containerPointToLayerPoint(anchor),
+            zoom: this._zoom,
+        };
+    },
+
+    /**
+     * Translate the ground plane without moving the camera's vanishing point.
+     *
+     * For pane displacement delta, invert the displaced anchor with the baseline
+     * projection to find the required layer-space shift. Compose
+     * T(-delta) * baseline * T(shift): the left translation cancels Leaflet's outer
+     * pane movement, while the right translation moves geography before perspective.
+     * Always derive this from the baseline, not the previous frame, to avoid drift.
+     * Zoom frames are handled by Leaflet's zoom/origin updates instead.
+     * 
+     * @since leaflet-rotate (0.5.2)
+     */
+    _updatePitchPan() {
+        const pan = this._pitchPan;
+        if (!this._pitch || !pan || this._animatingZoom || this._zoom !== pan.zoom) { return; }
+        const panePos = this._getMapPanePos();
+        if (panePos.equals(pan.lastPanePos)) { return; }
+        const delta = panePos.subtract(pan.panePos),
+            target = this._transformPitchPoint(pan.anchor.add(delta).subtract(pan.panePos), pan.inverse),
+            shift = target.subtract(pan.layerAnchor);
+        const matrix = new DOMMatrix().translate(-delta.x, -delta.y)
+            .multiply(pan.matrix).translate(shift.x, shift.y);
+        this._setPitchTransform(matrix.toString());
+        pan.lastPanePos = panePos.clone();
+        delete this._lastCenter;
+    },
+
+    /**
+     * Discard the baseline only at `moveend`, after any drag inertia has completed.
+     * Keep the final transform and pixel origin: resetting the view here would
+     * reproject layers abruptly and cause a visible jump on release.
+     * 
+     * @since leaflet-rotate (0.5.2)
+     */
+    _endPitchPan() {
+        delete this._pitchPan;
     },
 
     /**
@@ -966,7 +1068,10 @@ L.Map.include({
     // },
 
     /**
-     * Return the pixel offset from the current center to the given geographic point.
+     * Return the screen-space pan offset needed to center the given geographic point.
+     * Under perspective, projecting a negated layer offset is not equivalent to
+     * negating its screen projection. Reflect the target about the layer center
+     * to match the opposite anchor displacement performed by Leaflet's `panBy`.
      * 
      * @param {L.LatLng} latlng Geographic point.
      * 
@@ -977,6 +1082,12 @@ L.Map.include({
     _getCenterOffset(latlng) {
         if (!this._rotate) {
             return mapProto._getCenterOffset.apply(this, arguments);
+        }
+        if (this._pitch) {
+            const center = this.getSize().divideBy(2),
+                layerCenter = this.containerPointToLayerPoint(center),
+                opposite = layerCenter.multiplyBy(2).subtract(this.project(latlng).subtract(this._pixelOrigin));
+            return center.subtract(this.layerPointToContainerPoint(opposite));
         }
         return this.latLngToContainerPoint(latlng)._subtract(this.getSize()._divideBy(2));
     },
@@ -1056,9 +1167,12 @@ L.Map.include({
     },
 
     /**
+     * Return the viewport center before the outer map-pane translation.
+     * Used as the bearing/pitch pivot in map-pane coordinates, not layer coordinates.
+     *
      * @since leaflet-rotate (v0.2.0)
      * 
-     * @returns {L.Point} Map pivot point in pixel coordinates.
+     * @returns {L.Point} Map pivot in map-pane pixels.
      */
     _getPixelCenter() {
         if (!this._rotate && mapProto._getPixelCenter) {
@@ -1068,6 +1182,9 @@ L.Map.include({
     },
 
     /**
+     * Convert the padded visible ground rectangle to layer bounds for vector renderers.
+     * Clip its far edge before reversing perspective to avoid unbounded render areas.
+     *
      * @see src\layer\vector\Renderer::_update()
      * 
      * @param {number} padding Bounds padding as a fraction of map size.
