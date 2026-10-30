@@ -37,6 +37,10 @@ Before(async function () {
           '<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>',
           '<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script><script>globalThis.L = globalThis.leaflet;</script>'
         )
+        .replace(
+          '"leaflet": "https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"',
+          '"leaflet": "https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"'
+        )
         .replace('https://unpkg.com/leaflet@1.9/dist/leaflet.css', 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css');
     }
     await route.fulfill({ response, body, headers: response.headers() });
