@@ -425,3 +425,382 @@ Then('the second map center remains unchanged and its popup stays anchored', fun
   assert.ok(Math.hypot(...this.secondaryPopup.delta) < 2, JSON.stringify(this.secondaryPopup));
   assert.ok(Math.hypot(...this.secondaryPopup.tooltipDelta) < 2, JSON.stringify(this.secondaryPopup));
 });
+
+When('I add image markers to a rotated map with preferCanvas', async function () {
+  this.canvasMarkers = await this.page.evaluate(async () => {
+    const element = document.createElement('div');
+    element.style.cssText = 'height: 300px; width: 500px; margin-top: 40px';
+    document.body.append(element);
+    element.scrollIntoView();
+    const canvasMap = window.canvasMap = new L.Map(element, {
+      center: [55, 10], zoom: 6, rotate: true, bearing: 30, preferCanvas: true,
+    });
+    // 20x40 icon: red top half, blue bottom half, anchored at its bottom center
+    const source = document.createElement('canvas');
+    source.width = 20;
+    source.height = 40;
+    const sourceCtx = source.getContext('2d');
+    sourceCtx.fillStyle = '#f00';
+    sourceCtx.fillRect(0, 0, 20, 20);
+    sourceCtx.fillStyle = '#00f';
+    sourceCtx.fillRect(0, 20, 20, 20);
+    const icon = new L.Icon({ iconUrl: source.toDataURL(), iconSize: [20, 40], iconAnchor: [10, 40], popupAnchor: [0, -40] });
+    const marker = window.canvasMarker = new L.Marker([55, 10], { icon }).addTo(canvasMap).bindPopup('canvas popup');
+    const divMarker = window.canvasDivMarker = new L.Marker([55.5, 10.5], { icon: new L.DivIcon({ html: 'div' }) }).addTo(canvasMap);
+    const draggable = new L.Marker([54.5, 9.5], { icon, draggable: true }).addTo(canvasMap);
+
+    await new Promise(resolve => (function wait() {
+      marker._canvasIcon && marker._canvasIcon._getPart('icon') ? resolve() : requestAnimationFrame(wait);
+    })());
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    const renderer = marker._canvasIcon._renderer;
+    renderer._ctx.globalAlpha = 0.1;
+    renderer._redraw();
+    const canvas = renderer._container;
+    const ratio = canvas.width / parseFloat(canvas.style.width);
+    const anchor = canvasMap.latLngToContainerPoint(marker.getLatLng());
+    const sample = offset => {
+      const layerPoint = anchor.add(offset).subtract(canvasMap._getMapPanePos());
+      const pixel = layerPoint.subtract(renderer._bounds.min).multiplyBy(ratio);
+      return Array.from(renderer._ctx.getImageData(Math.round(pixel.x), Math.round(pixel.y), 1, 1).data);
+    };
+    const rect = element.getBoundingClientRect();
+    return {
+      element: marker.getElement()?.tagName,
+      domIcons: canvasMap.getPane('markerPane').querySelectorAll('img').length,
+      divIcon: Boolean(divMarker.getElement()),
+      draggable: Boolean(draggable._canvasIcon && draggable.dragging.enabled()),
+      top: sample([0, -30]),
+      bottom: sample([0, -10]),
+      outside: sample([30, -20]),
+      screen: [rect.left + anchor.x, rect.top + anchor.y - 20],
+      halfOpacity: (() => {
+        marker.setOpacity(0.5);
+        renderer._redraw();
+        const pixel = sample([0, -30]);
+        marker.setOpacity(1);
+        renderer._redraw();
+        return pixel;
+      })(),
+    };
+  });
+});
+
+Then('the image marker is drawn upright on the Canvas renderer', function () {
+  const result = JSON.stringify(this.canvasMarkers);
+  assert.equal(this.canvasMarkers.element, 'BUTTON', result);
+  assert.equal(this.canvasMarkers.domIcons, 0, result);
+  assert.equal(this.canvasMarkers.divIcon, true, result);
+  assert.equal(this.canvasMarkers.draggable, true, result);
+  assert.deepEqual(this.canvasMarkers.top, [255, 0, 0, 255], result);
+  assert.deepEqual(this.canvasMarkers.bottom, [0, 0, 255, 255], result);
+  assert.equal(this.canvasMarkers.outside[3], 0, result);
+  assert.ok(Math.abs(this.canvasMarkers.halfOpacity[3] - 128) <= 1, result);
+});
+
+Then('clicking the drawn marker opens its popup', async function () {
+  const [x, y] = this.canvasMarkers.screen;
+  await this.page.mouse.click(x + 40, y);
+  assert.equal(await this.page.evaluate(() => canvasMarker.isPopupOpen()), false);
+  await this.page.mouse.click(x, y);
+  assert.equal(await this.page.evaluate(() => canvasMarker.isPopupOpen()), true);
+  const divCenter = await this.page.evaluate(() => {
+    window.canvasDivClicks = 0;
+    canvasMarker.closePopup();
+    const point = canvasMap.latLngToContainerPoint(canvasMarker.getLatLng()).add([60, -20]);
+    canvasDivMarker.setLatLng(canvasMap.containerPointToLatLng(point));
+    canvasDivMarker.on('click', () => canvasDivClicks++);
+    const rect = canvasDivMarker.getElement().getBoundingClientRect();
+    return [rect.left + rect.width / 2, rect.top + rect.height / 2];
+  });
+  await this.page.mouse.click(...divCenter);
+  assert.equal(await this.page.evaluate(() => canvasDivClicks), 1, 'DOM markers stay clickable above the Canvas markers');
+});
+
+When('I pitch the Canvas marker map', async function () {
+  this.canvasPitch = await this.page.evaluate(() => {
+    const renderer = canvasMarker._canvasIcon._renderer;
+    const samples = [];
+    for (const pitch of [0, 30, 60]) {
+      canvasMap.setPitch(pitch);
+      canvasMap.setBearing(110 + pitch);
+      canvasMap.panBy([10, -5], { animate: false });
+      canvasMap.setZoom(6 + pitch / 30, { animate: false });
+      const anchor = canvasMap.latLngToContainerPoint(canvasMarker.getLatLng());
+      const ratio = renderer._container.width / parseFloat(renderer._container.style.width);
+      const sample = offset => {
+        const pixel = anchor.add(offset).subtract(canvasMap._getMapPanePos())
+          .subtract(renderer._bounds.min).multiplyBy(ratio);
+        return Array.from(renderer._ctx.getImageData(Math.round(pixel.x), Math.round(pixel.y), 1, 1).data);
+      };
+      samples.push({
+        pitch, top: sample([0, -30]), bottom: sample([0, -10]),
+        above: sample([0, -43]), side: sample([13, -20]),
+        parent: renderer.getPane().parentNode === canvasMap.getPane('norotatePane'),
+      });
+    }
+    return samples;
+  });
+  this.canvasMarkers.screen = await this.page.evaluate(() => {
+    const point = canvasMap.latLngToContainerPoint(canvasMarker.getLatLng());
+    const rect = canvasMap.getContainer().getBoundingClientRect();
+    return [rect.left + point.x, rect.top + point.y - 20];
+  });
+});
+
+Then('the Canvas icon stays upright with constant screen dimensions', function () {
+  for (const sample of this.canvasPitch) {
+    assert.deepEqual(sample.top, [255, 0, 0, 255], JSON.stringify(sample));
+    assert.deepEqual(sample.bottom, [0, 0, 255, 255], JSON.stringify(sample));
+    assert.equal(sample.above[3], 0, JSON.stringify(sample));
+    assert.equal(sample.side[3], 0, JSON.stringify(sample));
+    assert.equal(sample.parent, true);
+  }
+});
+
+When('I move a map with Canvas markers and debug overlays', async function () {
+  this.canvasDebugErrors = [];
+  this.page.on('pageerror', error => this.canvasDebugErrors.push(error.message));
+  await this.page.evaluate(() => {
+    map.options.preferCanvas = true;
+    L.Rotate.displayPixelBounds();
+    map.setBearing(65);
+    map.panBy([30, 20], { animate: false });
+    map.setZoom(map.getZoom() + 1, { animate: false });
+  });
+});
+
+Then('the debug overlays update without browser errors', async function () {
+  const corners = await this.page.evaluate(() => L.Rotate.___corners.getLayers().map(marker => ({
+    canvas: Boolean(marker._canvasIcon),
+    element: Boolean(marker.getElement()),
+    onMap: map.hasLayer(marker),
+  })));
+  assert.deepEqual(corners, Array.from({ length: 4 }, () => ({
+    canvas: true, element: true, onMap: true,
+  })));
+  assert.deepEqual(this.canvasDebugErrors, []);
+});
+
+When('I drag a Canvas image marker using {word} at pitch {int}', async function (input, pitch) {
+  this.canvasDragErrors = [];
+  this.page.on('pageerror', error => this.canvasDragErrors.push(error.message));
+  const start = await this.page.evaluate(async pitch => {
+    const element = document.createElement('div');
+    element.style.cssText = 'height: 300px; width: 500px; margin-top: 40px';
+    document.body.append(element);
+    element.scrollIntoView();
+    const dragMap = window.dragMap = new L.Map(element, {
+      center: [55, 10], zoom: 6, rotate: true, bearing: 65, preferCanvas: true,
+    });
+    dragMap.setPitch(pitch);
+    const image = document.createElement('canvas');
+    image.width = image.height = 30;
+    image.getContext('2d').fillRect(0, 0, 30, 30);
+    const icon = new L.Icon({ iconUrl: image.toDataURL(), iconSize: [30, 30], iconAnchor: [15, 15] });
+    window.dragEvents = [];
+    window.dragMarker = new L.Marker(dragMap.getCenter(), { icon, draggable: true }).addTo(dragMap)
+      .bindPopup('drag popup')
+      .on('movestart dragstart move drag moveend dragend click', e => {
+        dragEvents.push({ type: e.type, target: e.target === dragMarker, distance: e.distance });
+      });
+    new L.CircleMarker(dragMap.getCenter(), {
+      renderer: new L.Canvas(), interactive: false, radius: 5,
+    }).addTo(dragMap);
+    await new Promise(resolve => {
+      const image = dragMarker._canvasIcon._images.icon;
+      if (image.complete) resolve();
+      else image.addEventListener('load', resolve, { once: true });
+    });
+    const anchor = dragMap.latLngToContainerPoint(dragMarker.getLatLng());
+    window.dragStart = { center: dragMap.getCenter(), latlng: dragMarker.getLatLng(), anchor };
+    const rect = element.getBoundingClientRect();
+    return { x: rect.left + element.clientLeft + anchor.x, y: rect.top + element.clientTop + anchor.y };
+  }, pitch);
+  if (input === 'touch') {
+    const cdp = await this.context.newCDPSession(this.page);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: start.x, y: start.y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: start.x + 60, y: start.y + 30 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+  } else {
+    await this.page.mouse.move(start.x, start.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(start.x + 60, start.y + 30, { steps: 5 });
+    await this.page.mouse.up();
+  }
+});
+
+Then('the Canvas marker moves without panning the map or opening its popup', async function () {
+  assert.deepEqual(this.canvasDragErrors, []);
+  const result = await this.page.evaluate(() => ({
+    canvas: Boolean(dragMarker._canvasIcon),
+    element: Boolean(dragMarker.getElement()),
+    delta: dragMap.latLngToContainerPoint(dragMarker.getLatLng()).subtract(dragStart.anchor),
+    mapUnchanged: dragMap.getCenter().equals(dragStart.center),
+    popup: dragMarker.isPopupOpen(),
+    events: dragEvents,
+  }));
+  assert.equal(result.canvas, true);
+  assert.equal(result.element, true);
+  assert.ok(Math.abs(result.delta.x - 60) < 1 && Math.abs(result.delta.y - 30) < 1, JSON.stringify(result));
+  assert.equal(result.mapUnchanged, true, JSON.stringify(result));
+  assert.equal(result.popup, false);
+  assert.deepEqual(result.events.slice(0, 2).map(e => e.type), ['movestart', 'dragstart']);
+  assert.deepEqual(result.events.slice(-2).map(e => e.type), ['moveend', 'dragend']);
+  assert.ok(result.events.every(e => e.target));
+  assert.ok(result.events.some(e => e.type === 'drag'));
+  assert.ok(Math.abs(result.events.at(-1).distance - Math.hypot(60, 30)) < 1);
+});
+
+Then('Canvas dragging supports runtime changes and auto-pan', async function () {
+  const position = () => this.page.evaluate(() => {
+    const point = dragMap.latLngToContainerPoint(dragMarker.getLatLng());
+    const rect = dragMap.getContainer().getBoundingClientRect();
+    return { x: rect.left + point.x, y: rect.top + point.y };
+  });
+  const drag = async (x, y) => {
+    const point = await position();
+    await this.page.mouse.move(point.x, point.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(point.x + x, point.y + y, { steps: 4 });
+    await this.page.mouse.up();
+  };
+  await this.page.evaluate(() => {
+    dragMarker.dragging.disable();
+    window.disabledLatLng = dragMarker.getLatLng();
+  });
+  await drag(20, 10);
+  assert.equal(await this.page.evaluate(() => dragMarker.getLatLng().equals(disabledLatLng)), true);
+
+  await this.page.evaluate(() => {
+    dragMarker.dragging.enable();
+    dragMarker.options.autoPan = true;
+    window.beforeAutoPan = dragMap.getCenter();
+    dragMap.dragging.disable();
+  });
+  const point = await position();
+  const edge = await this.page.evaluate(() => {
+    const rect = dragMap.getContainer().getBoundingClientRect();
+    return { x: rect.right - 5, y: rect.top + rect.height / 2 };
+  });
+  await this.page.mouse.move(point.x, point.y);
+  await this.page.mouse.down();
+  await this.page.mouse.move(edge.x, edge.y, { steps: 4 });
+  await this.page.waitForFunction(() => !dragMap.getCenter().equals(beforeAutoPan));
+  await this.page.mouse.up();
+  assert.equal(await this.page.evaluate(() => dragMap.dragging.enabled()), false);
+
+  const transitions = await this.page.evaluate(() => {
+    const icon = dragMarker.getIcon();
+    const previousLayer = dragMarker._canvasIcon;
+    dragMarker.setIcon(new L.DivIcon({ html: 'drag' }));
+    const dom = Boolean(dragMarker.getElement()) && dragMarker.dragging.enabled()
+      && !dragMap.hasLayer(previousLayer);
+    dragMarker.setIcon(icon);
+    const canvas = dragMarker.getElement().tagName === 'BUTTON' && dragMarker.dragging.enabled();
+    const oldHandler = dragMarker.dragging;
+    dragMarker.remove();
+    const detached = !dragMap.hasLayer(dragMarker) && !dragMarker._canvasIcon;
+    dragMarker.addTo(dragMap);
+    const readded = dragMarker.dragging !== oldHandler && dragMarker.dragging.enabled();
+    return { dom, canvas, detached, readded };
+  });
+  assert.deepEqual(transitions, { dom: true, canvas: true, detached: true, readded: true });
+  assert.deepEqual(this.canvasDragErrors, []);
+});
+
+When('I animate zoom with a Canvas marker and a vector reference', async function () {
+  this.canvasZoomFrames = await this.page.evaluate(async () => {
+    const element = document.createElement('div');
+    element.style.cssText = 'height: 300px; width: 500px';
+    document.body.append(element);
+    const zoomMap = new L.Map(element, {
+      center: [55, 10], zoom: 6, rotate: true, bearing: 35, preferCanvas: true,
+    });
+    const marker = new L.Marker([55.5, 11]).addTo(zoomMap);
+    const reference = new L.CircleMarker(marker.getLatLng(), {
+      radius: 3, renderer: new L.Canvas(),
+    }).addTo(zoomMap);
+    const runs = [];
+    const finishZoom = zoomMap._onZoomTransitionEnd;
+    zoomMap._onZoomTransitionEnd = () => {};
+    for (const pitch of [0, 60]) {
+      zoomMap.setView([55, 10], 6, { animate: false });
+      zoomMap.setPitch(pitch);
+      const frames = [];
+      await new Promise(resolve => {
+        zoomMap.once('zoomanim', resolve);
+        zoomMap.setZoom(7, { animate: true });
+      });
+      const renderer = reference._renderer;
+      getComputedStyle(renderer._container).transform;
+      const animations = [
+        ...renderer._container.getAnimations(),
+        ...marker._canvasIcon._renderer._zoomProbe.getAnimations(),
+      ];
+      for (const animation of animations) { animation.pause(); }
+      for (const time of [0, 50, 100, 150, 200, 249]) {
+        for (const animation of animations) { animation.currentTime = time; }
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const transform = new DOMMatrix(getComputedStyle(renderer._container).transform);
+        const local = reference._point.subtract(renderer._bounds.min);
+        const point = new DOMPoint(local.x, local.y).matrixTransform(transform);
+        const expected = zoomMap.rotatedPointToMapPanePoint(new L.Point(point.x, point.y));
+        const actual = marker._canvasIcon._point;
+        frames.push({ error: actual.distanceTo(expected), x: actual.x, y: actual.y });
+      }
+      finishZoom.call(zoomMap);
+      runs.push({ pitch, frames });
+    }
+    zoomMap._onZoomTransitionEnd = finishZoom;
+    zoomMap.remove();
+    element.remove();
+    return runs;
+  });
+});
+
+Then('the Canvas marker tracks the reference throughout the zoom', function () {
+  for (const run of this.canvasZoomFrames) {
+    assert.ok(run.frames.length >= 2, JSON.stringify(run));
+    const positions = new Set(run.frames.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`));
+    assert.ok(positions.size >= 2, JSON.stringify(run));
+    assert.ok(run.frames.every(p => p.error < 3), JSON.stringify(run));
+  }
+});
+
+When('I project Canvas markers behind a highly pitched camera', async function () {
+  this.behindCameraMarkers = await this.page.evaluate(() => {
+    const element = document.createElement('div');
+    element.style.cssText = 'height: 300px; width: 500px';
+    document.body.append(element);
+    const pitchedMap = new L.Map(element, {
+      center: [55, 10], zoom: 6, rotate: true, bearing: 35, preferCanvas: true,
+    });
+    pitchedMap.setPitch(85);
+    const result = [];
+    for (const latlng of [[-60, -150], [-60, 150], [75, -150], [75, 150]]) {
+      const marker = new L.Marker(latlng).addTo(pitchedMap);
+      const sprite = marker._canvasIcon;
+      const ground = pitchedMap.latLngToLayerPoint(marker.getLatLng());
+      const m = pitchedMap._pitchTransform;
+      if (m.m14 * ground.x + m.m24 * ground.y + m.m44 <= 0) {
+        result.push({
+          empty: sprite._empty(), hit: sprite._containsPoint(ground),
+          hidden: marker.getElement().hidden,
+        });
+      }
+    }
+    pitchedMap.remove();
+    element.remove();
+    return result;
+  });
+});
+
+Then('those markers are neither drawn nor interactive', function () {
+  assert.ok(this.behindCameraMarkers.length > 0);
+  for (const marker of this.behindCameraMarkers) {
+    assert.deepEqual(marker, { empty: true, hit: false, hidden: true });
+  }
+});

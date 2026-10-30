@@ -56,3 +56,42 @@ Feature: Rotating a Leaflet map
   Scenario: Opening a popup in a second rotated map does not move it
     When I open a popup in a second rotated map with map listeners
     Then the second map center remains unchanged and its popup stays anchored
+
+  Scenario: Image markers are drawn on the Canvas when the map prefers it
+    When I add image markers to a rotated map with preferCanvas
+    Then the image marker is drawn upright on the Canvas renderer
+    And clicking the drawn marker opens its popup
+
+  Scenario: Debug overlays support Canvas markers
+    When I move a map with Canvas markers and debug overlays
+    Then the debug overlays update without browser errors
+
+  Scenario: Canvas markers stand upright above the pitched map
+    When I add image markers to a rotated map with preferCanvas
+    And I pitch the Canvas marker map
+    Then the Canvas icon stays upright with constant screen dimensions
+    And clicking the drawn marker opens its popup
+
+  Scenario Outline: Canvas markers support dragging on rotated and pitched maps
+    When I drag a Canvas image marker using <input> at pitch <pitch>
+    Then the Canvas marker moves without panning the map or opening its popup
+
+    Examples:
+      | input | pitch |
+      | mouse | 0     |
+      | mouse | 45    |
+      | touch | 0     |
+      | touch | 45    |
+
+  Scenario: Canvas dragging supports runtime changes and auto-pan
+    When I drag a Canvas image marker using mouse at pitch 45
+    Then the Canvas marker moves without panning the map or opening its popup
+    And Canvas dragging supports runtime changes and auto-pan
+
+  Scenario: Canvas markers follow animated zoom frames
+    When I animate zoom with a Canvas marker and a vector reference
+    Then the Canvas marker tracks the reference throughout the zoom
+
+  Scenario: Canvas markers behind the camera are hidden
+    When I project Canvas markers behind a highly pitched camera
+    Then those markers are neither drawn nor interactive

@@ -9,7 +9,7 @@
 			{
 				"imports": {
 					"leaflet": "https://unpkg.com/leaflet@1.9/dist/leaflet-src.js",
-					"leaflet-rotate": "https://unpkg.com/leaflet-rotate@0.5.2/dist/leaflet-rotate-src.js",
+					"leaflet-rotate": "../dist/leaflet-rotate-src.js",
 					"three": "https://unpkg.com/three@0.170.0/build/three.module.js",
 					"three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
 				}
@@ -307,12 +307,12 @@
 							this._cancel();
 							const map = this._map;
 							if (!map) return;
-							if (map.getZoom() < 16) {
-								this._clear();
-								this._status('Zoom in to level 16 or higher to load Paris buildings.');
-								eiffelTower._update();
-								return;
-							}
+							// if (map.getZoom() < 16) {
+							// 	this._clear();
+							// 	this._status('Zoom in to level 16 or higher to load Paris buildings.');
+							// 	eiffelTower._update();
+							// 	return;
+							// }
 							const bounds = map.getBounds();
 							const west = Math.max(bounds.getWest(), 2.2424);
 							const east = Math.min(bounds.getEast(), 2.416);
@@ -335,7 +335,7 @@
 							const url = new URL('https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/volumesbatisparis/exports/geojson');
 							url.search = new URLSearchParams({
 								select: 'geom,h_et_max,nb_pl,b_rdc,objectid',
-								limit: '5001',
+								// limit: '5001',
 								where: `intersects(geom,geom'POLYGON((${footprint}))')`
 							});
 							try {
@@ -347,11 +347,11 @@
 									throw new Error('Invalid building GeoJSON response');
 								}
 								this._clear();
-								if (data.features.length > 5000) {
-									this._status('More than 5,000 volumes in view. Zoom in to load buildings.');
-									eiffelTower._update();
-									return;
-								}
+								// if (data.features.length > 5000) {
+								// 	this._status('More than 5,000 volumes in view. Zoom in to load buildings.');
+								// 	eiffelTower._update();
+								// 	return;
+								// }
 								this._setFeatures(data.features);
 							} catch (error) {
 								if (request.signal.aborted) return;

@@ -101,6 +101,12 @@ The control is available as `L.Control.Rotate` or `L.control.rotate(options)`. C
 | `scale` | Optional scale applied to the marker icon. |
 | `marker.setRotation(radians)` | Updates the marker's icon rotation. |
 
+With `preferCanvas: true` on the map, markers using an image `L.Icon` are drawn (with their shadow) on a dedicated screen-space Canvas instead of `<img>` elements. Icons remain upright and keep their pixel dimensions when the map is rotated or pitched, just like DOM markers; their geographic anchors still follow the map. Marker rotation options also apply. Popups, tooltips, pointer events and dragging (mouse, touch or pen) keep working, including `marker.dragging.enable()` / `disable()`, drag events and `autoPan`. `DivIcon` markers still use the DOM. Canvas markers use the dedicated marker renderer rather than a vector `renderer` option.
+
+With `keyboard: true` (the Leaflet default) and `interactive: true`, each Canvas marker has a lightweight DOM button returned by `getElement()`. Its accessible name uses `title`, then `alt`, then “Marker”; provide a meaningful name such as `{ title: 'London station' }`. Tab focuses the marker with a visible outline; Enter or Space triggers its normal click/popup behavior. Focus opens its tooltip and respects `autoPanOnFocus`. Markers behind the camera are hidden from assistive technology. `keyboard: false` or `interactive: false` omits this button. Rendering remains on Canvas, but keyboard accessibility adds one DOM element per marker (only the focused one is repositioned during pan/zoom/rotation, so per-frame cost stays constant); pointer dragging does not provide keyboard repositioning.
+
+Canvas marker positions follow Leaflet's zoom-transition timing without scaling the icons. At high pitch, markers behind the camera are excluded from drawing and hit testing.
+
 ---
 
 ### Build Guide
