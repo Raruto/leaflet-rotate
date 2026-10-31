@@ -4,14 +4,18 @@ Feature: Reusable 3D layers
     Given a map with the standalone 3D module and no dependency import map
     Then 3D layers without a location keep their first map origin
 
-  Scenario: Independent layers load dependencies lazily and share one renderer per map
+  Scenario: Independent layers initialize without rendering dependencies and share one renderer per map
     Given a map with the standalone 3D module and no dependency import map
     When I add and remove independent 3D layers
     Then 3D groups retain their geographic origins and share resources only on the same map
 
   Scenario: Dependency loading errors are reported to the caller
     Given a map with the standalone 3D module and no dependency import map
-    Then a failed OGL import rejects readiness and emits an error without leaving a canvas
+    Then an unavailable WebGL context rejects readiness and emits an error without leaving a canvas
+
+  Scenario: Native geometry and model decoding preserve holes and accessor layouts
+    Given a map with the standalone 3D module and no dependency import map
+    Then native triangulation and glTF decoding preserve geometry without library requests
 
   Scenario: PMTiles layers initialize their archives
     Given a map with the standalone 3D module and no dependency import map

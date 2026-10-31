@@ -3,39 +3,106 @@ import { Given, Then, When } from '@cucumber/cucumber';
 
 async function prepare3DChecks(page) {
   await page.evaluate(() => {
-    window.oglChecks = {
-      bounds(root, OGL) {
+    window.nativeChecks = {
+      bounds(root, Native) {
         root.updateMatrixWorld(true);
-        const min = new OGL.Vec3(Infinity), max = new OGL.Vec3(-Infinity);
+        const min = new Native.Vec3(Infinity), max = new Native.Vec3(-Infinity);
         root.traverse(mesh => {
           if (!mesh.geometry) return;
           const position = mesh.geometry.attributes.position;
           for (let i = 0; i < position.count; i++) {
-            const point = new OGL.Vec3().fromArray(position.data, i * position.size).applyMatrix4(mesh.worldMatrix);
+            const point = new Native.Vec3().fromArray(position.data, i * position.size).applyMatrix4(mesh.worldMatrix);
             for (let j = 0; j < 3; j++) { min[j] = Math.min(min[j], point[j]); max[j] = Math.max(max[j], point[j]); }
           }
+
+
         });
         return { min, max };
       },
-      intersections(mesh, origin, direction, OGL) {
-        const ray = new OGL.Raycast();
-        const inverse = new OGL.Mat4().inverse(mesh.worldMatrix);
-        origin = new OGL.Vec3().copy(origin).applyMatrix4(inverse);
-        direction = new OGL.Vec3().copy(direction).transformDirection(inverse);
+      intersections(mesh, origin, direction, Native) {
+        const ray = new Native.Raycast();
+        const inverse = new Native.Mat4().inverse(mesh.worldMatrix);
+        origin = new Native.Vec3().copy(origin).applyMatrix4(inverse);
+        direction = new Native.Vec3().copy(direction).transformDirection(inverse);
         const position = mesh.geometry.attributes.position;
         const hits = [];
         for (let i = 0; i < position.count; i += 3) {
-          const a = new OGL.Vec3().fromArray(position.data, i * 3);
-          const b = new OGL.Vec3().fromArray(position.data, (i + 1) * 3);
-          const c = new OGL.Vec3().fromArray(position.data, (i + 2) * 3);
+          const a = new Native.Vec3().fromArray(position.data, i * 3);
+          const b = new Native.Vec3().fromArray(position.data, (i + 1) * 3);
+          const c = new Native.Vec3().fromArray(position.data, (i + 2) * 3);
           const distance = ray.intersectTriangle(a, b, c, true, origin, direction);
-          if (distance) hits.push(new OGL.Vec3().copy(direction).multiply(distance).add(origin).applyMatrix4(mesh.worldMatrix));
+          if (distance) hits.push(new Native.Vec3().copy(direction).multiply(distance).add(origin).applyMatrix4(mesh.worldMatrix));
         }
         return hits;
       },
     };
   });
 }
+
+Then('native triangulation and glTF decoding preserve geometry without library requests', async function () {
+  const result = await this.page.evaluate(async () => {
+    const layer = new L.Layer3D().addTo(test3d.map);
+    await layer.ready;
+    const square = (x, y, size) => [{ x, y }, { x: x + size, y },
+      { x: x + size, y: y + size }, { x, y: y + size }];
+    const shapes = [
+      [square(0, 0, 10), [square(1, 1, 2), square(6, 6, 2)], 92],
+      [[{ x: 0, y: 0 }, { x: 6, y: 0 }, { x: 6, y: 2 }, { x: 2, y: 2 },
+        { x: 2, y: 6 }, { x: 0, y: 6 }], [], 20],
+      [[{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 0 }, { x: 6, y: 0 },
+        { x: 6, y: 6 }, { x: 0, y: 6 }], [], 36],
+    ];
+    let triangulated = true;
+    for (const [contour, holes, expected] of shapes) {
+      for (const reverse of [false, true]) {
+        const outer = reverse ? [...contour].reverse() : contour;
+        const inner = reverse ? holes.map(hole => [...hole].reverse()) : holes;
+        const points = [outer, ...inner].flat();
+        const triangles = layer.triangulate(outer, inner);
+        const area = triangles.reduce((sum, [a, b, c]) => {
+          const [p, q, r] = [points[a], points[b], points[c]];
+          return sum + Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) / 2;
+        }, 0);
+        if (Math.abs(area - expected) > 1e-8) triangulated = false;
+      }
+    }
+    let invalidRejected = false;
+    try { layer.triangulate([{ x: 0, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }, { x: 2, y: 0 }]); }
+    catch (error) { invalidRejected = error instanceof Error; }
+    // Interleaved positions, normalized byte normals, and a sparse position override.
+    const buffer = new ArrayBuffer(72);
+    new Float32Array(buffer, 0, 12).set([0, 0, 0, 99, 1, 0, 0, 99, 0, 1, 0, 99]);
+    new Uint8Array(buffer, 48, 9).set([0, 0, 255, 0, 0, 255, 0, 0, 255]);
+    new Uint8Array(buffer, 57, 1)[0] = 1;
+    new Float32Array(buffer, 60, 3).set([2, 0, 0]);
+    const description = {
+      buffers: [{ binary: buffer }],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 48, byteStride: 16 },
+        { buffer: 0, byteOffset: 48, byteLength: 9 }, { buffer: 0, byteOffset: 57, byteLength: 1 },
+        { buffer: 0, byteOffset: 60, byteLength: 12 }],
+      accessors: [{ bufferView: 0, componentType: 5126, type: 'VEC3', count: 3,
+        sparse: { count: 1, indices: { bufferView: 2, componentType: 5121 }, values: { bufferView: 3 } } },
+      { bufferView: 1, componentType: 5121, type: 'VEC3', count: 3, normalized: true }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 } }] }],
+      materials: [], nodes: [{ mesh: 0, translation: [1, 2, 3] }, { mesh: 0, translation: [4, 5, 6] }],
+      scenes: [{ nodes: [0, 1] }], scene: 0,
+    };
+    const model = layer.Native.parse(layer, description);
+    const [first, second] = model.scene.map(node => node.children[0]);
+    const decoded = [...first.geometry.attributes.position.data].join() === '0,0,0,2,0,0,0,1,0' &&
+      [...first.geometry.attributes.normal.data].join() === '0,0,1,0,0,1,0,0,1' &&
+      first !== second && first.geometry !== second.geometry;
+    first.parent.updateMatrixWorld();
+    second.parent.updateMatrixWorld();
+    const transformed = new layer.Native.Vec3(2, 0, 0).applyMatrix4(first.worldMatrix).toArray().join() === '3,2,3';
+    for (const mesh of [first, second]) { mesh.geometry.remove(); mesh.program.remove(); }
+    layer.remove();
+    return { triangulated, invalidRejected, decoded, transformed };
+  });
+  for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
+  assert.deepEqual(this.oglRequests, []);
+  assert.deepEqual(this.threeRequests, []);
+});
 
 Then('3D click zoom centers the picked object and respects the maximum zoom', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
@@ -60,7 +127,7 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     const container = map.getContainer();
     const position = () => {
       near._shared._render();
-      const point = new near.OGL.Vec3(0, 20, 0).applyMatrix4(near.root.worldMatrix);
+      const point = new near.Native.Vec3(0, 20, 0).applyMatrix4(near.root.worldMatrix);
       near.camera.project(point);
       const rect = container.getBoundingClientRect();
       return { clientX: rect.left + (point.x + 1) * rect.width / 2,
@@ -182,7 +249,7 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
     afterReady.addTo(map);
     const origins = beforeReady.location.equals(initial) && afterReady.location.equals(initial);
     const shared = beforeReady.renderer === afterReady.renderer &&
-      beforeReady.root.position.len() === 0 && afterReady.root.position.len() === 0;
+      Math.hypot(...beforeReady.root.position) === 0 && Math.hypot(...afterReady.root.position) === 0;
     beforeReady.remove();
     afterReady.remove();
     map.setView([48.86, 2.3], 17, { animate: false });
@@ -213,7 +280,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       tooltipContent: feature => feature.model === layer.model ? 'Eiffel Tower' : 'Unexpected model',
     }).addTo(map);
     await layer.ready;
-    const geometry = oglChecks.bounds(layer.model, layer.OGL);
+    const geometry = nativeChecks.bounds(layer.model, layer.Native);
     const centered = layer.location.equals([48.8582601, 2.29449985]);
     const attached = layer.model.parent === layer.root;
     const rotation = layer.model.rotation.y;
@@ -292,7 +359,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       scene: layer.scene, camera: layer.camera, frustumCull: true, sort: true,
     }).filter(mesh => mesh.program.transparent);
     const depths = list.map(mesh => {
-      const point = new layer.OGL.Vec3().copy(mesh.geometry.bounds.center).applyMatrix4(mesh.worldMatrix);
+      const point = new layer.Native.Vec3().copy(mesh.geometry.bounds.center).applyMatrix4(mesh.worldMatrix);
       layer.camera.project(point);
       return point.z;
     });
@@ -311,9 +378,9 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       normal: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1],
     }, layer._createProgram({ vertexColors: true, alphaMode: 'MASK' }));
-    const probeCamera = new layer.OGL.Camera(gl);
+    const probeCamera = new layer.Native.Camera(gl);
     probeCamera.position.set(0, 0, 3);
-    probeCamera.lookAt(new layer.OGL.Vec3());
+    probeCamera.lookAt(new layer.Native.Vec3());
     const sample = () => {
       layer.renderer.render({ scene: probe, camera: probeCamera });
       const pixel = new Uint8Array(4);
@@ -340,7 +407,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       if (position || !object.geometry) return;
       const vertices = object.geometry.attributes.position;
       for (let i = 0; i < Math.min(vertices.count, 90); i++) {
-        const point = new layer.OGL.Vec3().fromArray(vertices.data, i * vertices.size).applyMatrix4(object.worldMatrix);
+        const point = new layer.Native.Vec3().fromArray(vertices.data, i * vertices.size).applyMatrix4(object.worldMatrix);
         layer.camera.project(point);
         if (Math.abs(point.x) >= 1 || Math.abs(point.y) >= 1) continue;
         const candidate = { clientX: Math.floor(rect.left + (point.x + 1) * rect.width / 2),
@@ -397,21 +464,15 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     assert.equal(result[name], true, name);
   }
   assert.deepEqual(this.threeRequests, []);
-  const bytes = (await Promise.all(this.oglSources)).reduce((sum, buffer) => sum + buffer.length, 0);
-  assert.ok(bytes > 0 && bytes < 400 * 1024, `OGL/earcut module sources: ${bytes} bytes`);
-  console.log(`OGL/earcut module sources: ${bytes} bytes (GLB excluded)`);
+  assert.deepEqual(this.oglRequests, []);
 });
 
 Given('a map with the standalone 3D module and no dependency import map', async function () {
   this.oglRequests = [];
   this.threeRequests = [];
-  this.oglSources = [];
-  this.page.on('response', response => {
-    if (/unpkg\.com\/(ogl|earcut)@/.test(response.url())) this.oglSources.push(response.body());
-  });
   this.page.on('request', request => {
     if (request.url().includes('unpkg.com/three@')) this.threeRequests.push(request.url());
-    if (request.url().includes('unpkg.com/ogl@')) this.oglRequests.push(request.url());
+    if (/unpkg\.com\/(ogl|earcut)@/.test(request.url())) this.oglRequests.push(request.url());
   });
   await this.page.route('**/test/standalone-3d.html', route => route.fulfill({
     contentType: 'text/html',
@@ -450,15 +511,15 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     control.addOverlay(first, 'First 3D layer');
     const second = new Layer3D([48.8602, 2.298]).addTo(map);
     await Promise.all([first.ready, second.ready]);
-    const OGL = first.OGL;
+    const Native = first.Native;
     const object = second.createGroup();
     second.add(object);
     const shared = first.renderer === second.renderer && first.camera === second.camera &&
       first.scene === second.scene && first.root !== second.root &&
       first.root.parent === second.root.parent && document.querySelectorAll('.leaflet-3d').length === 1;
     first._shared._render();
-    const world = new OGL.Vec3(10, 0, 20).applyMatrix4(second.root.worldMatrix);
-    const screen = new OGL.Vec3().copy(world);
+    const world = new Native.Vec3(10, 0, 20).applyMatrix4(second.root.worldMatrix);
+    const screen = new Native.Vec3().copy(world);
     second.camera.project(screen);
     const crs = map.options.crs;
     const point = crs.project(second.location);
@@ -505,16 +566,20 @@ Then('3D groups retain their geographic origins and share resources only on the 
   for (const [name, value] of Object.entries(checks)) assert.equal(value, true, name);
   assert.ok(error < 1.5, `Geographic origin error: ${error}px`);
   assert.deepEqual(this.threeRequests, []);
-  assert.ok(this.oglRequests.length > 0);
+  assert.deepEqual(this.oglRequests, []);
 });
 
-Then('a failed OGL import rejects readiness and emits an error without leaving a canvas', async function () {
-  await this.page.route('https://unpkg.com/ogl@*/**', route => route.abort('failed'));
+Then('an unavailable WebGL context rejects readiness and emits an error without leaving a canvas', async function () {
   const result = await this.page.evaluate(async () => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
+      return type === 'webgl2' ? null : getContext.call(this, type, ...args);
+    };
     const layer = new test3d.Layer3D(test3d.map.getCenter()).addTo(test3d.map);
     let emitted;
     layer.on('error', event => { emitted = event.error; });
     const error = await layer.ready.then(() => null, error => error);
+    HTMLCanvasElement.prototype.getContext = getContext;
     layer.remove();
     return { rejected: error instanceof Error, emitted: error === emitted,
       removed: !test3d.map.hasLayer(layer), noCanvas: !document.querySelector('.leaflet-3d') };
@@ -644,8 +709,8 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       if (layer.renderer && !layer.model) tower = layer;
       if (layer.model) eiffel = layer;
     });
-    const OGL = tower.OGL;
-    const bounds = oglChecks.bounds(eiffel.model, OGL);
+    const Native = tower.Native;
+    const bounds = nativeChecks.bounds(eiffel.model, Native);
     const height = bounds.max.y - bounds.min.y;
     let meshes = 0;
     eiffel.model.traverse(object => { if (object.geometry) meshes++; });
@@ -675,7 +740,7 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       const size = map.getSize();
       for (const [x, z] of [[-40, -40], [0, 0], [40, 40]]) {
         const expected = map.layerPointToContainerPoint(origin.add([x * scale, z * scale]));
-        const ndc = new OGL.Vec3(x, 0, z);
+        const ndc = new Native.Vec3(x, 0, z);
         tower.camera.project(ndc);
         const actual = new L.Point((ndc.x + 1) * size.x / 2, (1 - ndc.y) * size.y / 2);
         errors.push(actual.distanceTo(expected));
@@ -690,14 +755,14 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       const borderX = parseFloat(style.borderLeftWidth);
       const borderY = parseFloat(style.borderTopWidth);
       for (const foot of feet) {
-        const world = new OGL.Vec3(...foot.local).applyMatrix4(eiffel.model.worldMatrix);
+        const world = new Native.Vec3(...foot.local).applyMatrix4(eiffel.model.worldMatrix);
         const geographic = map.unproject(map.project(tower.location).add([world.x * scale, world.z * scale]), zoom);
         footprintErrors.push(geographic.distanceTo(new L.LatLng(...foot.latlng)));
         const point = map.project(new L.LatLng(...foot.latlng), baseLayer._tileZoom).subtract(level.origin);
         probe.style.transform = `translate3d(${point.x}px,${point.y}px,0)`;
         const ground = probe.getBoundingClientRect();
         const expected = new L.Point(ground.x - rect.x - borderX, ground.y - rect.y - borderY);
-        const ndc = new OGL.Vec3().copy(world);
+        const ndc = new Native.Vec3().copy(world);
         tower.camera.project(ndc);
         const actual = new L.Point((ndc.x + 1) * size.x / 2, (1 - ndc.y) * size.y / 2);
         tileErrors.push(actual.distanceTo(expected));
@@ -732,7 +797,7 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
           ground.x - rect.x - parseFloat(style.borderLeftWidth),
           ground.y - rect.y - parseFloat(style.borderTopWidth)
         );
-        const ndc = new OGL.Vec3(x, 0, z);
+        const ndc = new Native.Vec3(x, 0, z);
         tower.camera.project(ndc);
         const actual = new L.Point((ndc.x + 1) * size.x / 2, (1 - ndc.y) * size.y / 2);
         zoomErrors.push(actual.distanceTo(expected));
@@ -852,6 +917,8 @@ Given('the Paris buildings example is open with sample volumes', { timeout: 6000
   await this.page.evaluate(() => Promise.all(layers._layers.map(entry => entry.layer.ready)));
   await this.page.waitForFunction(() => {
     const buildings = Object.values(map._layers).find(layer => layer.group);
+    const error = buildings && [...buildings._areas.values()].find(area => area.error);
+    if (error) throw new Error(error.error);
     return buildings && buildings._inflight === 0 && buildings._areas.size > 0 &&
       [...buildings._areas.values()].reduce((sum, area) => sum + (area.buildings || 0), 0) === 2;
   },
@@ -865,23 +932,23 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       if (layer.renderer && !layer.model) tower = layer;
       if (layer.group) buildings = layer;
     });
-    const OGL = tower.OGL;
+    const Native = tower.Native;
     const mesh = buildings.group.children[0];
     mesh.updateMatrixWorld(true);
     const origin = map.options.crs.project(tower.location);
     const metres = Math.cos(tower.location.lat * Math.PI / 180);
     const hits = (lat, lon) => {
       const point = map.options.crs.project(new L.LatLng(lat, lon));
-      return oglChecks.intersections(mesh,
-        new OGL.Vec3((point.x - origin.x) * metres, 100, -(point.y - origin.y) * metres),
-        new OGL.Vec3(0, -1, 0), OGL).map(point => point.y);
+      return nativeChecks.intersections(mesh,
+        new Native.Vec3((point.x - origin.x) * metres, 100, -(point.y - origin.y) * metres),
+        new Native.Vec3(0, -1, 0), Native).map(point => point.y);
     };
     const elevated = map.options.crs.project(new L.LatLng(48.8587, 2.2962));
-    const underside = oglChecks.intersections(mesh,
-      new OGL.Vec3((elevated.x - origin.x) * metres, 0, -(elevated.y - origin.y) * metres),
-      new OGL.Vec3(0, 1, 0), OGL).map(point => point.y);
+    const underside = nativeChecks.intersections(mesh,
+      new Native.Vec3((elevated.x - origin.x) * metres, 0, -(elevated.y - origin.y) * metres),
+      new Native.Vec3(0, 1, 0), Native).map(point => point.y);
     const geometry = mesh.geometry;
-    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
     return {
       holes: hits(48.8587, 2.2957),
       underside,
@@ -923,7 +990,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       content = await buildings._createMesh([{ ...feature, id: 'custom-volume',
         properties: { height: 22 } }], area);
       const geometry = content.mesh.geometry;
-      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
       buildings.options.featureStyle = () => ({ top: 3, bottom: 4 });
       const error = await buildings._createMesh([feature], area).then(() => null, error => error.message);
       return { top: geometry.bounds.max.y, bottom: geometry.bounds.min.y,
@@ -944,7 +1011,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       if (layer.renderer && !layer.model) tower = layer;
       if (layer.group) buildings = layer;
     });
-    const OGL = tower.OGL;
+    const Native = tower.Native;
     buildings.featureEvents = [];
     buildings.on('featurehover featureclick', event => {
       buildings.featureEvents.push({ type: event.type, id: event.feature?.id });
@@ -952,7 +1019,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     const range = buildings.group.children[0].extras.featureFaces[0];
     const origin = map.options.crs.project(tower.location);
     const point = map.options.crs.project(new L.LatLng(48.85855, 2.29555));
-    const world = new OGL.Vec3(
+    const world = new Native.Vec3(
       (point.x - origin.x) * Math.cos(tower.location.lat * Math.PI / 180),
       15,
       -(point.y - origin.y) * Math.cos(tower.location.lat * Math.PI / 180)
