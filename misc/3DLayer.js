@@ -1,8 +1,8 @@
 /**
- * A WebGL (three.js) scene drawn above the map tiles and kept in sync with the map camera
+ * A WebGL (OGL) scene drawn above the map tiles and kept in sync with the map camera
  * (center, zoom, bearing, pitch and zoom animations).
  *
- * three.js is imported from unpkg on demand. Wait for `layer.ready` before using the helpers.
+ * OGL is imported from unpkg on demand. Wait for `layer.ready` before using the helpers.
  * All instances on one map share a canvas, scene and camera, with one group per layer.
  *
  * World coordinates are metres relative to `location`: x east, y up, z south.
@@ -19,8 +19,6 @@
 L.Layer3D = L.Layer.extend({
 
     statics: {
-        _loaderReady: null,
-        _loaderURL: new URL('GLTFLoader.js', document.currentScript.src).href,
         _renderers: new WeakMap(),
     },
 
@@ -31,6 +29,7 @@ L.Layer3D = L.Layer.extend({
         zIndex: 450,
         // Upper bound of the canvas resolution, in device pixels per CSS pixel.
         maxPixelRatio: 2,
+        zoomOnClick: false,
     },
 
     /**
@@ -49,14 +48,31 @@ L.Layer3D = L.Layer.extend({
             : new L.LatLng(location.lat, location.lng);
         this._areas = new Map();
         this._inflight = 0;
-        /** @type {Promise<L.Layer3D>} Resolves when the helpers can be used. */
-        this.ready = import('https://unpkg.com/three@0.170.0/build/three.module.js').then(async THREE => {
-            this.THREE = THREE;
-            L.Layer3D.THREE = THREE;
-            this.root = new THREE.Group();
-            this.raycaster = new THREE.Raycaster();
+        this._added = new Promise(resolve => { this._resolveAdded = resolve; });
+        /** @type {Promise<L.Layer3D>} Model readiness requires adding the layer to a map. */
+        this.ready = Promise.all([
+            import('https://unpkg.com/ogl@1.0.11/src/core/Renderer.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/core/Geometry.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/core/Program.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/core/Mesh.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/core/Camera.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/core/Transform.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/math/Vec3.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/math/Mat4.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/math/Color.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/extras/Raycast.js'),
+            import('https://unpkg.com/ogl@1.0.11/src/core/Texture.js'),
+            import('https://unpkg.com/earcut@3.0.2/src/earcut.js'),
+        ]).then(async modules => {
+            this.OGL = Object.assign({}, ...modules.slice(0, -1));
+            this._earcut = modules.at(-1).default;
+            this.root = new this.OGL.Transform();
+            this.raycaster = new this.OGL.Raycast();
             if (this.options.tooltipContent !== undefined && typeof this.options.tooltipContent !== 'function') {
                 throw new Error('tooltipContent must be a function');
+            }
+            if (this.options.modelAlphaMode !== undefined && !['OPAQUE', 'MASK', 'BLEND', 'COVERAGE'].includes(this.options.modelAlphaMode)) {
+                throw new Error('modelAlphaMode must be OPAQUE, MASK, BLEND or COVERAGE');
             }
             if (this.options.source) {
                 if (typeof this.options.featureStyle !== 'function') {
@@ -72,13 +88,15 @@ L.Layer3D = L.Layer.extend({
                     throw new Error('Expected a GeoJSON PMTiles archive with a valid native zoom and bounds');
                 }
             }
+            if (this._map) this._attach(this._map);
             if (this.options.model) {
+                await this._added;
                 this.model = await this._loadModel(new URL(this.options.model, document.baseURI).href);
                 if (this.options.rotation) this.model.rotation.set(...this.options.rotation);
                 if (this.options.scale) this.model.scale.set(...this.options.scale);
-                this.root.add(this.model);
+                this.model.setParent(this.root);
             }
-            if (this._map) this._attach(this._map);
+            if (this._shared) this.update();
             this.fire('ready');
             return this;
         }).catch(error => {
@@ -88,11 +106,12 @@ L.Layer3D = L.Layer.extend({
     },
 
     onAdd(map) {
+        this._resolveAdded();
         if (!this.location) {
             const center = map.getCenter();
             this.location = new L.LatLng(center.lat, center.lng);
         }
-        if (this.options.source || this.options.tooltipContent) {
+        if (this.options.source || this.options.tooltipContent || this.options.zoomOnClick) {
             this.container = map.getContainer();
             if (this.options.tooltipContent) {
                 this._featureTooltip = L.DomUtil.create('div', 'leaflet-3d-tooltip', this.container);
@@ -107,7 +126,7 @@ L.Layer3D = L.Layer.extend({
                 mouseleave: this._onPointerLeave,
             }, this);
         }
-        if (this.THREE) this._attach(map);
+        if (this.OGL) this._attach(map);
     },
 
     getEvents() {
@@ -115,6 +134,7 @@ L.Layer3D = L.Layer.extend({
     },
 
     onRemove(map) {
+        this._added = new Promise(resolve => { this._resolveAdded = resolve; });
         if (this.container) {
             this._onPointerLeave();
             L.DomEvent.off(this.container, {
@@ -131,7 +151,7 @@ L.Layer3D = L.Layer.extend({
         if (this.options.source) this._updateStatus(false);
         const shared = this._shared;
         if (!shared) return;
-        shared.scene.remove(this.root);
+        this.root.setParent(null);
         shared.layers.delete(this);
         this._shared = null;
         this.renderer = this.scene = this.camera = null;
@@ -154,38 +174,49 @@ L.Layer3D = L.Layer.extend({
         const metres = Math.cos(shared.location.lat * Math.PI / 180);
         this.root.position.set((point.x - origin.x) * metres, 0, -(point.y - origin.y) * metres);
         // Each group's metres are measured at its own latitude, not the shared camera origin.
-        this.root.scale.setScalar(metres / Math.cos(this.location.lat * Math.PI / 180));
+        this.root.scale.set(metres / Math.cos(this.location.lat * Math.PI / 180));
         this._shared = shared;
         this.renderer = shared.renderer;
         this.scene = shared.scene;
         this.camera = shared.camera;
         shared.layers.add(this);
-        shared.scene.add(this.root);
+        this.root.setParent(shared.scene);
+        this.root.traverse(object => {
+            if (object.geometry && object.geometry.gl !== shared.renderer.gl) {
+                const geometry = object.geometry;
+                const material = object.program._layerMaterial;
+                object.geometry = new this.OGL.Geometry(shared.renderer.gl, this._attributes(geometry));
+                geometry.remove();
+                object.program.remove();
+                object.program = this._createProgram(material);
+                object.gl = shared.renderer.gl;
+            }
+        });
         shared.update();
         if (this.header) this._updateArea();
     },
 
     /**
-     * Adds a three.js object to the scene and redraws it.
+     * Adds an OGL Transform or Mesh to the scene and redraws it.
      */
     add(object) {
-        this.root.add(object);
+        object.setParent(this.root);
         return this.update();
     },
 
     /**
-     * Removes a three.js object from the scene and redraws it.
+     * Removes an OGL object from the scene and redraws it.
      */
     remove(object) {
         if (object === undefined) return L.Layer.prototype.remove.call(this);
-        this.root.remove(object);
+        object.setParent(null);
         return this.update();
     },
 
     /**
      * Loads a glTF / GLB model (GLTFLoader is imported on demand).
      *
-     * @returns {Promise<THREE.Group>}
+     * @returns {Promise<Object>} An OGL Transform containing static model meshes.
      */
     async loadModel(url) {
         await this.ready;
@@ -193,64 +224,328 @@ L.Layer3D = L.Layer.extend({
     },
 
     async _loadModel(url) {
-        if (!L.Layer3D._loaderReady) {
-            L.Layer3D._loaderReady = new Promise((resolve, reject) => {
-                const script = document.createElement('script');
-                script.src = L.Layer3D._loaderURL;
-                script.onload = () => {
-                    script.remove();
-                    if (globalThis.leafletGLTFLoader?.GLTFLoader) resolve(globalThis.leafletGLTFLoader);
-                    else reject(new Error('GLTFLoader script did not expose its loader'));
-                };
-                script.onerror = () => {
-                    script.remove();
-                    reject(new Error(`Unable to load GLTFLoader: ${script.src}`));
-                };
-                document.head.append(script);
-            });
+        if (!this.renderer) throw new Error('Add the layer to a map before loading a model');
+        const { GLTFLoader } = await import('https://unpkg.com/ogl@1.0.11/src/extras/GLTFLoader.js');
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Unable to load model: HTTP ${response.status}`);
+        const data = await response.arrayBuffer();
+        const description = new DataView(data).getUint32(0, true) === 0x46546c67
+            ? GLTFLoader.unpackGLB(data) : JSON.parse(new TextDecoder().decode(data));
+        if (description.skins?.length || description.animations?.length ||
+            description.extensionsRequired?.length || description.meshes?.some(mesh =>
+                mesh.primitives.some(primitive => primitive.targets || (primitive.mode !== undefined && primitive.mode !== 4)))) {
+            throw new Error('Layer3D supports static triangle glTF models without required extensions');
         }
-        const { GLTFLoader } = await L.Layer3D._loaderReady;
-        return (await new GLTFLoader().loadAsync(url)).scene;
+        // Keep independent transforms rather than OGL's automatic mesh instancing.
+        const meshes = description.meshes;
+        description.meshes = [];
+        for (const node of description.nodes || []) {
+            if (node.mesh === undefined) continue;
+            description.meshes.push(meshes[node.mesh]);
+            node.mesh = description.meshes.length - 1;
+        }
+        const directory = new URL('.', url).href;
+        await Promise.all((description.buffers || []).map(async buffer => {
+            if (buffer.binary) return;
+            const response = await fetch(new URL(buffer.uri, directory).href);
+            if (!response.ok) throw new Error(`Unable to load model buffer: HTTP ${response.status}`);
+            buffer.binary = await response.arrayBuffer();
+        }));
+        await this._added;
+        const images = await Promise.all((description.images || []).map(async image => {
+            let blob;
+            if (image.bufferView !== undefined) {
+                const view = description.bufferViews[image.bufferView];
+                const buffer = description.buffers[view.buffer].binary;
+                blob = new Blob([buffer.slice(view.byteOffset || 0, (view.byteOffset || 0) + view.byteLength)],
+                    { type: image.mimeType });
+            } else {
+                const response = await fetch(new URL(image.uri, directory).href);
+                if (!response.ok) throw new Error(`Unable to load model texture: HTTP ${response.status}`);
+                blob = await response.blob();
+            }
+            return createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        }));
+        const textures = new Map();
+        const textureFor = (reference, color = false) => {
+            if (!reference) return null;
+            if ((reference.texCoord || 0) !== 0 || reference.extensions) {
+                throw new Error('Model textures currently require untransformed TEXCOORD_0 UVs');
+            }
+            const gl = this.renderer.gl;
+            const internalFormat = color && gl.SRGB8_ALPHA8 || gl.RGBA;
+            const key = `${reference.index}:${internalFormat}`;
+            if (!textures.has(key)) {
+                const texture = description.textures[reference.index];
+                const sampler = description.samplers?.[texture.sampler] || {};
+                textures.set(key, new this.OGL.Texture(gl, {
+                    image: images[texture.source], flipY: false, internalFormat,
+                    wrapS: sampler.wrapS || gl.REPEAT, wrapT: sampler.wrapT || gl.REPEAT,
+                    minFilter: sampler.minFilter || gl.LINEAR_MIPMAP_LINEAR,
+                    magFilter: sampler.magFilter || gl.LINEAR,
+                }));
+            }
+            return textures.get(key);
+        };
+        description.materials = (description.materials || []).map(material => {
+            const pbr = material.pbrMetallicRoughness || {};
+            return { extras: { layerMaterial: {
+                color: (pbr.baseColorFactor || [1, 1, 1, 1]).slice(0, 3),
+                opacity: pbr.baseColorFactor?.[3] ?? 1,
+                metallic: pbr.metallicFactor ?? 1, roughness: pbr.roughnessFactor ?? 1,
+                baseTexture: textureFor(pbr.baseColorTexture, true),
+                metalTexture: textureFor(pbr.metallicRoughnessTexture),
+                emissiveTexture: textureFor(material.emissiveTexture, true),
+                occlusionTexture: textureFor(material.occlusionTexture),
+                emissive: material.emissiveFactor || [0, 0, 0],
+                occlusionStrength: material.occlusionTexture?.strength ?? 1,
+                alphaMode: this.options.modelAlphaMode || material.alphaMode || 'OPAQUE',
+                alphaCutoff: material.alphaCutoff ?? 0.5,
+                doubleSided: material.doubleSided,
+            } } };
+        });
+        description.images = [];
+        description.textures = [];
+        const loaded = await GLTFLoader.parse(this.renderer.gl, description, directory);
+        const resources = loaded.meshes.flatMap(({ primitives }) =>
+            primitives.map(({ geometry, program }) => ({ geometry, program })));
+        const model = this.createGroup();
+        model.id = url;
+        model.extras = description.extras || {};
+        const scene = loaded.scene || loaded.scenes?.[0];
+        if (!scene?.length) throw new Error('Expected a glTF model with a non-empty scene');
+        for (const node of scene) node.setParent(model);
+        const draw = this.OGL.Mesh.prototype.draw;
+        model.traverse(object => {
+            if (!object.geometry) return;
+            const previous = object.program;
+            const material = previous.gltfMaterial;
+            const geometry = object.geometry;
+            object.geometry = new this.OGL.Geometry(this.renderer.gl, this._attributes(geometry));
+            const style = material?.extras?.layerMaterial || { color: [1, 1, 1] };
+            if ([style.baseTexture, style.metalTexture, style.emissiveTexture, style.occlusionTexture].some(Boolean) &&
+                !object.geometry.attributes.uv) throw new Error('Textured model mesh requires UV coordinates');
+            object.program = this._createProgram(style);
+            object.onBeforeRender(({ mesh }) => {
+                if (mesh.program._alphaCoverage) mesh.gl.enable(mesh.gl.SAMPLE_ALPHA_TO_COVERAGE);
+            });
+            object.onAfterRender(({ mesh }) => {
+                if (mesh.program._alphaCoverage) mesh.gl.disable(mesh.gl.SAMPLE_ALPHA_TO_COVERAGE);
+            });
+            object.draw = function (options) {
+                const program = this.program;
+                if (program.transparent && program._layerMaterial.doubleSided) {
+                    program.cullFace = this.gl.FRONT;
+                    draw.call(this, options);
+                    program.cullFace = this.gl.BACK;
+                    draw.call(this, options);
+                    program.cullFace = null;
+                } else draw.call(this, options);
+            };
+        });
+        for (const { geometry, program } of resources) {
+            geometry.remove();
+            program.remove();
+        }
+        for (const view of loaded.bufferViews) {
+            if (view.buffer) this.renderer.gl.deleteBuffer(view.buffer);
+        }
+        return model;
     },
 
     /**
-     * @returns {THREE.Group} An empty group, eg. to add and remove several meshes at once.
+     * @returns {Object} An empty OGL Transform.
      */
     createGroup() {
-        return new this.THREE.Group();
+        return new this.OGL.Transform();
     },
 
     /**
      * Creates a non-indexed mesh from flat `position`, `normal` and `color` arrays (3 items per vertex).
-     * The default material is a Lambert material shared by every mesh, using vertex colors.
+     * The default program uses vertex colors and simple directional lighting.
      *
-     * @returns {THREE.Mesh}
+     * @returns {Object} An OGL Mesh.
      */
     createMesh(attributes, material) {
-        const { BufferGeometry, Float32BufferAttribute, Mesh, MeshLambertMaterial } = this.THREE;
-        const geometry = new BufferGeometry();
+        if (!this.renderer) throw new Error('Add the layer to a map before creating a mesh');
+        const data = {};
         for (const name in attributes) {
-            geometry.setAttribute(name, new Float32BufferAttribute(attributes[name], 3));
+            data[name] = { size: 3, data: new Float32Array(attributes[name]) };
         }
-        material = material || (this._material = this._material || new MeshLambertMaterial({ vertexColors: true }));
-        return new Mesh(geometry, material);
+        const geometry = new this.OGL.Geometry(this.renderer.gl, data);
+        const mesh = new this.OGL.Mesh(this.renderer.gl, { geometry,
+            program: material || this._createProgram({ vertexColors: true }) });
+        mesh.extras = {};
+        return mesh;
+    },
+
+    _attributes(geometry) {
+        const result = {};
+        for (const name of ['position', 'normal', 'color', 'uv', 'index']) {
+            const attribute = geometry.attributes[name];
+            if (!attribute) continue;
+            const { data, size, count, normalized } = attribute;
+            const packed = data.slice(0, count * size);
+            result[name] = { data: packed, size, normalized };
+        }
+        return result;
+    },
+
+    _createProgram(material = {}) {
+        for (const name of ['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']) {
+            const texture = material[name];
+            if (texture && texture.gl !== this.renderer.gl) {
+                material[name] = new this.OGL.Texture(this.renderer.gl, {
+                    image: texture.image, flipY: false, wrapS: texture.wrapS, wrapT: texture.wrapT,
+                    minFilter: texture.minFilter, magFilter: texture.magFilter,
+                    internalFormat: texture.internalFormat,
+                });
+            }
+        }
+        const textured = Boolean(material.baseTexture || material.metalTexture ||
+            material.emissiveTexture || material.occlusionTexture);
+        const coverage = material.alphaMode === 'COVERAGE' && this.renderer.gl.getContextAttributes().antialias;
+        const vertex = `
+            attribute vec3 position;
+            attribute vec3 normal;
+            ${material.vertexColors ? 'attribute vec3 color;' : ''}
+            ${textured ? 'attribute vec2 uv; varying vec2 vUv;' : ''}
+            uniform mat4 modelViewMatrix;
+            uniform mat4 projectionMatrix;
+            uniform mat3 normalMatrix;
+            uniform vec3 baseColor;
+            varying vec3 vColor;
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            void main() {
+                vColor = ${material.vertexColors ? 'color' : 'baseColor'};
+                vNormal = normalMatrix * normal;
+                vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+                ${textured ? 'vUv = uv;' : ''}
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`;
+        const fragment = `
+            precision highp float;
+            uniform vec3 lightDirection;
+            uniform vec3 skyDirection;
+            uniform float metallic;
+            uniform float roughness;
+            uniform float opacity;
+            uniform float alphaCutoff;
+            uniform float occlusionStrength;
+            uniform vec3 emissive;
+            ${textured ? 'varying vec2 vUv;' : ''}
+            ${material.baseTexture ? 'uniform sampler2D baseTexture;' : ''}
+            ${material.metalTexture ? 'uniform sampler2D metalTexture;' : ''}
+            ${material.emissiveTexture ? 'uniform sampler2D emissiveTexture;' : ''}
+            ${material.occlusionTexture ? 'uniform sampler2D occlusionTexture;' : ''}
+            varying vec3 vColor;
+            varying vec3 vNormal;
+            varying vec3 vPosition;
+            const float PI = 3.14159265;
+            vec3 toLinear(vec3 c) {
+                return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+            }
+            vec3 toSRGB(vec3 c) {
+                return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
+            }
+            void main() {
+                vec3 normal = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+                vec4 texel = ${material.baseTexture ? 'texture2D(baseTexture, vUv)' : 'vec4(1.0)'};
+                float alpha = opacity * texel.a;
+                ${material.alphaMode === 'MASK' ? 'if (alpha < alphaCutoff) discard;' : ''}
+                ${material.alphaMode === 'COVERAGE' ? coverage
+                    ? 'if (alpha < 0.01) discard;'
+                    : 'if (alpha < alphaCutoff) discard;' : ''}
+                ${material.alphaMode === 'BLEND' ? 'if (alpha < 0.01) discard;' : ''}
+                vec3 base = ${material.vertexColors ? 'toLinear(vColor)' : 'vColor'} *
+                    ${material.baseTexture?.internalFormat === this.renderer.gl.SRGB8_ALPHA8 ? 'texel.rgb' : 'toLinear(texel.rgb)'};
+                vec4 mr = ${material.metalTexture ? 'texture2D(metalTexture, vUv)' : 'vec4(1.0)'};
+                float metal = clamp(metallic * mr.b, 0.0, 1.0);
+                float rough = clamp(roughness * mr.g, 0.08, 1.0);
+                vec3 view = normalize(-vPosition);
+                vec3 halfVector = normalize(view + lightDirection);
+                float nl = max(dot(normal, lightDirection), 0.0);
+                float nv = max(dot(normal, view), 0.001);
+                float nh = max(dot(normal, halfVector), 0.0);
+                float vh = max(dot(view, halfVector), 0.0);
+                float a2 = pow(rough, 4.0);
+                float d = a2 / max(PI * pow(nh * nh * (a2 - 1.0) + 1.0, 2.0), 0.0001);
+                float gv = nl * sqrt(nv * nv * (1.0 - a2) + a2);
+                float gl = nv * sqrt(nl * nl * (1.0 - a2) + a2);
+                float visibility = 0.5 / max(gv + gl, 0.0001);
+                vec3 f0 = mix(vec3(0.04), base, metal);
+                vec3 fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+                vec3 specular = d * visibility * fresnel;
+                vec3 diffuse = (1.0 - metal) * base / PI;
+                float sky = dot(normal, skyDirection) * 0.5 + 0.5;
+                vec3 ambient = mix(toLinear(vec3(0.455, 0.412, 0.322)), vec3(1.0), sky) * (2.0 / PI);
+                float ao = ${material.occlusionTexture ? 'mix(1.0, texture2D(occlusionTexture, vUv).r, occlusionStrength)' : '1.0'};
+                vec3 glow = emissive * ${material.emissiveTexture
+                    ? material.emissiveTexture.internalFormat === this.renderer.gl.SRGB8_ALPHA8
+                        ? 'texture2D(emissiveTexture, vUv).rgb' : 'toLinear(texture2D(emissiveTexture, vUv).rgb)' : 'vec3(1.0)'};
+                vec3 color = ambient * base * (1.0 - metal) * ao +
+                    (diffuse + specular) * nl * toLinear(vec3(1.0, 0.937, 0.835)) * 3.0 + glow;
+                ${material.vertexColors
+                    ? 'color = base * (ambient + toLinear(vec3(1.0, 0.937, 0.835)) * (3.0 / PI) * nl);'
+                    : ''}
+                gl_FragColor = vec4(toSRGB(color), ${material.alphaMode === 'BLEND' || coverage ? 'alpha' : '1.0'});
+            }`;
+        const program = new this.OGL.Program(this.renderer.gl, { vertex, fragment,
+            cullFace: material.doubleSided ? null : this.renderer.gl.BACK,
+            transparent: material.alphaMode === 'BLEND',
+            depthWrite: material.alphaMode !== 'BLEND',
+            uniforms: { baseColor: { value: material.color || [1, 1, 1] },
+                lightDirection: { value: new this.OGL.Vec3() }, skyDirection: { value: new this.OGL.Vec3() },
+                metallic: { value: material.metallic ?? 0 }, roughness: { value: material.roughness ?? 0.85 },
+                opacity: { value: material.opacity ?? 1 }, alphaCutoff: { value: material.alphaCutoff ?? 0.5 },
+                occlusionStrength: { value: material.occlusionStrength ?? 1 },
+                emissive: { value: material.emissive || [0, 0, 0] },
+                ...Object.fromEntries(['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']
+                    .filter(name => material[name]).map(name => [name, { value: material[name] }])),
+            } });
+        if (!this.renderer.gl.getProgramParameter(program.program, this.renderer.gl.LINK_STATUS)) {
+            const error = this.renderer.gl.getProgramInfoLog(program.program);
+            program.remove();
+            throw new Error(`Unable to compile Layer3D material: ${error}`);
+        }
+        if (material.alphaMode === 'BLEND') {
+            program.setBlendFunc(this.renderer.gl.SRC_ALPHA, this.renderer.gl.ONE_MINUS_SRC_ALPHA,
+                this.renderer.gl.ONE, this.renderer.gl.ONE_MINUS_SRC_ALPHA);
+        }
+        program._layerMaterial = material;
+        program._alphaCoverage = coverage;
+        return program;
     },
 
     /**
-     * @param {number|string|Object} value Any value accepted by `THREE.Color` (eg. `0x48d9ff`, `'#48d9ff'`)
-     *                                     or `{h, s, l}` in `0`–`1` (three.js working color space).
-     * @returns {THREE.Color} The color in three.js working color space (`r`, `g`, `b` in `0`–`1`).
+     * @param {number|string|Object} value OGL color, or `{h, s, l}` in `0`–`1`.
+     * @returns {Object} RGB components in `0`–`1`.
      */
     color(value) {
-        return value && typeof value === 'object' && 'h' in value ? new this.THREE.Color().setHSL(value.h, value.s, value.l) : new this.THREE.Color(value);
+        if (value && typeof value === 'object' && 'h' in value) {
+            const { h, s, l } = value;
+            const a = s * Math.min(l, 1 - l);
+            const channel = n => {
+                const k = (n + h * 12) % 12;
+                return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+            };
+            const toSRGB = value => value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055;
+            return { r: toSRGB(channel(0)), g: toSRGB(channel(8)), b: toSRGB(channel(4)) };
+        }
+        if (value && typeof value === 'object' && 'r' in value) return value;
+        const color = typeof value === 'number'
+            ? new this.OGL.Color((value >> 16 & 255) / 255, (value >> 8 & 255) / 255, (value & 255) / 255)
+            : new this.OGL.Color(value);
+        return { r: color.r, g: color.g, b: color.b };
     },
 
     /**
      * Paints the vertices `[start, end)` of a mesh with vertex colors, then redraws.
      */
     setVertexColor(mesh, start, end, color) {
-        const attribute = mesh.geometry.getAttribute('color');
-        for (let i = start; i < end; i++) attribute.setXYZ(i, color.r, color.g, color.b);
+        const attribute = mesh.geometry.attributes.color;
+        for (let i = start; i < end; i++) attribute.data.set([color.r, color.g, color.b], i * 3);
         attribute.needsUpdate = true;
         return this.update();
     },
@@ -261,33 +556,72 @@ L.Layer3D = L.Layer.extend({
      * @returns {number[][]} Triangles as indices in `[...contour, ...holes.flat()]`.
      */
     triangulate(contour, holes = []) {
-        const toVectors = points => points.map(({ x, y }) => new this.THREE.Vector2(x, y));
-        return this.THREE.ShapeUtils.triangulateShape(toVectors(contour), holes.map(toVectors));
+        const data = [], indices = [];
+        for (const [index, path] of [contour, ...holes].entries()) {
+            if (index) indices.push(data.length / 2);
+            for (const { x, y } of path) data.push(x, y);
+        }
+        const triangles = this._earcut(data, indices);
+        const result = [];
+        for (let i = 0; i < triangles.length; i += 3) result.push(triangles.slice(i, i + 3));
+        return result;
     },
 
     /**
      * @returns {boolean} Whether the `{x, y}` points are in clockwise order.
      */
     isClockWise(points) {
-        return this.THREE.ShapeUtils.isClockWise(points);
+        let area = 0;
+        for (let i = 0; i < points.length; i++) {
+            const a = points[i], b = points[(i + 1) % points.length];
+            area += a.x * b.y - b.x * a.y;
+        }
+        return area < 0;
     },
 
     /**
      * Finds the objects under a mouse or pointer event, nearest first.
      *
      * @param {MouseEvent} event
-     * @param {THREE.Object3D[]} [objects] Defaults to every object of the scene.
+     * @param {Object[]} [objects] Defaults to every object of the scene.
      * @param {boolean} [recursive] Also test the descendants of `objects`.
-     * @returns {Object[]} three.js intersections (`object`, `point`, `faceIndex`...).
+     * @returns {Object[]} Intersections (`object`, `point`, `faceIndex`, `distance`).
      */
     raycast(event, objects = this.root.children, recursive = true) {
         if (!this.renderer) return [];
         const rect = this._map.getContainer().getBoundingClientRect();
-        this.raycaster.setFromCamera(new this.THREE.Vector2(
+        this.scene.updateMatrixWorld(true);
+        this.camera.updateMatrixWorld();
+        this.raycaster.castMouse(this.camera, [
             ((event.clientX - rect.left) / rect.width) * 2 - 1,
-            -((event.clientY - rect.top) / rect.height) * 2 + 1
-        ), this.camera);
-        return this.raycaster.intersectObjects(objects, recursive);
+            -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        ]);
+        const meshes = [];
+        for (const object of objects) {
+            if (recursive) object.traverse(mesh => { if (mesh.geometry && mesh.visible) meshes.push(mesh); });
+            else if (object.geometry && object.visible) meshes.push(object);
+        }
+        const hits = [];
+        const { Vec3, Mat4 } = this.OGL;
+        const a = new Vec3(), b = new Vec3(), c = new Vec3();
+        for (const mesh of this.raycaster.intersectBounds(meshes)) {
+            const inverse = new Mat4().inverse(mesh.worldMatrix);
+            const origin = new Vec3().copy(this.raycaster.origin).applyMatrix4(inverse);
+            const direction = new Vec3().copy(this.raycaster.direction).transformDirection(inverse);
+            const { position, index } = mesh.geometry.attributes;
+            let closest = Infinity, faceIndex;
+            for (let i = 0; i < (index?.count || position.count); i += 3) {
+                a.fromArray(position.data, (index ? index.data[i] : i) * position.size);
+                b.fromArray(position.data, (index ? index.data[i + 1] : i + 1) * position.size);
+                c.fromArray(position.data, (index ? index.data[i + 2] : i + 2) * position.size);
+                const distance = this.raycaster.intersectTriangle(a, b, c, mesh.program.cullFace !== null, origin, direction);
+                if (distance && distance < closest) { closest = distance; faceIndex = i / 3; }
+            }
+            if (faceIndex === undefined) continue;
+            const point = new Vec3().copy(direction).multiply(closest).add(origin).applyMatrix4(mesh.worldMatrix);
+            hits.push({ object: mesh, point, faceIndex, distance: point.distance(this.raycaster.origin) });
+        }
+        return hits.sort((a, b) => a.distance - b.distance);
     },
 
     _updateArea() {
@@ -364,7 +698,8 @@ L.Layer3D = L.Layer.extend({
                 this._showFeature(null);
             }
             this.remove(area.mesh);
-            area.mesh.geometry.dispose();
+            area.mesh.geometry.remove();
+            area.mesh.program.remove();
         }
     },
 
@@ -386,11 +721,11 @@ L.Layer3D = L.Layer.extend({
                 let object = hit.object;
                 while (object && object !== this.model) object = object.parent;
                 if (object === this.model) {
-                    return { id: this.model.uuid, properties: this.model.userData,
-                        model: this.model, mesh: hit.object };
+                    return { id: this.model.id, properties: this.model.extras,
+                        model: this.model, mesh: hit.object, point: hit.point };
                 }
             }
-            const ranges = hit.object.userData.featureFaces;
+            const ranges = hit.object.extras?.featureFaces;
             if (!ranges) continue;
             let low = 0, high = ranges.length - 1;
             while (low <= high) {
@@ -398,7 +733,7 @@ L.Layer3D = L.Layer.extend({
                 const range = ranges[middle];
                 if (hit.faceIndex < range.faceStart) high = middle - 1;
                 else if (hit.faceIndex >= range.faceEnd) low = middle + 1;
-                else return { ...range, mesh: hit.object };
+                else return { ...range, mesh: hit.object, point: hit.point };
             }
         }
         return null;
@@ -457,6 +792,16 @@ L.Layer3D = L.Layer.extend({
         this.hoveredFeature = feature;
         this._setHighlight(feature);
         this._showFeature(feature, event);
+        if (this.options.zoomOnClick && feature &&
+            this.raycast(event, this.scene.children, true)[0]?.object === feature.mesh) {
+            const map = this._map;
+            const crs = map.options.crs;
+            const origin = crs.project(this._shared.location);
+            const metres = Math.cos(this._shared.location.lat * Math.PI / 180);
+            const center = crs.unproject(new L.Point(
+                origin.x + feature.point.x / metres, origin.y - feature.point.z / metres));
+            map.setView(center, Math.min(map.getZoom() + 1, map.getMaxZoom()));
+        }
         this.fire('featureclick', { feature, originalEvent: event });
     },
 
@@ -551,7 +896,7 @@ L.Layer3D = L.Layer.extend({
         }
         if (!positions.length) return { mesh: null, buildings: 0, skipped };
         const mesh = this.createMesh({ position: positions, normal: normals, color: colors });
-        mesh.userData.featureFaces = featureFaces;
+        mesh.extras.featureFaces = featureFaces;
         return { mesh, buildings: featureFaces.length, skipped };
     },
 
@@ -564,15 +909,15 @@ L.Layer3D = L.Layer.extend({
     },
 
     _createRenderer(map) {
-        const THREE = this.THREE;
+        const OGL = this.OGL;
         const shared = {
             _map: map,
             location: this.location,
             options: this.options,
-            THREE,
+            OGL,
             layers: new Set(),
-            scene: new THREE.Scene(),
-            camera: new THREE.PerspectiveCamera(),
+            scene: new OGL.Transform(),
+            camera: new OGL.Camera(),
             update: this._updateRenderer,
             dispose: this._disposeRenderer,
             _render: this._render,
@@ -581,9 +926,6 @@ L.Layer3D = L.Layer.extend({
             _startZoom: this._startZoom,
             _endZoom: this._endZoom,
         };
-        const sunlight = new THREE.DirectionalLight(0xffefd5, 3);
-        sunlight.position.set(-300, 500, 300);
-        shared.scene.add(new THREE.HemisphereLight(0xffffff, 0x746952, 2), sunlight);
         this._setupRenderer.call(shared, map);
         return shared;
     },
@@ -597,8 +939,8 @@ L.Layer3D = L.Layer.extend({
         cancelAnimationFrame(this._frame);
         this._frame = null;
         this._zoomLevel = null;
-        this.renderer.domElement.remove();
-        this.renderer.dispose();
+        this.renderer.gl.canvas.remove();
+        this.renderer.gl.getExtension('WEBGL_lose_context')?.loseContext();
         this.renderer = null;
     },
 
@@ -620,11 +962,16 @@ L.Layer3D = L.Layer.extend({
 
     _setupRenderer(map) {
         if (this.renderer) return;
-        this.renderer = new this.THREE.WebGLRenderer({ alpha: true, antialias: true });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.options.maxPixelRatio));
-        this.renderer.setClearColor(0x000000, 0);
+        this.renderer = new this.OGL.Renderer({ alpha: true, antialias: true,
+            dpr: Math.min(window.devicePixelRatio, this.options.maxPixelRatio) });
+        if (!this.renderer.gl) throw new Error('Unable to create a WebGL context');
+        // Sort model surfaces by their geometry, not their shared glTF node origin.
+        this.renderer.sortTransparent = (a, b) =>
+            a.renderOrder - b.renderOrder ||
+            (b._sortDepth ?? b.zDepth) - (a._sortDepth ?? a.zDepth) || a.id - b.id;
+        this.renderer.gl.clearColor(0, 0, 0, 0);
         this._size = null;
-        const canvas = this.renderer.domElement;
+        const canvas = this.renderer.gl.canvas;
         canvas.className = 'leaflet-3d';
         canvas.style.cssText = `position:absolute;top:0;left:0;z-index:${this.options.zIndex};pointer-events:none`;
         canvas.setAttribute('role', 'img');
@@ -689,7 +1036,7 @@ L.Layer3D = L.Layer.extend({
         }
         const distance = size.y * 1.5 / pixelsPerMeter;
         const center = map.containerPointToLayerPoint(size.divideBy(2));
-        const target = new this.THREE.Vector3(
+        const target = new this.OGL.Vec3(
             (center.x - origin.x) / pixelsPerMeter, 0,
             (center.y - origin.y) / pixelsPerMeter
         );
@@ -712,7 +1059,22 @@ L.Layer3D = L.Layer.extend({
         );
         camera.lookAt(target);
         camera.updateProjectionMatrix();
-        this.renderer.render(this.scene, camera);
+        camera.updateMatrixWorld();
+        const light = new this.OGL.Vec3(-300, 500, 300).normalize().transformDirection(camera.viewMatrix);
+        const sky = new this.OGL.Vec3(0, 1, 0).transformDirection(camera.viewMatrix);
+        this.scene.updateMatrixWorld();
+        const position = new this.OGL.Vec3();
+        this.scene.traverse(mesh => {
+            if (mesh.program?.uniforms.lightDirection) mesh.program.uniforms.lightDirection.value.copy(light);
+            if (mesh.program?.uniforms.skyDirection) mesh.program.uniforms.skyDirection.value.copy(sky);
+            if (mesh.program?.transparent) {
+                if (!mesh.geometry.bounds) mesh.geometry.computeBoundingSphere();
+                position.copy(mesh.geometry.bounds.center).applyMatrix4(mesh.worldMatrix);
+                camera.project(position);
+                mesh._sortDepth = position.z;
+            }
+        });
+        this.renderer.render({ scene: this.scene, camera, update: false });
         if (map._animatingZoom) {
             this._frame = requestAnimationFrame(() => this._render());
         }

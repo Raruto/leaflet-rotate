@@ -107,9 +107,9 @@ With `keyboard: true` (the Leaflet default) and `interactive: true`, each Canvas
 
 Canvas marker positions follow Leaflet's zoom-transition timing without scaling the icons. At high pitch, markers behind the camera are excluded from drawing and hit testing.
 
-#### Standalone 3D layers (three.js)
+#### Standalone 3D layers (OGL)
 
-Load [misc/3DLayer.js](misc/3DLayer.js) with a standard script tag after Leaflet and leaflet-rotate. It registers `L.Layer3D` globally, independently of the main plugin bundle. three.js is dynamically imported internally from unpkg with a fixed version; no module scripts or import map are needed in your page. All instances on the same map automatically share one WebGL canvas, scene and camera for correct occlusion, with a separate group and geographic origin per layer. Different maps use separate renderers.
+Load [misc/3DLayer.js](misc/3DLayer.js) with a standard script tag after Leaflet and leaflet-rotate. It registers `L.Layer3D` globally, independently of the main plugin bundle. The required OGL modules (1.0.11) and earcut (3.0.2, polygon triangulation) are dynamically imported from unpkg; no module scripts or import map are needed in your page. All instances on the same map automatically share one WebGL canvas, scene and camera for correct occlusion, with a separate group and geographic origin per layer. Different maps use separate renderers. There is no three.js dependency or locally generated model loader.
 
 Renderer creation, camera synchronization and cleanup are managed directly by `Layer3D`, with shared state per map and no separate renderer class.
 
@@ -133,18 +133,20 @@ World coordinates are metres from each layer's `location`: x east, y up, z south
 | `ariaLabel` | Accessible name of the canvas (default `'3D scene'`). |
 | `zIndex` | Canvas z-index (default `450`: above tiles and vectors, below markers). |
 | `maxPixelRatio` | Upper bound of the canvas device pixel ratio (default `2`). |
+| `zoomOnClick` | Default `false`. When enabled, clicking a visible 3D object centers the map on its ground position and zooms in one level, capped at the map's maximum zoom. Works with models and polygon sources, with or without tooltips; only the nearest 3D surface triggers zoom when layers overlap. |
 | `model` | Optional glTF/GLB URL, resolved relative to the page. Loaded and added automatically before `ready` resolves. |
+| `modelAlphaMode` | Optional override (`OPAQUE`, `MASK`, `BLEND`, `COVERAGE`); otherwise respects glTF materials, including the tower's original `BLEND` transparency. `COVERAGE` uses multisample alpha-to-coverage with depth writes, but can lose fine texture details; it falls back to `MASK` without antialiasing. |
 | `rotation`, `scale` | Optional model `[x, y, z]` rotation in radians and scale factors. |
 | `attribution` | Standard Leaflet attribution, added/removed automatically with the layer. |
-| `layer.ready` | Promise resolved with the layer once three.js is loaded (`ready` event). |
+| `layer.ready` | Promise resolved once OGL and configured data/model are loaded (`ready` event). A configured model must be added to a map before awaiting readiness, because its GPU resources need that map's WebGL context. |
 | `add(object)` / `remove(object)` | Adds or removes an object in this layer's group and redraws. `remove()` without arguments removes the Leaflet layer. |
 | `update()` | Schedules a redraw after changing objects. |
-| `loadModel(url)` | Loads a glTF/GLB model. The local `GLTFLoader` bundle is imported on demand. |
-| `createGroup()` / `createMesh({ position, normal, color }, material?)` | Creates a group or a non-indexed mesh from flat arrays (default: shared Lambert material with vertex colors). |
-| `color(value)` / `setVertexColor(mesh, start, end, color)` | Creates a color (`0x48d9ff`, `'#48d9ff'` or `{ h, s, l }`) and paints a vertex range. |
+| `loadModel(url)` | Loads a static glTF/GLB model after adding the layer to a map. OGL's GLTFLoader is dynamically imported from unpkg. |
+| `createGroup()` / `createMesh({ position, normal, color }, program?)` | Creates an OGL Transform or a non-indexed Mesh from flat arrays. Mesh creation requires the layer on a map; the default program uses vertex colors with simple directional/ambient lighting. |
+| `color(value)` / `setVertexColor(mesh, start, end, color)` | Creates an sRGB color (`0x48d9ff`, `'#48d9ff'`) and paints a vertex range. HSL inputs use linear-space components, matching the former three.js styling, then encode to sRGB for storage. |
 | `triangulate(contour, holes?)` / `isClockWise(points)` | Polygon helpers for `{ x, y }` points. |
-| `raycast(event, objects?, recursive?)` | three.js intersections under a mouse event, nearest first. |
-| `THREE`, `scene`, `camera`, `renderer`, `root` | The underlying three.js module and objects, for advanced use. |
+| `raycast(event, objects?, recursive?)` | Intersections under a mouse event, nearest first (`object`, `point`, `faceIndex`, `distance`). |
+| `OGL`, `scene`, `camera`, `renderer`, `root` | The imported OGL classes and underlying objects, for advanced use. The canvas/context are `renderer.gl.canvas` / `renderer.gl`; mesh attributes are `geometry.attributes`, with typed arrays in `.data`. |
 
 For polygon volumes, configure `Layer3D` directly instead of defining a subclass:
 
@@ -164,9 +166,11 @@ await volumes.ready;
 
 Hover highlighting is built in. `highlightColor` defaults to `0x48d9ff`. Supply only `tooltipContent(feature)` returning a DOM node or text to enable a tooltip. The layer creates and styles its own `.leaflet-3d-tooltip` element inside the map, sets accessible tooltip/live-region attributes, positions and hides it, and removes it when disabled. Re-enabling the layer recreates it. No tooltip markup is needed in the page. The map cursor becomes `pointer` while a tooltip is visible and restores its previous style when hidden. Clicking does not pin the tooltip or highlight: moving off a feature or leaving the map clears both. `featurehover` and `featureclick` events expose `{ feature, originalEvent }`. Features contain `id` and `properties`. `progress` exposes `{ enabled, loaded, skipped, pending, errors }` for page-specific status messages.
 
-`npm run build` generates [misc/GLTFLoader.js](misc/GLTFLoader.js) from the build-only `three` dependency, retaining its MIT license. It is a classic script loaded lazily by `loadModel`, exposing `leafletGLTFLoader` globally and reusing `L.Layer3D.THREE`. Its transitive helper is bundled locally; three.js itself is loaded only once from unpkg. Serve both files together.
+The renderer supports static glTF/GLB triangle meshes, node transforms, base-color textures, metallic/roughness factors and textures, emissive and occlusion maps, double-sided materials and glTF alpha modes (OPAQUE, MASK, BLEND). A compact metallic/roughness shader combines a warm directional light, sky/ground ambient lighting, specular reflections and linear-space color processing. Color textures use hardware sRGB decoding/filtering in WebGL 2, with shader decoding as a WebGL 1 fallback; glTF color factors remain linear. Polygon buildings use Lambert shading; hemisphere and directional light strengths match the former three.js renderer. No tone mapping is applied, matching the original renderer's output. The Eiffel Tower uses its original embedded textures. This is not a full PBR engine: normal maps, environment maps, cast shadows and material extensions are not implemented. Transparent meshes are sorted back-to-front using transformed geometry centers, not shared node origins; double-sided transparent models draw back faces before front faces. Sorting remains per mesh rather than per triangle. Texture references currently require untransformed TEXCOORD_0 UVs. Models with animations, skins, morph targets, non-triangle primitives or required extensions report an error. Ordinary static models with repeated mesh nodes keep independent transforms. The last layer's removal releases the WebGL context; re-adding a layer recreates GPU geometry, programs and textures from retained CPU data/images.
 
-`tooltipContent` also works with configured GLB/glTF models. The callback receives `{ id, properties, model, mesh }`: `properties` is the model's `userData`, `model` is the loaded root and `mesh` is the intersected mesh. Nested meshes are picked recursively. Model materials remain unchanged on hover; the tooltip, pointer cursor and hover/click events behave like polygon tooltips, without click-to-pin.
+`tooltipContent` also works with configured GLB/glTF models. The callback receives `{ id, properties, model, mesh }`: `id` is the model URL, `properties` is its glTF `extras`, `model` is the loaded root and `mesh` is the intersected mesh. Nested meshes are picked recursively. Model programs remain unchanged on hover; the tooltip, pointer cursor and hover/click events behave like polygon tooltips, without click-to-pin.
+
+Picked model and polygon features also expose `point`, the intersection in shared scene coordinates (metres from the shared renderer's origin). Enable `zoomOnClick: true` to zoom onto the clicked object, as in the Eiffel Tower example; this does not pin the tooltip.
 
 PMTiles remains separate: load [misc/PMTilesLayer.js](misc/PMTilesLayer.js) with a standard script tag to register `L.PMTilesLayer`, based on `L.TileLayer` and dedicated to raster tiles. It dynamically imports the archive reader from unpkg, including its fflate dependency. The layer owns requests, cancellation on tile unload or zoom changes, image decoding and object URL cleanup. Missing or invalid raster tiles report errors through Leaflet's `tileerror` event. `tile.done` and `tile.error` expose load state. GeoJSON volumes belong in `Layer3D`, not this raster layer.
 

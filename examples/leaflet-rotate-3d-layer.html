@@ -47,6 +47,7 @@
 			}, {
 				// Offline archive built by `node build/pmtiles.js`.
 				'Paris buildings (3D)': new L.Layer3D({
+					zoomOnClick: true,
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/volumesbatisparis/">Building volumes: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 					source: 'data/paris-buildings.pmtiles',
 					ariaLabel: '3D view of the Eiffel Tower and Paris buildings',
@@ -72,6 +73,7 @@
 				// Register the four ground corners to OSM pillars 69034127/135/179/180.
 				// The GLB is axis-aligned, not north-aligned; its horizontal footprint is slightly undersized.
 				'Eiffel Tower (3D)': new L.Layer3D({
+					zoomOnClick: true,
 					center: [48.8582601, 2.29449985],
 					model: '../misc/eiffel-tower.glb',
 					tooltipContent() {

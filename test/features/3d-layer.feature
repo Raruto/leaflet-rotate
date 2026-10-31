@@ -11,7 +11,7 @@ Feature: Reusable 3D layers
 
   Scenario: Dependency loading errors are reported to the caller
     Given a map with the standalone 3D module and no dependency import map
-    Then a failed three.js import rejects readiness and emits an error without leaving a canvas
+    Then a failed OGL import rejects readiness and emits an error without leaving a canvas
 
   Scenario: PMTiles layers initialize their archives
     Given a map with the standalone 3D module and no dependency import map
@@ -24,6 +24,10 @@ Feature: Reusable 3D layers
   Scenario: Feature tooltips belong to their 3D layer and never pin on click
     Given a map with the standalone 3D module and no dependency import map
     Then a 3D layer creates and cleans up its own hover tooltip
+
+  Scenario: Clicking a 3D object zooms only the nearest enabled layer
+    Given a map with the standalone 3D module and no dependency import map
+    Then 3D click zoom centers the picked object and respects the maximum zoom
 
   @paris-buildings
   Scenario: Building volumes render with holes, storey heights, and interaction
