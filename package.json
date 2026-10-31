@@ -10,6 +10,7 @@
 		"dev": "node build/dev.js",
 		"build": "node build/build.js",
 		"test": "node build/test.js",
+		"pmtiles": "node build/pmtiles.js",
 		"version": "npm run build && git add -A dist"
 	},
 	"repository": {
@@ -52,6 +53,7 @@
 	"devDependencies": {
 		"@cucumber/cucumber": "^10.3.1",
 		"esbuild": "^0.28.2",
-		"playwright": "^1.64.1"
+		"playwright": "^1.64.1",
+		"three": "0.170.0"
 	}
 }

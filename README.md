@@ -107,6 +107,73 @@ With `keyboard: true` (the Leaflet default) and `interactive: true`, each Canvas
 
 Canvas marker positions follow Leaflet's zoom-transition timing without scaling the icons. At high pitch, markers behind the camera are excluded from drawing and hit testing.
 
+#### Standalone 3D layers (three.js)
+
+Load [misc/3DLayer.js](misc/3DLayer.js) with a standard script tag after Leaflet and leaflet-rotate. It registers `L.Layer3D` globally, independently of the main plugin bundle. three.js is dynamically imported internally from unpkg with a fixed version; no module scripts or import map are needed in your page. All instances on the same map automatically share one WebGL canvas, scene and camera for correct occlusion, with a separate group and geographic origin per layer. Different maps use separate renderers.
+
+Renderer creation, camera synchronization and cleanup are managed directly by `Layer3D`, with shared state per map and no separate renderer class.
+
+```html
+<script src="./misc/3DLayer.js"></script>
+<script>
+(async function () {
+const tower = await new L.Layer3D({ center: [48.8582601, 2.29449985], ariaLabel: '3D landmarks' }).addTo(map).ready;
+tower.add(await tower.loadModel('eiffel-tower.glb'));
+const buildings = await new L.Layer3D().addTo(map).ready;
+// tower.renderer === buildings.renderer
+})().catch(console.error);
+</script>
+```
+
+World coordinates are metres from each layer's `location`: x east, y up, z south. Use `new L.Layer3D({ center: [lat, lng], ... })` to specify that origin. Without `center`, the layer takes the map centre on first addition. That origin stays fixed when moving the map or re-adding the layer. The positional `new L.Layer3D(location, options)` form remains supported and takes precedence over `center`. Georeferenced GeoJSON sources do not need an explicit origin; models generally need an explicit location to place them geographically. The first attached layer sets the shared canvas options and camera origin until the last layer is removed. Removing a layer detaches only its group; removing the last disposes the renderer. Re-adding layers preserves their objects and recreates the canvas as needed. Await `ready` to handle initialization failures (also emitted as an `error` event).
+
+| Option / method | Description |
+| --- | --- |
+| `center` | Geographic origin (`[lat, lng]` or `L.LatLng`); defaults to the map centre on first addition. |
+| `ariaLabel` | Accessible name of the canvas (default `'3D scene'`). |
+| `zIndex` | Canvas z-index (default `450`: above tiles and vectors, below markers). |
+| `maxPixelRatio` | Upper bound of the canvas device pixel ratio (default `2`). |
+| `model` | Optional glTF/GLB URL, resolved relative to the page. Loaded and added automatically before `ready` resolves. |
+| `rotation`, `scale` | Optional model `[x, y, z]` rotation in radians and scale factors. |
+| `attribution` | Standard Leaflet attribution, added/removed automatically with the layer. |
+| `layer.ready` | Promise resolved with the layer once three.js is loaded (`ready` event). |
+| `add(object)` / `remove(object)` | Adds or removes an object in this layer's group and redraws. `remove()` without arguments removes the Leaflet layer. |
+| `update()` | Schedules a redraw after changing objects. |
+| `loadModel(url)` | Loads a glTF/GLB model. The local `GLTFLoader` bundle is imported on demand. |
+| `createGroup()` / `createMesh({ position, normal, color }, material?)` | Creates a group or a non-indexed mesh from flat arrays (default: shared Lambert material with vertex colors). |
+| `color(value)` / `setVertexColor(mesh, start, end, color)` | Creates a color (`0x48d9ff`, `'#48d9ff'` or `{ h, s, l }`) and paints a vertex range. |
+| `triangulate(contour, holes?)` / `isClockWise(points)` | Polygon helpers for `{ x, y }` points. |
+| `raycast(event, objects?, recursive?)` | three.js intersections under a mouse event, nearest first. |
+| `THREE`, `scene`, `camera`, `renderer`, `root` | The underlying three.js module and objects, for advanced use. |
+
+For polygon volumes, configure `Layer3D` directly instead of defining a subclass:
+
+```js
+const volumes = new L.Layer3D({
+    source: 'data/volumes.pmtiles',
+    featureStyle: feature => ({
+        top: feature.properties.height,
+        bottom: feature.properties.baseHeight || 0,
+        color: 0xd9b38c
+    })
+}).on('error', ({ error }) => console.error(error)).addTo(map);
+await volumes.ready;
+```
+
+`source` is a PMTiles archive containing polygon/multipolygon GeoJSON feature collections; its reader is imported directly by `Layer3D`. `featureStyle(feature)` returns `{ top, bottom?, color? }` in metres, or `null` to skip a feature. Invalid heights report errors. The layer handles polygon holes, elevated undersides, batched vertex-colored meshes, deduplication between archive blocks, cancellation and geometry disposal. Styling and tooltip content are the only dataset-specific logic.
+
+Hover highlighting is built in. `highlightColor` defaults to `0x48d9ff`. Supply only `tooltipContent(feature)` returning a DOM node or text to enable a tooltip. The layer creates and styles its own `.leaflet-3d-tooltip` element inside the map, sets accessible tooltip/live-region attributes, positions and hides it, and removes it when disabled. Re-enabling the layer recreates it. No tooltip markup is needed in the page. The map cursor becomes `pointer` while a tooltip is visible and restores its previous style when hidden. Clicking does not pin the tooltip or highlight: moving off a feature or leaving the map clears both. `featurehover` and `featureclick` events expose `{ feature, originalEvent }`. Features contain `id` and `properties`. `progress` exposes `{ enabled, loaded, skipped, pending, errors }` for page-specific status messages.
+
+`npm run build` generates [misc/GLTFLoader.js](misc/GLTFLoader.js) from the build-only `three` dependency, retaining its MIT license. It is a classic script loaded lazily by `loadModel`, exposing `leafletGLTFLoader` globally and reusing `L.Layer3D.THREE`. Its transitive helper is bundled locally; three.js itself is loaded only once from unpkg. Serve both files together.
+
+`tooltipContent` also works with configured GLB/glTF models. The callback receives `{ id, properties, model, mesh }`: `properties` is the model's `userData`, `model` is the loaded root and `mesh` is the intersected mesh. Nested meshes are picked recursively. Model materials remain unchanged on hover; the tooltip, pointer cursor and hover/click events behave like polygon tooltips, without click-to-pin.
+
+PMTiles remains separate: load [misc/PMTilesLayer.js](misc/PMTilesLayer.js) with a standard script tag to register `L.PMTilesLayer`, based on `L.TileLayer` and dedicated to raster tiles. It dynamically imports the archive reader from unpkg, including its fflate dependency. The layer owns requests, cancellation on tile unload or zoom changes, image decoding and object URL cleanup. Missing or invalid raster tiles report errors through Leaflet's `tileerror` event. `tile.done` and `tile.error` expose load state. GeoJSON volumes belong in `Layer3D`, not this raster layer.
+
+The buildings in [leaflet-rotate-3d-layer.html](examples/leaflet-rotate-3d-layer.html) are instead a true `L.Layer3D`, reading PMTiles directly as a data source. They retain at most nine archive blocks around the map centre (roughly a 1.2 km-wide neighbourhood for the supplied Paris archive), at the archive's native zoom regardless of map zoom. Only moving into another block changes the working set; zoom, bearing and pitch reuse the same geometry. Two loads run concurrently, mesh construction yields between features after an 8 ms work slice, and leaving a block cancels its work and disposes its geometry. Blocks share the WebGL depth buffer with the tower; no tile elements, GridLayer lifecycle or minimum map zoom are involved. This deliberately renders a local neighbourhood rather than all buildings visible in a city-wide view.
+
+Create raster layers with `new L.PMTilesLayer('data/map.pmtiles', options)`: the class resolves the URL, opens the archive and reads its header. `layer.ready` resolves with the layer; `layer.header` exposes the metadata and `maxNativeZoom` defaults to the archive's maximum zoom (an explicit option takes precedence). Tile requests wait for initialization, including when added before `ready`. Initialization errors reject `ready` and emit `error`; no guessed zoom fallback is used. An existing reader can still be supplied through `options.archive`.
+
 ---
 
 ### Build Guide

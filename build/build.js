@@ -2,6 +2,7 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build as esbuildBuild, context, transform } from 'esbuild';
+import * as THREE from 'three';
 
 const options = {
   entryPoints: ['src/index.js'],
@@ -13,6 +14,28 @@ const options = {
   entryNames: 'leaflet-rotate-src',
 };
 const minifiedOptions = { ...options, entryNames: 'leaflet-rotate', minify: true };
+const loaderOptions = {
+  entryPoints: ['three/examples/jsm/loaders/GLTFLoader.js'],
+  outfile: 'misc/GLTFLoader.js',
+  bundle: true,
+  format: 'iife',
+  globalName: 'leafletGLTFLoader',
+  minify: true,
+  plugins: [{
+    name: 'three-global',
+    setup(build) {
+      build.onResolve({ filter: /^three$/ }, () => ({
+        path: 'three',
+        namespace: 'three-global',
+      }));
+      build.onLoad({ filter: /^three$/, namespace: 'three-global' }, () => ({
+        contents: Object.keys(THREE).map(name =>
+          `export const ${name} = L.Layer3D.THREE.${name};`).join('\n'),
+        loader: 'js',
+      }));
+    },
+  }],
+};
 const debugMinifiedOptions = {
   entryPoints: ['lib/debug.js'],
   outfile: 'lib/debug.min.js',
@@ -45,12 +68,16 @@ const debugMinifiedOptions = {
 
 export async function build({ watch = false } = {}) {
   await mkdir('dist', { recursive: true });
+  loaderOptions.banner = {
+    js: `/* Generated GLTFLoader bundle. three.js license:\n${await readFile('node_modules/three/LICENSE', 'utf8')}*/`,
+  };
 
   if (!watch) {
     await Promise.all([
       esbuildBuild(options),
       esbuildBuild(minifiedOptions),
       esbuildBuild(debugMinifiedOptions),
+      esbuildBuild(loaderOptions),
     ]);
     return;
   }
@@ -59,6 +86,7 @@ export async function build({ watch = false } = {}) {
     context(options),
     context(minifiedOptions),
     context(debugMinifiedOptions),
+    context(loaderOptions),
   ]);
   await Promise.all(builders.map(builder => builder.watch()));
   return () => Promise.all(builders.map(builder => builder.dispose()));
