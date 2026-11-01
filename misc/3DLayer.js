@@ -120,57 +120,6 @@ L.Layer3D = L.Layer.extend({
     });
   },
 
-  /** Share index requests; tile cancellation must not abort an index needed by another caller. */
-  _directory(offset, length, compression) {
-    const key = `${offset}:${length}`;
-    if (!this._directories.has(key)) {
-      if (this._directories.size >= 32) this._directories.delete(this._directories.keys().next().value);
-      const pending = this._read(offset, length).then(data => this._decompress(data, compression)).then(data => {
-        const bytes = new Uint8Array(data);
-        let cursor = 0;
-        const varint = () => {
-          let value = 0;
-          for (let factor = 1; factor <= 2 ** 49; factor *= 128) {
-            if (cursor >= bytes.length) throw new Error('Truncated PMTiles directory');
-            const byte = bytes[cursor++];
-            value += (byte & 127) * factor;
-            if (!Number.isSafeInteger(value)) throw new Error('Invalid PMTiles directory integer');
-            if (byte < 128) return value;
-          }
-          throw new Error('Invalid PMTiles directory integer');
-        };
-        const count = varint();
-        if (count > (bytes.length - cursor) / 4) throw new Error('Invalid PMTiles directory count');
-        const entries = [];
-        let tileId = 0;
-        for (let i = 0; i < count; i++) {
-          tileId += varint();
-          if (!Number.isSafeInteger(tileId) || (i && tileId <= entries[i - 1].tileId)) {
-            throw new Error('Invalid PMTiles directory tile IDs');
-          }
-          entries.push({ tileId });
-        }
-        for (const entry of entries) entry.runLength = varint();
-        for (const entry of entries) {
-          entry.length = varint();
-          if (!entry.length) throw new Error('Invalid PMTiles directory length');
-        }
-        entries.forEach((entry, i) => {
-          const value = varint();
-          if (!value && !i) throw new Error('Invalid PMTiles directory offset');
-          entry.offset = value ? value - 1 : entries[i - 1].offset + entries[i - 1].length;
-        });
-        if (cursor !== bytes.length) throw new Error('Trailing PMTiles directory data');
-        return entries;
-      }).catch(error => {
-        if (this._directories.get(key) === pending) this._directories.delete(key);
-        throw error;
-      });
-      this._directories.set(key, pending);
-    }
-    return this._directories.get(key);
-  },
-
   /** Nearest directory entry at/before the Hilbert ID, then follow leaf pointers. */
   async getZxy(z, x, y, signal) {
     if (![z, x, y].every(Number.isInteger) || z < 0 || z > 26 ||
@@ -194,11 +143,65 @@ L.Layer3D = L.Layer.extend({
     let offset = header.rootDirectoryOffset, length = header.rootDirectoryLength;
     const visited = new Set();
     for (let depth = 0; depth < 4; depth++) {
-      if (visited.has(offset)) throw new Error('Cyclic PMTiles directory');
+      if (visited.has(offset)) {
+        throw new Error('Cyclic PMTiles directory');
+      }
       visited.add(offset);
-      const entries = await this._directory(offset, length, header.internalCompression);
+      const key = `${offset}:${length}`;
+      if (!this._directories.has(key)) {
+        if (this._directories.size >= 32) {
+          this._directories.delete(this._directories.keys().next().value);
+        }
+        const pending = this._read(offset, length)
+          .then(data => this._decompress(data, header.internalCompression))
+          .then(data => {
+            const bytes = new Uint8Array(data);
+            let cursor = 0;
+            const varint = () => {
+              let value = 0;
+              for (let factor = 1; factor <= 2 ** 49; factor *= 128) {
+                if (cursor >= bytes.length) throw new Error('Truncated PMTiles directory');
+                const byte = bytes[cursor++];
+                value += (byte & 127) * factor;
+                if (!Number.isSafeInteger(value)) throw new Error('Invalid PMTiles directory integer');
+                if (byte < 128) return value;
+              }
+              throw new Error('Invalid PMTiles directory integer');
+            };
+            const count = varint();
+            if (count > (bytes.length - cursor) / 4) throw new Error('Invalid PMTiles directory count');
+            const entries = [];
+            let tileId = 0;
+            for (let i = 0; i < count; i++) {
+              tileId += varint();
+              if (!Number.isSafeInteger(tileId) || (i && tileId <= entries[i - 1].tileId)) {
+                throw new Error('Invalid PMTiles directory tile IDs');
+              }
+              entries.push({ tileId });
+            }
+            for (const entry of entries) entry.runLength = varint();
+            for (const entry of entries) {
+              entry.length = varint();
+              if (!entry.length) throw new Error('Invalid PMTiles directory length');
+            }
+            entries.forEach((entry, i) => {
+              const value = varint();
+              if (!value && !i) throw new Error('Invalid PMTiles directory offset');
+              entry.offset = value ? value - 1 : entries[i - 1].offset + entries[i - 1].length;
+            });
+            if (cursor !== bytes.length) throw new Error('Trailing PMTiles directory data');
+            return entries;
+          })
+          .catch(error => {
+            if (this._directories.get(key) === pending) this._directories.delete(key);
+            throw error;
+          });
+        this._directories.set(key, pending);
+      }
+      const entries = await this._directories.get(key);
       signal?.throwIfAborted();
-      let low = 0, high = entries.length - 1;
+      let low = 0,
+         high = entries.length - 1;
       while (low <= high) {
         const mid = (low + high) >> 1;
         if (entries[mid].tileId <= tileId) low = mid + 1;
@@ -399,13 +402,21 @@ L.Layer3D = L.Layer.extend({
           {
             // Decode packed/interleaved/sparse accessors and build independent scene nodes.
             const types = {
-              5120: Int8Array, 5121: Uint8Array, 5122: Int16Array,
-              5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array
+              5120: Int8Array,
+              5121: Uint8Array,
+              5122: Int16Array,
+              5123: Uint16Array,
+              5125: Uint32Array,
+              5126: Float32Array
             };
             const sizes = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
             const accessor = index => {
-              const spec = description.accessors[index], Type = types[spec.componentType], size = sizes[spec.type];
-              if (!Type || !size || !Number.isInteger(spec.count) || spec.count < 0) throw new Error('Invalid glTF accessor');
+              const spec = description.accessors[index],
+                    Type = types[spec.componentType],
+                    size = sizes[spec.type];
+              if (!Type || !size || !Number.isInteger(spec.count) || spec.count < 0) {
+                throw new Error('Invalid glTF accessor');
+              }
               const data = new Type(spec.count * size);
               // The destination callback is sequential for base data and sparse-indexed for overrides.
               const read = (viewIndex, offset, count, stride, output) => {
@@ -421,26 +432,47 @@ L.Layer3D = L.Layer.extend({
                   data.set(values, output(i) * size);
                 }
               };
-              if (spec.bufferView !== undefined) read(spec.bufferView, spec.byteOffset || 0, spec.count,
-                description.bufferViews[spec.bufferView].byteStride, i => i);
+              if (spec.bufferView !== undefined) {
+                read(
+                  spec.bufferView,
+                  spec.byteOffset || 0,
+                  spec.count,
+                  description.bufferViews[spec.bufferView].byteStride,
+                  i => i
+                );
+              }
               if (spec.sparse) {
                 const sparse = spec.sparse, Index = types[sparse.indices.componentType];
-                if (![Uint8Array, Uint16Array, Uint32Array].includes(Index)) throw new Error('Invalid sparse glTF indices');
+                if (![Uint8Array, Uint16Array, Uint32Array].includes(Index)) {
+                  throw new Error('Invalid sparse glTF indices');
+                }
                 const view = description.bufferViews[sparse.indices.bufferView];
                 const offset = (view.byteOffset || 0) + (sparse.indices.byteOffset || 0);
-                if (sparse.count > spec.count || (sparse.indices.byteOffset || 0) + sparse.count * Index.BYTES_PER_ELEMENT > view.byteLength) throw new Error('Invalid sparse glTF indices');
+                if (sparse.count > spec.count || (sparse.indices.byteOffset || 0) + sparse.count * Index.BYTES_PER_ELEMENT > view.byteLength) {
+                  throw new Error('Invalid sparse glTF indices');
+                }
                 const indices = new Index(description.buffers[view.buffer].binary.slice(offset, offset + sparse.count * Index.BYTES_PER_ELEMENT));
-                read(sparse.values.bufferView, sparse.values.byteOffset || 0, sparse.count, 0, i => {
-                  if (indices[i] >= spec.count) throw new Error('Invalid sparse glTF index');
-                  return indices[i];
-                });
+                read(
+                  sparse.values.bufferView,
+                  sparse.values.byteOffset || 0,
+                  sparse.count,
+                  0,
+                  i => {
+                    if (indices[i] >= spec.count) throw new Error('Invalid sparse glTF index');
+                    return indices[i];
+                  }
+                );
               }
-              if (spec.componentType === 5126) return { data, size };
+              if (spec.componentType === 5126) {
+                return { data, size };
+              }
               const normalized = new Float32Array(data.length);
               // Normalization is a glTF accessor rule, not sRGB conversion; indices stay integers.
-              for (let i = 0; i < data.length; i++) normalized[i] = spec.normalized
-                ? Math.max(-1, data[i] / (Type === Int8Array ? 127 : Type === Int16Array ? 32767 : Type === Uint8Array ? 255 : Type === Uint32Array ? 4294967295 : 65535))
-                : data[i];
+              for (let i = 0; i < data.length; i++) {
+                normalized[i] = spec.normalized
+                  ? Math.max(-1, data[i] / (Type === Int8Array ? 127 : Type === Int16Array ? 32767 : Type === Uint8Array ? 255 : Type === Uint32Array ? 4294967295 : 65535))
+                  : data[i];
+              }
               return { data: normalized, size, indices: data };
             };
             // Track only the recursion path: shared mesh references are valid, cycles are not.
@@ -457,19 +489,28 @@ L.Layer3D = L.Layer.extend({
                 worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
                 children:    [],
                 visible:     true,
+                name:        spec.name
               };
-              group.name = spec.name;
               if (spec.matrix) {
                 group.matrix = Array.from(spec.matrix);
               } else {
                 // glTF stores quaternions [x,y,z,w]; convert directly to a scaled column-major matrix.
                 const [x, y, z, w] = spec.rotation || [0, 0, 0, 1],
-                      [sx, sy, sz] = spec.scale || [1, 1, 1];
+                      [sx, sy, sz] = spec.scale    || [1, 1, 1];
                 group.matrix = [
-                  (1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0,
-                  2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
-                  2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0,
-                  ...(spec.translation || [0, 0, 0]), 1,
+                  (1 - 2 * (y * y + z * z)) * sx,
+                  2 * (x * y + z * w) * sx,
+                  2 * (x * z - y * w) * sx,
+                  0,
+                  2 * (x * y - z * w) * sy,
+                  (1 - 2 * (x * x + z * z)) * sy,
+                  2 * (y * z + x * w) * sy, 0,
+                  2 * (x * z + y * w) * sz,
+                  2 * (y * z - x * w) * sz,
+                  (1 - 2 * (x * x + y * y)) * sz,
+                  0,
+                  ...(spec.translation || [0, 0, 0]),
+                  1,
                 ];
               }
               if (spec.mesh !== undefined) {
@@ -491,21 +532,33 @@ L.Layer3D = L.Layer.extend({
                   if (!attributes.index && vertexCount % 3) throw new Error('Incomplete glTF triangle');
                   if (!attributes.normal) {
                     // Accumulate area-weighted face normals for shared vertices, then normalize.
-                    const normals = new Float32Array(attributes.position.data.length), p = attributes.position.data, indices = attributes.index?.data;
+                    const normals = new Float32Array(attributes.position.data.length),
+                                p = attributes.position.data,
+                          indices = attributes.index?.data;
                     for (let i = 0; i < (indices?.length || p.length / 3); i += 3) {
-                      const a = indices ? indices[i] : i, b = indices ? indices[i + 1] : i + 1, c = indices ? indices[i + 2] : i + 2;
+                      const a = indices ? indices[i] : i,
+                            b = indices ? indices[i + 1] : i + 1,
+                            c = indices ? indices[i + 2] : i + 2;
                       const u = [0, 1, 2].map(j => p[b * 3 + j] - p[a * 3 + j]), v = [0, 1, 2].map(j => p[c * 3 + j] - p[a * 3 + j]);
                       const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-                      for (const index of [a, b, c]) for (let j = 0; j < 3; j++) normals[index * 3 + j] += n[j];
+                      for (const index of [a, b, c]) {
+                        for (let j = 0; j < 3; j++) {
+                          normals[index * 3 + j] += n[j];
+                        }
+                      }
                     }
                     for (let i = 0; i < normals.length; i += 3) {
                       const length = Math.hypot(...normals.subarray(i, i + 3)) || 1;
-                      for (let j = 0; j < 3; j++) normals[i + j] /= length;
+                      for (let j = 0; j < 3; j++) {
+                        normals[i + j] /= length;
+                      }
                     }
                     attributes.normal = { size: 3, data: normals };
                   }
                   const style = materials[primitive.material] || { color: [1, 1, 1], metallic: 1 };
-                  if ([style.baseTexture, style.metalTexture, style.emissiveTexture, style.occlusionTexture].some(Boolean) && !attributes.uv) throw new Error('Textured model mesh requires UV coordinates');
+                  if ([style.baseTexture, style.metalTexture, style.emissiveTexture, style.occlusionTexture].some(Boolean) && !attributes.uv) {
+                    throw new Error('Textured model mesh requires UV coordinates');
+                  }
                   const program = this._createProgram(style);
                   resources.push(program);
                   const geometry = this._createGeometry(this.renderer.gl, attributes);
@@ -586,11 +639,11 @@ L.Layer3D = L.Layer.extend({
     if (this.options.source || this.options.tooltipContent || this.options.model) {
       this.container = map.getContainer();
       if (this.options.tooltipContent) {
-        this._featureTooltip = L.DomUtil.create('div', 'leaflet-3d-tooltip', this.container);
-        this._featureTooltip.hidden = true;
-        this._featureTooltip.setAttribute('role', 'tooltip');
-        this._featureTooltip.setAttribute('aria-live', 'polite');
-        this._featureTooltip.style.cssText = 'position:absolute;z-index:600;max-width:220px;padding:10px 12px;border:1px solid #6b5140;border-radius:6px;background:#fffaf0;box-shadow:0 3px 12px #0005;color:#30251d;font:13px/1.45 sans-serif;pointer-events:none';
+        this._tooltip = L.DomUtil.create('div', 'leaflet-3d-tooltip', this.container);
+        this._tooltip.hidden = true;
+        this._tooltip.setAttribute('role', 'tooltip');
+        this._tooltip.setAttribute('aria-live', 'polite');
+        this._tooltip.style.cssText = 'position:absolute;z-index:600;max-width:220px;padding:10px 12px;border:1px solid #6b5140;border-radius:6px;background:#fffaf0;box-shadow:0 3px 12px #0005;color:#30251d;font:13px/1.45 sans-serif;pointer-events:none';
       }
       L.DomEvent.on(this.container, {
         mousemove: this._onPointerMove,
@@ -627,8 +680,8 @@ L.Layer3D = L.Layer.extend({
     }
     for (const area of this._areas.values()) this._releaseArea(area);
     this._areas.clear();
-    this._featureTooltip?.remove();
-    this._featureTooltip = null;
+    this._tooltip?.remove();
+    this._tooltip = null;
     if (this.options.source) this._updateStatus(false);
     const shared = this._shared;
     if (!shared) return;
@@ -710,10 +763,15 @@ L.Layer3D = L.Layer.extend({
       gl.clearColor(0, 0, 0, 0);
       shared._size = null;
       canvas.className = 'leaflet-3d';
-      canvas.style.cssText = 'position:absolute;top:0;left:0;z-index:450;pointer-events:none';
+      canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none';
       canvas.setAttribute('role', 'img');
       canvas.setAttribute('aria-label', this.options.ariaLabel);
-      map.getContainer().append(canvas);
+      let pane = map.getPane('webglPane');
+      if (!pane) {
+        pane = map.createPane('webglPane', map.getContainer());
+        pane.style.zIndex = 450;
+      }
+      pane.append(canvas);
       map.on('move zoom rotate pitch resize viewreset layeradd layerremove', shared.update, shared);
       map.on('zoomstart', shared._startZoom, shared);
       map.on('zoomanim', shared._animateZoom, shared);
@@ -809,80 +867,122 @@ L.Layer3D = L.Layer.extend({
    * @private
    */
   _createProgram(material = {}) {
-    for (const name of ['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']) {
-      if (material[name] && material[name].gl !== this.renderer.gl) {
-        material[name] = {
-          gl:             this.renderer.gl,
-          texture:        this.renderer.gl.createTexture(),
-          internalFormat: this.renderer.gl.RGBA,
-          wrapS:          this.renderer.gl.CLAMP_TO_EDGE,
-          wrapT:          this.renderer.gl.CLAMP_TO_EDGE,
-          minFilter:      this.renderer.gl.LINEAR_MIPMAP_LINEAR,
-          magFilter:      this.renderer.gl.LINEAR,
-          image:          material[name].image,
-          flipY:          false,
-          wrapS:          material[name].wrapS,
-          wrapT:          material[name].wrapT,
-          minFilter:      material[name].minFilter,
-          magFilter:      material[name].magFilter,
-          internalFormat: material[name].internalFormat,
-        };
-      }
-    }
+     if (material.baseTexture && material.baseTexture.gl !== this.renderer.gl) {
+       material.baseTexture = {
+         gl:             this.renderer.gl,
+         texture:        this.renderer.gl.createTexture(),
+         image:          material.baseTexture.image,
+         flipY:          false,
+         wrapS:          material.baseTexture.wrapS,
+         wrapT:          material.baseTexture.wrapT,
+         minFilter:      material.baseTexture.minFilter,
+         magFilter:      material.baseTexture.magFilter,
+         internalFormat: material.baseTexture.internalFormat,
+       };
+     }
+     if (material.metalTexture && material.metalTexture.gl !== this.renderer.gl) {
+       material.metalTexture = {
+         gl:             this.renderer.gl,
+         texture:        this.renderer.gl.createTexture(),
+         image:          material.metalTexture.image,
+         flipY:          false,
+         wrapS:          material.metalTexture.wrapS,
+         wrapT:          material.metalTexture.wrapT,
+         minFilter:      material.metalTexture.minFilter,
+         magFilter:      material.metalTexture.magFilter,
+         internalFormat: material.metalTexture.internalFormat,
+       };
+     }
+     if (material.emissiveTexture && material.emissiveTexture.gl !== this.renderer.gl) {
+       material.emissiveTexture = {
+         gl:             this.renderer.gl,
+         texture:        this.renderer.gl.createTexture(),
+         image:          material.emissiveTexture.image,
+         flipY:          false,
+         wrapS:          material.emissiveTexture.wrapS,
+         wrapT:          material.emissiveTexture.wrapT,
+         minFilter:      material.emissiveTexture.minFilter,
+         magFilter:      material.emissiveTexture.magFilter,
+         internalFormat: material.emissiveTexture.internalFormat,
+       };
+     }
+     if (material.occlusionTexture && material.occlusionTexture.gl !== this.renderer.gl) {
+       material.occlusionTexture = {
+         gl:             this.renderer.gl,
+         texture:        this.renderer.gl.createTexture(),
+         image:          material.occlusionTexture.image,
+         flipY:          false,
+         wrapS:          material.occlusionTexture.wrapS,
+         wrapT:          material.occlusionTexture.wrapT,
+         minFilter:      material.occlusionTexture.minFilter,
+         magFilter:      material.occlusionTexture.magFilter,
+         internalFormat: material.occlusionTexture.internalFormat,
+       };
+     }
     const textured = Boolean(material.baseTexture || material.metalTexture || material.emissiveTexture || material.occlusionTexture);
-    const vertex = `
+    const gl = this.renderer.gl;
+    const program = {
+      gl,
+      cullFace:    material.doubleSided ? null : this.renderer.gl.BACK,
+      transparent: material.alphaMode === 'BLEND',
+      depthWrite:  material.alphaMode !== 'BLEND',
+      uniforms: {
+        baseColor:                      { value: material.color || [1, 1, 1] },
+        lightDirection:                 { value: [0, 0, 0] }, skyDirection: { value: [0, 0, 0] },
+        metallic:                       { value: material.metallic ?? 0 }, roughness: { value: material.roughness ?? 0.85 },
+        opacity:                        { value: material.opacity ?? 1 }, alphaCutoff: { value: material.alphaCutoff ?? 0.5 },
+        occlusionStrength:              { value: material.occlusionStrength ?? 1 },
+        emissive:                       { value: material.emissive || [0, 0, 0] },
+        ...(material.baseTexture ?      { baseTexture: { value: material.baseTexture } } : {}),
+        ...(material.metalTexture ?     { metalTexture: { value: material.metalTexture } } : {}),
+        ...(material.emissiveTexture ?  { emissiveTexture: { value: material.emissiveTexture } } : {}),
+        ...(material.occlusionTexture ? { occlusionTexture: { value: material.occlusionTexture } } : {}),
+      },
+      program: gl.createProgram(),
+      shaders: [],
+    };
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertexShader, `
       attribute vec3 position;
       attribute vec3 normal;
       ${material.vertexColors ? 'attribute vec3 color;' : ''}
-      ${textured ? 'attribute vec2 uv; varying vec2 vUv;' : ''}
-      ${material.roofTexture ? `
-        uniform mat4 worldMatrix;
-        uniform mat4 roofMatrix;
-        varying vec2 vRoofUv;
-        varying float vRoof;
-      ` : ''}
-      uniform mat4 modelViewMatrix;
-      uniform mat4 projectionMatrix;
+      ${textured              ? 'attribute vec2 uv; varying vec2 vUv;' : ''}
+      ${material.roofTexture  ? `uniform mat4 worldMatrix, roofMatrix; varying vec2 vRoofUv; varying float vRoof;` : ''}
+      uniform mat4 modelViewMatrix, projectionMatrix;
       uniform mat3 normalMatrix;
       uniform vec3 baseColor;
-      varying vec3 vColor;
-      varying vec3 vNormal;
-      varying vec3 vPosition;
+      varying vec3 vColor, vNormal, vPosition;
       void main() {
           vColor = ${material.vertexColors ? 'color' : 'baseColor'};
           // Normalize after interpolation, especially with nonuniform model scaling.
           vNormal = normalMatrix * normal;
           vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
           ${textured ? 'vUv = uv;' : ''}
-          ${material.roofTexture ? `
-            vRoofUv = (roofMatrix * worldMatrix * vec4(position, 1.0)).xz;
-            vRoof = step(0.5, normal.y);
-          ` : ''}
+          ${material.roofTexture ? `vRoofUv = (roofMatrix * worldMatrix * vec4(position, 1.0)).xz; vRoof = step(0.5, normal.y);` : ''}
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }`;
-    const fragment = `
+      }`);
+    gl.compileShader(vertexShader);
+    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+      const error = gl.getShaderInfoLog(vertexShader);
+      gl.deleteShader(vertexShader);
+      this._removeProgram(program);
+      throw new Error(`Unable to compile Layer3D shader: ${error}`);
+    }
+    program.shaders.push(vertexShader);
+    gl.attachShader(program.program, vertexShader);
+
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragmentShader, `
       precision highp float;
-      uniform vec3 lightDirection;
-      uniform vec3 skyDirection;
-      uniform float metallic;
-      uniform float roughness;
-      uniform float opacity;
-      uniform float alphaCutoff;
-      uniform float occlusionStrength;
-      uniform vec3 emissive;
-      ${textured ? 'varying vec2 vUv;' : ''}
-      ${material.baseTexture ? 'uniform sampler2D baseTexture;' : ''}
-      ${material.metalTexture ? 'uniform sampler2D metalTexture;' : ''}
-      ${material.emissiveTexture ? 'uniform sampler2D emissiveTexture;' : ''}
+      uniform vec3 lightDirection, skyDirection, emissive;
+      uniform float metallic, roughness, opacity, alphaCutoff, occlusionStrength;
+      ${textured                  ? 'varying vec2 vUv;' : ''}
+      ${material.baseTexture      ? 'uniform sampler2D baseTexture;' : ''}
+      ${material.metalTexture     ? 'uniform sampler2D metalTexture;' : ''}
+      ${material.emissiveTexture  ? 'uniform sampler2D emissiveTexture;' : ''}
       ${material.occlusionTexture ? 'uniform sampler2D occlusionTexture;' : ''}
-      ${material.roofTexture ? `
-        uniform sampler2D roofTexture;
-        varying vec2 vRoofUv;
-        varying float vRoof;
-      ` : ''}
-      varying vec3 vColor;
-      varying vec3 vNormal;
-      varying vec3 vPosition;
+      ${material.roofTexture      ? `uniform sampler2D roofTexture; varying vec2 vRoofUv; varying float vRoof;` : ''}
+      varying vec3 vColor, vNormal, vPosition;
       const float PI = 3.14159265;
       vec3 toLinear(vec3 c) {
         return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
@@ -891,11 +991,7 @@ L.Layer3D = L.Layer.extend({
         return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
       }
       void main() {
-        ${material.unlit ? `
-          vec4 rasterTexel = texture2D(baseTexture, vUv);
-          gl_FragColor = vec4(toSRGB(toLinear(rasterTexel.rgb)),
-            ${material.alphaMode === 'BLEND' ? 'opacity * rasterTexel.a' : '1.0'});
-          return;` : ''}
+        ${material.unlit ? `vec4 rasterTexel = texture2D(baseTexture, vUv); gl_FragColor = vec4(toSRGB(toLinear(rasterTexel.rgb)), ${material.alphaMode === 'BLEND' ? 'opacity * rasterTexel.a' : '1.0'}); return;` : ''}
         vec3 normal = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
         vec4 texel = ${material.baseTexture ? 'texture2D(baseTexture, vUv)' : 'vec4(1.0)'};
         float alpha = opacity * texel.a;
@@ -942,37 +1038,17 @@ L.Layer3D = L.Layer.extend({
         vec3 color = ambient * base * (1.0 - metal) * ao + (diffuse + specular) * nl * toLinear(vec3(1.0, 0.937, 0.835)) * 3.0 + glow;
         ${material.vertexColors ? 'color = base * (ambient + toLinear(vec3(1.0, 0.937, 0.835)) * (3.0 / PI) * nl);' : ''}
         gl_FragColor = vec4(toSRGB(color), ${material.alphaMode === 'BLEND' ? 'alpha' : '1.0'});
-      }`;
-    const gl = this.renderer.gl;
-    const program = {
-      gl,
-      cullFace:    material.doubleSided ? null : this.renderer.gl.BACK,
-      transparent: material.alphaMode === 'BLEND',
-      depthWrite:  material.alphaMode !== 'BLEND',
-      uniforms: {
-        baseColor:         { value: material.color || [1, 1, 1] },
-        lightDirection:    { value: [0, 0, 0] }, skyDirection: { value: [0, 0, 0] },
-        metallic:          { value: material.metallic ?? 0 }, roughness: { value: material.roughness ?? 0.85 },
-        opacity:           { value: material.opacity ?? 1 }, alphaCutoff: { value: material.alphaCutoff ?? 0.5 },
-        occlusionStrength: { value: material.occlusionStrength ?? 1 },
-        emissive:          { value: material.emissive || [0, 0, 0] },
-        ...Object.fromEntries(['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']
-          .filter(name => material[name]).map(name => [name, { value: material[name] }])),
-      },
-      program: gl.createProgram(),
-      shaders: [],
-    };
-    for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]]) {
-      const shader = gl.createShader(type);
-      gl.shaderSource(shader, source); gl.compileShader(shader);
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        const error = gl.getShaderInfoLog(shader);
-        gl.deleteShader(shader);
-        this._removeProgram(program);
-        throw new Error(`Unable to compile Layer3D shader: ${error}`);
-      }
-      program.shaders.push(shader); gl.attachShader(program.program, shader);
+      }`);
+    gl.compileShader(fragmentShader);
+    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+      const error = gl.getShaderInfoLog(fragmentShader);
+      gl.deleteShader(fragmentShader);
+      this._removeProgram(program);
+      throw new Error(`Unable to compile Layer3D shader: ${error}`);
     }
+
+    program.shaders.push(fragmentShader);
+    gl.attachShader(program.program, fragmentShader);
     gl.linkProgram(program.program);
     program.locations = new Map();
     for (let i = 0; i < gl.getProgramParameter(program.program, gl.ACTIVE_UNIFORMS); i++) {
@@ -1161,35 +1237,46 @@ L.Layer3D = L.Layer.extend({
     this._updateWorldMatrix(this.scene, true);
     this._updateCamera(this.camera);
     // Unproject the mouse (-1..1) into a world-space ray from the camera.
-    const ray = this.raycaster;
-    const inverseCamera = new DOMMatrix(this.camera.projectionViewMatrix).inverse();
+    const inverseCamera       = new DOMMatrix(this.camera.projectionViewMatrix).inverse();
     const inverseCameraValues = inverseCamera.toFloat64Array();
-    if (![...inverseCameraValues].every(Number.isFinite)) throw new Error('Singular 3D transform');
-    ray.origin[0] = this.camera.position[0];
-    ray.origin[1] = this.camera.position[1];
-    ray.origin[2] = this.camera.position[2];
+    if (![...inverseCameraValues].every(Number.isFinite)) {
+      throw new Error('Singular 3D transform');
+    }
+    this.raycaster.origin[0] = this.camera.position[0];
+    this.raycaster.origin[1] = this.camera.position[1];
+    this.raycaster.origin[2] = this.camera.position[2];
     const unprojected = new DOMPoint(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1, 0, 1
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      0,
+      1
     ).matrixTransform(inverseCamera);
-    const end = [unprojected.x / unprojected.w, unprojected.y / unprojected.w, unprojected.z / unprojected.w];
-    ray.direction[0] = end[0] - ray.origin[0];
-    ray.direction[1] = end[1] - ray.origin[1];
-    ray.direction[2] = end[2] - ray.origin[2];
-    const rayLength = Math.hypot(...ray.direction) || 1;
-    ray.direction[0] /= rayLength; ray.direction[1] /= rayLength; ray.direction[2] /= rayLength;
-    const meshes = [];
+    const end = [
+      unprojected.x / unprojected.w,
+      unprojected.y / unprojected.w,
+      unprojected.z / unprojected.w
+    ];
+    this.raycaster.direction[0] = end[0] - this.raycaster.origin[0];
+    this.raycaster.direction[1] = end[1] - this.raycaster.origin[1];
+    this.raycaster.direction[2] = end[2] - this.raycaster.origin[2];
+    const rayLength = Math.hypot(...this.raycaster.direction) || 1;
+    this.raycaster.direction[0] /= rayLength;
+    this.raycaster.direction[1] /= rayLength;
+    this.raycaster.direction[2] /= rayLength;
+    const meshes = [],
+            hits = []
+               a = [0, 0, 0],
+               b = [0, 0, 0],
+               c = [0, 0, 0],
+             sub = (a, b) => a.map((v, i) => v - b[i]),
+           cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
+            dot  = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
     for (const object of objects) {
-      if (recursive) this.traverse(object, mesh => { if (mesh.geometry && mesh.visible) meshes.push(mesh); });
+      if (recursive) this.traverse(object, mesh => { if
+        (mesh.geometry && mesh.visible) meshes.push(mesh);
+      });
       else if (object.geometry && object.visible) meshes.push(object);
     }
-    const hits = [];
-    const a = [0, 0, 0],
-          b = [0, 0, 0],
-          c = [0, 0, 0];
-    const sub   = (a, b) => a.map((v, i) => v - b[i]);
-    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-    const dot   = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
     for (const mesh of meshes) {
       // Test in mesh-local space; compare distances only after returning to shared world space.
       const inverse       = new DOMMatrix(mesh.worldMatrix).inverse();
@@ -1218,10 +1305,15 @@ L.Layer3D = L.Layer.extend({
       let near = 0, far = Infinity;
       for (let i = 0; i < 3; i++) {
         if (Math.abs(direction[i]) < 1e-12) {
-          if (origin[i] < mesh.geometry.bounds.min[i] || origin[i] > mesh.geometry.bounds.max[i]) { far = -Infinity; break; }
+          if (origin[i] < mesh.geometry.bounds.min[i] || origin[i] > mesh.geometry.bounds.max[i]) {
+            far = -Infinity;
+            break;
+          }
         } else {
-          const a = (mesh.geometry.bounds.min[i] - origin[i]) / direction[i], b = (mesh.geometry.bounds.max[i] - origin[i]) / direction[i];
-          near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
+          const a = (mesh.geometry.bounds.min[i] - origin[i]) / direction[i],
+                b = (mesh.geometry.bounds.max[i] - origin[i]) / direction[i];
+          near = Math.max(near, Math.min(a, b));
+          far = Math.min(far, Math.max(a, b));
         }
       }
       if (far < near) {
@@ -1233,30 +1325,51 @@ L.Layer3D = L.Layer.extend({
         const ai = (index ? index.data[i] : i) * position.size;
         const bi = (index ? index.data[i + 1] : i + 1) * position.size;
         const ci = (index ? index.data[i + 2] : i + 2) * position.size;
-        a[0] = position.data[ai]; a[1] = position.data[ai + 1]; a[2] = position.data[ai + 2];
-        b[0] = position.data[bi]; b[1] = position.data[bi + 1]; b[2] = position.data[bi + 2];
-        c[0] = position.data[ci]; c[1] = position.data[ci + 1]; c[2] = position.data[ci + 2];
+        a[0] = position.data[ai];
+        a[1] = position.data[ai + 1];
+        a[2] = position.data[ai + 2];
+        b[0] = position.data[bi];
+        b[1] = position.data[bi + 1];
+        b[2] = position.data[bi + 2];
+        c[0] = position.data[ci];
+        c[1] = position.data[ci + 1];
+        c[2] = position.data[ci + 2];
         // Moller-Trumbore: barycentric triangle coordinates and local ray distance.
-        const e = sub(b, a), f = sub(c, a), p = cross(direction, f), det = dot(e, p);
-        if (mesh.program.cullFace !== null ? det < 1e-9 : Math.abs(det) < 1e-9) continue;
-        const t = sub(origin, a), u = dot(t, p) / det;
-        if (u < 0 || u > 1) continue;
-        const q = cross(t, e), v = dot(direction, q) / det;
-        if (v < 0 || u + v > 1) continue;
+        const e = sub(b, a),
+              f = sub(c, a),
+              p = cross(direction, f),
+              det = dot(e, p);
+        if (mesh.program.cullFace !== null ? det < 1e-9 : Math.abs(det) < 1e-9) {
+          continue;
+        }
+        const t = sub(origin, a),
+              u = dot(t, p) / det;
+        if (u < 0 || u > 1) {
+          continue;
+        }
+        const q = cross(t, e),
+              v = dot(direction, q) / det;
+        if (v < 0 || u + v > 1) {
+          continue;
+        }
         const distance = dot(f, q) / det;
-        if (distance > 0 && distance < closest) { closest = distance; faceIndex = i / 3; }
+        if (distance > 0 && distance < closest) {
+          closest = distance; faceIndex = i / 3;
+        }
       }
       if (faceIndex === undefined) continue;
       const point = new DOMPoint(
-        direction[0] * closest + origin[0], direction[1] * closest + origin[1],
-        direction[2] * closest + origin[2], 1
+        direction[0] * closest + origin[0],
+        direction[1] * closest + origin[1],
+        direction[2] * closest + origin[2],
+        1
       ).matrixTransform(new DOMMatrix(mesh.worldMatrix));
       const worldPoint = [point.x / point.w, point.y / point.w, point.z / point.w];
       hits.push({
-        object: mesh,
-        point: worldPoint,
         faceIndex,
-        distance: Math.hypot(
+        object:     mesh,
+        point:      worldPoint,
+        distance:   Math.hypot(
           worldPoint[0] - this.raycaster.origin[0],
           worldPoint[1] - this.raycaster.origin[1],
           worldPoint[2] - this.raycaster.origin[2]
@@ -1535,7 +1648,7 @@ L.Layer3D = L.Layer.extend({
 
   /** Update tooltip content/position and arbitrate cursor ownership across shared layers. */
   _showFeature(feature, event) {
-    const tooltip = this._featureTooltip;
+    const tooltip = this._tooltip;
     if (!tooltip) return;
     if (feature) {
       tooltip.replaceChildren(this.options.tooltipContent(feature));
@@ -1549,7 +1662,7 @@ L.Layer3D = L.Layer.extend({
     }
     const shared = this._shared;
     if (shared) {
-      const visible = [...shared._layers].some(layer => layer._featureTooltip && !layer._featureTooltip.hidden);
+      const visible = [...shared._layers].some(layer => layer._tooltip && !layer._tooltip.hidden);
       if (visible) {
         if (shared._cursor === undefined) shared._cursor = this.container.style.cursor;
         this.container.style.cursor = 'pointer';
@@ -1768,9 +1881,9 @@ L.Layer3D = L.Layer.extend({
         const min = bounds.min || map.project(this._sceneOrigin, zoom);
         const size = bounds.isValid() ? bounds.getSize() : new L.Point(1, 1);
         // ponytail: cap at 4096 px; virtual textures if wide views need native detail.
-        const limit = Math.min(4096, gl.getParameter(gl.MAX_TEXTURE_SIZE));
-        const scale = Math.min(1, limit / Math.max(size.x, size.y));
-        canvas.width = Math.max(1, Math.ceil(size.x * scale));
+        const limit   = Math.min(4096, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+        const scale   = Math.min(1, limit / Math.max(size.x, size.y));
+        canvas.width  = Math.max(1, Math.ceil(size.x * scale));
         canvas.height = Math.max(1, Math.ceil(size.y * scale));
         const context = canvas.getContext('2d');
         tiles.sort((a, b) => (a.layer.options.zIndex || 0) - (b.layer.options.zIndex || 0) || a.coords.z - b.coords.z);
@@ -1890,21 +2003,33 @@ L.Layer3D = L.Layer.extend({
   _updateCamera(camera) {
     const z       = camera.position.map((v, i) => v - camera.target[i]);
     const zLength = Math.hypot(...z) || 1;
-    for (let i = 0; i < 3; i++) z[i] /= zLength;
-    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const cross   = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    for (let i = 0; i < 3; i++) {
+      z[i] /= zLength;
+    }
     const x = cross(camera.up, z), xLength = Math.hypot(...x) || 1;
-    for (let i = 0; i < 3; i++) x[i] /= xLength;
+    for (let i = 0; i < 3; i++) {
+      x[i] /= xLength;
+    }
     const y = cross(z, x);
-    const view = new DOMMatrix([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0,
-      z[0], z[1], z[2], 0, ...camera.position, 1]).inverse().toFloat64Array();
-    if (![...view].every(Number.isFinite)) throw new Error('Singular 3D transform');
-    for (let i = 0; i < 16; i++) camera.viewMatrix[i] = view[i];
-    const f = 1 / Math.tan(camera.fov * Math.PI / 360);
-    const n = camera.near, r = camera.far;
+    const view = new DOMMatrix([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, ...camera.position, 1]).inverse().toFloat64Array();
+    if (![...view].every(Number.isFinite)) {
+      throw new Error('Singular 3D transform');
+    }
+    for (let i = 0; i < 16; i++) {
+      camera.viewMatrix[i] = view[i];
+    }
+    const f = 1 / Math.tan(camera.fov * Math.PI / 360),
+          n = camera.near,
+          r = camera.far;
     const projection = [f / camera.aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (r + n) / (n - r), -1, 0, 0, 2 * r * n / (n - r), 0];
-    for (let i = 0; i < 16; i++) camera.projectionMatrix[i] = projection[i];
+    for (let i = 0; i < 16; i++) {
+      camera.projectionMatrix[i] = projection[i];
+    }
     const projectionView = new DOMMatrix(camera.projectionMatrix).multiply(new DOMMatrix(camera.viewMatrix)).toFloat64Array();
-    for (let i = 0; i < 16; i++) camera.projectionViewMatrix[i] = projectionView[i];
+    for (let i = 0; i < 16; i++) {
+      camera.projectionViewMatrix[i] = projectionView[i];
+    }
   },
 
   /** Apply depth/culling/blend state and upload uniforms retained by the shader linker. */
@@ -1938,11 +2063,15 @@ L.Layer3D = L.Layer.extend({
           texture.uploaded = texture.image; texture.needsUpdate = false;
         }
         gl.uniform1i(location, unit++);
+      } else if (type === gl.FLOAT_MAT4) {
+        gl.uniformMatrix4fv(location, false, value);
+      } else if (type === gl.FLOAT_MAT3) {
+        gl.uniformMatrix3fv(location, false, value);
+      } else if (type === gl.FLOAT_VEC3) {
+        gl.uniform3fv(location, value);
+      } else {
+        gl.uniform1f(location, value);
       }
-      else if (type === gl.FLOAT_MAT4) gl.uniformMatrix4fv(location, false, value);
-      else if (type === gl.FLOAT_MAT3) gl.uniformMatrix3fv(location, false, value);
-      else if (type === gl.FLOAT_VEC3) gl.uniform3fv(location, value);
-      else gl.uniform1f(location, value);
     }
   },
 
@@ -2031,6 +2160,7 @@ L.TerrainLayer = L.Layer3D.extend({
     this.terrainSource = terrainSource;
     this._terrainTiles = new Map();
     this._rasterTiles = new Map();
+    this._terrainReady = false;
   },
 
   onAdd(map) {
@@ -2047,6 +2177,7 @@ L.TerrainLayer = L.Layer3D.extend({
   onRemove(map) {
     this._terrainController?.abort();
     this._terrainLoading = false;
+    this._terrainReady = false;
     map.eachLayer(layer => layer._setTerrain3D?.(null));
     for (const tile of this._rasterTiles.keys()) this.removeRasterTile(tile);
     if (map._terrain3D === this) delete map._terrain3D;
@@ -2063,6 +2194,7 @@ L.TerrainLayer = L.Layer3D.extend({
   async _loadTerrain() {
     if (this._terrainLoading || !this._map) return;
     this._terrainLoading = true;
+    this._terrainReady = false;
     const controller = this._terrainController = new AbortController();
     try {
       if (!this.terrainSource || !L.PMTilesLayer) throw new Error('TerrainLayer requires a PMTiles elevation archive');
@@ -2093,6 +2225,7 @@ L.TerrainLayer = L.Layer3D.extend({
         }
       }));
       if (controller.signal.aborted || this._map !== map) return;
+      this._terrainReady = true;
       this._terrainOriginElevation = this._getElevation(this.location) ?? 0;
       for (const layer of Object.values(map._layers)) layer._setTerrainHeight?.();
       map.fire('terrainchange');
@@ -2108,7 +2241,7 @@ L.TerrainLayer = L.Layer3D.extend({
   },
 
   _getElevation(location) {
-    if (!this._map || !this._terrainTiles.size) return null;
+    if (!this._map || !this._terrainReady) return null;
     const point = this._map.project(location, this._terrainZoom);
     const x = point.x - 0.5, y = point.y - 0.5;
     const x0 = Math.floor(x), y0 = Math.floor(y);
@@ -2161,7 +2294,9 @@ L.TerrainLayer = L.Layer3D.extend({
     };
     if (!this._rasterProgram || this._rasterProgram.gl !== gl) {
       this._rasterProgram = this._createProgram({
-        baseTexture: texture, unlit: true, alphaMode: 'BLEND',
+        baseTexture: texture,
+        unlit: true,
+        alphaMode: 'BLEND',
       });
     }
     const mesh = {

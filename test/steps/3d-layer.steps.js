@@ -204,6 +204,11 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
       await wait(() => Object.values(raster._tiles).length > 0 && Object.values(raster._tiles).every(t => t.el.done));
       if (order === 'after') terrain.addTo(map);
       const initiallyFlat = Object.values(raster._tiles).every(t => t.el.style.visibility !== 'hidden');
+      terrain._terrainTiles.set(`${coords.x}/${coords.y}`, new Float32Array(256 * 256).fill(250));
+      buildings._shared._render();
+      const partialElevation = terrain._getElevation(map.getCenter());
+      const partialCameraY = buildings.camera.target[1];
+      terrain._terrainTiles.delete(`${coords.x}/${coords.y}`);
       release();
       await terrain._terrainPromise;
       const settled = () => terrain._rasterTiles.size === Object.values(raster._tiles).length &&
@@ -305,7 +310,8 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
       await terrain._terrainPromise;
       await wait(settled);
       return { initiallyFlat, hidden, restored, cancelled, reattached: terrain._rasterTiles.size > 0,
-        elevationError, deformation, buildingError, modelError, uvError, cameraError, projectionError, pixels,
+        elevationError, deformation, buildingError, modelError, uvError, cameraError, projectionError,
+        partialElevation, partialCameraY, pixels,
         roofPixel: [...roofPixel], roofImagePixel, errors };
     } finally {
       release();
@@ -317,6 +323,8 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
     }
   }, order);
   for (const name of ['initiallyFlat', 'hidden', 'restored', 'cancelled', 'reattached']) assert.equal(result[name], true, name);
+  assert.equal(result.partialElevation, null, 'Do not expose elevations from partially loaded DEM tiles');
+  assert.equal(result.partialCameraY, 0, 'Keep the camera aligned while DEM tiles are loading');
   assert.ok(result.deformation > 10, 'Raster vertices must have measurable elevation differences');
   assert.deepEqual(result.pixels, [[255, 0, 0, 255], [0, 0, 255, 255]], 'Rendered imagery must retain north/south orientation');
   const roofChannel = result.roofImagePixel[0] > result.roofImagePixel[2] ? 0 : 2;
@@ -1018,7 +1026,7 @@ Then('DOM tooltip content stays inside the map without interpreting text as HTML
     container.dispatchEvent(new MouseEvent('mousemove', {
       clientX: rect.right - 2, clientY: rect.bottom - 2,
     }));
-    const tooltip = layer._featureTooltip;
+    const tooltip = layer._tooltip;
     const bounds = tooltip.getBoundingClientRect();
     const contained = bounds.left >= rect.left && bounds.right <= rect.right &&
       bounds.top >= rect.top && bounds.bottom <= rect.bottom;
@@ -1370,7 +1378,7 @@ Then('3D click reports the picked object without changing the map view', { timeo
     const sharedPicking = nearClicks === 1 && farClicks === 1;
     container.dispatchEvent(new MouseEvent('click', position()));
     const repeatedClickStable = map.getZoom() === firstZoom && map.getCenter().equals(firstCenter) && movements === 0;
-    const tooltipShown = !near._featureTooltip.hidden && near._featureTooltip.textContent === 'Near';
+    const tooltipShown = !near._tooltip.hidden && near._tooltip.textContent === 'Near';
     const center = map.getCenter();
     container.dispatchEvent(new MouseEvent('click', { clientX: -1000, clientY: -1000 }));
     const emptyUnchanged = map.getZoom() === firstZoom && map.getCenter().equals(center);
@@ -1450,7 +1458,7 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
     layer._showFeature(feature, position);
     other._showFeature(feature, position);
     layer.remove();
-    const sharedCursor = container.style.cursor === 'pointer' && !other._featureTooltip.hidden;
+    const sharedCursor = container.style.cursor === 'pointer' && !other._tooltip.hidden;
     other.remove();
     const removed = !tooltip.isConnected && !container.querySelector('.leaflet-3d-tooltip') &&
       container.style.cursor === 'crosshair';
@@ -1673,7 +1681,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     const hit = layer._findFeature(position);
     const material = hit.mesh.program;
     container.dispatchEvent(new MouseEvent('mousemove', position));
-    const tooltip = layer._featureTooltip;
+    const tooltip = layer._tooltip;
     const modelTooltip = !tooltip.hidden && tooltip.textContent === 'Eiffel Tower' &&
       container.style.cursor === 'pointer' && layer.hoveredFeature.mesh === hit.mesh &&
       hit.mesh.program === material && !layer.highlightedFeature;
@@ -1688,7 +1696,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     const attributionRemoved = !map.attributionControl.getContainer().textContent.includes('Test model attribution');
     layer.addTo(map);
     const retained = layer.model.parent === layer.root;
-    const tooltipRecreated = layer._featureTooltip !== tooltip && layer._featureTooltip.hidden;
+    const tooltipRecreated = layer._tooltip !== tooltip && layer._tooltip.hidden;
     layer._shared._render();
     const restoredHit = layer._findFeature(position);
     const restoredGPU = restoredHit?.model === layer.model &&
@@ -1783,7 +1791,9 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     const size = map.getSize();
     const error = new L.Point((screen[0] + 1) * size.x / 2, (1 - screen[1]) * size.y / 2).distanceTo(expected);
     const renderer = second.renderer;
-    const canvasDefaults = renderer.gl.canvas.style.zIndex === '450' &&
+    const canvasDefaults = renderer.gl.canvas.parentNode === map.getPane('webglPane') &&
+      map.getPane('webglPane').parentNode === map.getContainer() &&
+      map.getPane('webglPane').style.zIndex === '450' &&
       renderer.dpr === Math.min(window.devicePixelRatio, 2);
     let disposals = 0;
     const contextLoss = renderer.gl.getExtension('WEBGL_lose_context');
@@ -2096,7 +2106,7 @@ When('I disable and restore the 3D overlays through the layer control', async fu
     return !map.hasLayer(before.tower) && map.hasLayer(buildings) &&
       before.canvas.isConnected && buildings.renderer.gl.canvas === before.canvas &&
       !map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
-      !before.tower._featureTooltip;
+      !before.tower._tooltip;
   });
   await buildingsControl.uncheck();
   const allDisabled = await this.page.evaluate(() =>
@@ -2113,7 +2123,7 @@ When('I disable and restore the 3D overlays through the layer control', async fu
     return map.hasLayer(tower) && tower.model === before.model &&
       tower.renderer.gl.canvas !== before.canvas && tower.renderer.gl.canvas.isConnected &&
       map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
-      tower._featureTooltip.hidden;
+      tower._tooltip.hidden;
   });
   await buildingsControl.check();
   const bothRestored = await this.page.evaluate(() => {
@@ -2174,12 +2184,12 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
   await this.page.mouse.move(target.x, target.y);
   await this.page.waitForFunction(() => {
     const tower = layers._layers.find(entry => entry.layer.model).layer;
-    return tower._featureTooltip && !tower._featureTooltip.hidden &&
+    return tower._tooltip && !tower._tooltip.hidden &&
       tower.hoveredFeature?.model === tower.model;
   });
   this.exampleTowerHover = await this.page.evaluate(() => {
     const tower = layers._layers.find(entry => entry.layer.model).layer;
-    return { text: tower._featureTooltip.textContent, role: tower._featureTooltip.getAttribute('role'),
+    return { text: tower._tooltip.textContent, role: tower._tooltip.getAttribute('role'),
       cursor: map.getContainer().style.cursor };
   });
   const beforeClick = await this.page.evaluate(() => {
@@ -2201,7 +2211,7 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
   await this.page.mouse.move(810, 610);
   await this.page.waitForFunction(() => {
     const tower = layers._layers.find(entry => entry.layer.model).layer;
-    return tower._featureTooltip.hidden && !tower.hoveredFeature &&
+    return tower._tooltip.hidden && !tower.hoveredFeature &&
       map.getContainer().style.cursor !== 'pointer';
   });
 });
@@ -2599,7 +2609,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
   this.clickCleared = await this.page.evaluate(() => {
       let buildings;
       map.eachLayer(layer => { if (layer.group) buildings = layer; });
-      return buildings._featureTooltip.hidden && !buildings.hoveredFeature && !buildings.highlightedFeature &&
+      return buildings._tooltip.hidden && !buildings.hoveredFeature && !buildings.highlightedFeature &&
         map.getContainer().style.cursor !== 'pointer';
     });
   assert.equal(this.hoverHighlight, true, JSON.stringify({ interaction, highlightedColor }));
