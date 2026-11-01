@@ -589,13 +589,17 @@ L.Map.include({
      */
     _setPitchTransform(transform) {
         this._rotatePane.style.transformOrigin = '0 0';
-        this._rotatePane.style.transform = transform;
         // parse the transform directly: getComputedStyle() would force a style recalculation on every frame
         const matrix = this._pitchTransform = new DOMMatrix(transform),
             a = matrix.m11, b = matrix.m21, c = matrix.m41,
             d = matrix.m12, e = matrix.m22, f = matrix.m42,
             g = matrix.m14, h = matrix.m24, i = matrix.m44,
             determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+
+        // Ground is already projected; discard depth so it cannot occlude upright DOM overlays.
+        const ground = DOMMatrix.fromMatrix(matrix);
+        ground.m13 = ground.m23 = ground.m43 = 0;
+        this._rotatePane.style.transform = ground.toString();
 
         this._pitchInverseTransform = {
             a: (e * i - f * h) / determinant,
@@ -869,6 +873,8 @@ L.Map.include({
 
         if (this._rotate) {
             this._rotatePane = this.createPane('rotatePane', this._mapPane);
+            // Keep the context stable at pitch zero too: Firefox clips tiles when it is removed.
+            this._mapPane.style.transformStyle = this._rotatePane.style.transformStyle = 'preserve-3d';
             this._norotatePane = this.createPane('norotatePane', this._mapPane);
             if (L.version.startsWith('2.')) {
                 this._rotatePane.style.transformOrigin = '0 0';

@@ -1,7 +1,7 @@
 // Builds the offline PMTiles archives used by examples/leaflet-rotate-3d-layer.html.
 // Usage: npm run pmtiles -- [--bbox=west,south,east,north] [--minzoom=11] [--maxzoom=17] [--only=buildings,orthophotos,plan-ign]
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, open, rename, rm } from 'node:fs/promises';
+import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -46,7 +46,7 @@ const archives = {
       });
       const data = JSON.parse(await download(url));
       if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error(`Invalid GeoJSON for ${z}/${x}/${y}`);
-      return data.features.length ? gzipSync(JSON.stringify(data)) : null;
+      return gzipSync(JSON.stringify(data));
     },
   },
   orthophotos: {
@@ -114,9 +114,11 @@ async function download(url) {
       await sleep(1000 * 2 ** attempt);
       continue;
     }
-    if (response.ok) return Buffer.from(await response.arrayBuffer());
-    if (response.status === 404) return null;
-    if ((response.status !== 429 && response.status < 500) || attempt === 5) {
+    if (response.ok) {
+      const data = Buffer.from(await response.arrayBuffer());
+      if (data.length) return data;
+      if (attempt === 5) throw new Error(`Empty tile response for ${url}`);
+    } else if ((response.status !== 404 && response.status !== 429 && response.status < 500) || attempt === 5) {
       throw new Error(`HTTP ${response.status} for ${url}`);
     }
     await sleep(1000 * 2 ** attempt);
@@ -198,23 +200,36 @@ async function build(name, archive) {
   let done = 0;
   let next = 0;
   try {
-    await Promise.all(Array.from({ length: archive.concurrency }, async () => {
+    const workers = await Promise.allSettled(Array.from({ length: archive.concurrency }, async () => {
       while (next < tiles.length) {
         const [z, x, y] = tiles[next++];
         const tile = await archive.tile(z, x, y);
-        if (tile?.length) {
-          entries.push({ tileId: tileId(z, x, y), offset: dataLength, length: tile.length, runLength: 1 });
-          dataLength += tile.length;
-          await data.write(tile, 0, tile.length, entries.at(-1).offset);
+        if (!tile?.length) throw new Error(`${name}: missing tile ${z}/${x}/${y}`);
+        const offset = dataLength;
+        dataLength += tile.length;
+        let written = 0;
+        while (written < tile.length) {
+          const { bytesWritten } = await data.write(tile, written, tile.length - written, offset + written);
+          if (!bytesWritten) throw new Error(`${name}: unable to write tile ${z}/${x}/${y}`);
+          written += bytesWritten;
         }
+        entries.push({ tileId: tileId(z, x, y), offset, length: tile.length, runLength: 1 });
         if (++done % 100 === 0 || done === tiles.length) console.log(`${name}: ${done}/${tiles.length}`);
       }
     }));
+    const failed = workers.filter(worker => worker.status === 'rejected');
+    if (failed.length) throw new AggregateError(failed.map(worker => worker.reason),
+      `${name}: archive incomplete; not published (${failed.length} failed workers)`);
   } finally {
     await data.close();
   }
 
   entries.sort((a, b) => a.tileId - b.tileId);
+  const expectedIds = tiles.map(([z, x, y]) => tileId(z, x, y)).sort((a, b) => a - b);
+  if (entries.length !== expectedIds.length || entries.some((entry, i) => entry.tileId !== expectedIds[i]) ||
+    (await stat(dataFile)).size !== dataLength) {
+    throw new Error(`${name}: tile coverage or data length verification failed; archive not published`);
+  }
   const { root, leaves } = buildDirectories(entries);
   const metadata = gzipSync(JSON.stringify({ name: `paris-${name}`, attribution: archive.attribution }));
   const header = Buffer.alloc(127);
@@ -252,6 +267,9 @@ async function build(name, archive) {
   const output = createWriteStream(partial);
   output.write(Buffer.concat([header, root, metadata, leaves]));
   await pipeline(createReadStream(dataFile), output);
+  if ((await stat(partial)).size !== 127 + root.length + metadata.length + leaves.length + dataLength) {
+    throw new Error(`${name}: truncated archive; not published`);
+  }
   await rename(partial, file);
   await rm(dataFile);
   console.log(`${name}: wrote ${entries.length} tiles to ${fileURLToPath(file)}`);

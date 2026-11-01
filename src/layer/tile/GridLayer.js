@@ -32,6 +32,15 @@ L.GridLayer.include({
         return events;
     },
 
+    _initContainer() {
+        gridLayerProto._initContainer.apply(this, arguments);
+        if (!this._map._rotate || !this._container) { return; }
+        // Tile levels stay flat: preserving 3D on them also clips images in Firefox.
+        for (let pane = this._container; pane && pane !== this._map._rotatePane; pane = pane.parentElement) {
+            pane.style.transformStyle = 'preserve-3d';
+        }
+    },
+
     /**
      * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
      * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).

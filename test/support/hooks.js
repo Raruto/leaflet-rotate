@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { After, AfterAll, Before, BeforeAll, Given, setDefaultTimeout } from '@cucumber/cucumber';
-import { chromium } from 'playwright';
+import { chromium, firefox } from 'playwright';
 import { startServer } from '../../build/server.js';
 
 setDefaultTimeout(10000);
@@ -12,7 +12,7 @@ let baseUrl;
 BeforeAll(async () => {
   server = await startServer(0);
   baseUrl = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch();
+  browser = await (process.env.TEST_BROWSER === 'firefox' ? firefox : chromium).launch();
 });
 
 AfterAll({ timeout: 30000 }, async () => {

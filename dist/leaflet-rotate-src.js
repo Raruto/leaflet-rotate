@@ -1067,6 +1067,15 @@ var leafletRotate = (() => {
       }
       return events;
     },
+    _initContainer() {
+      gridLayerProto._initContainer.apply(this, arguments);
+      if (!this._map._rotate || !this._container) {
+        return;
+      }
+      for (let pane = this._container; pane && pane !== this._map._rotatePane; pane = pane.parentElement) {
+        pane.style.transformStyle = "preserve-3d";
+      }
+    },
     /**
      * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
      * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).
@@ -1761,8 +1770,10 @@ var leafletRotate = (() => {
      */
     _setPitchTransform(transform) {
       this._rotatePane.style.transformOrigin = "0 0";
-      this._rotatePane.style.transform = transform;
       const matrix = this._pitchTransform = new DOMMatrix(transform), a = matrix.m11, b = matrix.m21, c = matrix.m41, d = matrix.m12, e = matrix.m22, f = matrix.m42, g = matrix.m14, h = matrix.m24, i = matrix.m44, determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+      const ground = DOMMatrix.fromMatrix(matrix);
+      ground.m13 = ground.m23 = ground.m43 = 0;
+      this._rotatePane.style.transform = ground.toString();
       this._pitchInverseTransform = {
         a: (e * i - f * h) / determinant,
         b: (c * h - b * i) / determinant,
@@ -2024,6 +2035,7 @@ var leafletRotate = (() => {
       L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
       if (this._rotate) {
         this._rotatePane = this.createPane("rotatePane", this._mapPane);
+        this._mapPane.style.transformStyle = this._rotatePane.style.transformStyle = "preserve-3d";
         this._norotatePane = this.createPane("norotatePane", this._mapPane);
         if (L.version.startsWith("2.")) {
           this._rotatePane.style.transformOrigin = "0 0";

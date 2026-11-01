@@ -4,6 +4,236 @@ import { After, AfterAll, Before, Given, Then, When } from '@cucumber/cucumber';
 
 const coveredFunctions = new Map();
 
+Then('cancelled building downloads recover without errors or stale meshes', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map;
+    const layer = new L.Layer3D({ source: 'paris-buildings.pmtiles' }).addTo(map);
+    await nativeChecks.ready(layer);
+    const idle = async () => {
+      const deadline = performance.now() + 3000;
+      while (layer._inflight) {
+        if (performance.now() > deadline) throw new Error('Building request slots were not released');
+        await new Promise(requestAnimationFrame);
+      }
+    };
+    await idle();
+    let errors = 0, active = 0, maximum = 0, aborted = 0;
+    let hold = true;
+    const requests = [];
+    layer.on('error', () => errors++);
+    layer.getZxy = async (z, x, y, signal) => {
+      requests.push(`${x}/${y}`);
+      active++;
+      maximum = Math.max(maximum, active);
+      try {
+        if (hold) await new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            aborted++;
+            reject(signal.reason);
+          }, { once: true });
+        });
+        return { data: new TextEncoder().encode('{"type":"FeatureCollection","features":[]}') };
+      } finally {
+        active--;
+      }
+    };
+    const home = map.getCenter();
+    map.setView([48.85657, 2.39], 17, { animate: false });
+    const pending = [...layer._areas.values()].filter(area => area.started && !area.done);
+    const started = active;
+    hold = false;
+    map.setView(home, 17, { animate: false });
+    await idle();
+    const recovered = layer._areas.size > 0 && [...layer._areas.values()].every(area => area.done && !area.error);
+    const noStale = pending.every(area => area.request.signal.aborted && !area.mesh && !area.done);
+    hold = true;
+    map.setView([48.85657, 2.39], 17, { animate: false });
+    const beforeRemoval = requests.length;
+    layer.remove();
+    await idle();
+    const stopped = requests.length === beforeRemoval && active === 0 && layer._areas.size === 0;
+    hold = false;
+    layer.addTo(map);
+    await idle();
+    const reloaded = requests.length > beforeRemoval && [...layer._areas.values()].every(area => area.done);
+    layer.remove();
+    return { started, maximum, aborted, errors, recovered, noStale, stopped, reloaded };
+  });
+  assert.equal(result.started, 2, 'Cancel requests while both loading slots are occupied');
+  assert.equal(result.maximum, 2);
+  assert.equal(result.aborted, 4, 'Pan and removal each cancel two pending requests');
+  assert.equal(result.errors, 0, 'Expected AbortErrors are not loading failures');
+  for (const name of ['recovered', 'noStale', 'stopped', 'reloaded']) assert.equal(result[name], true, name);
+});
+
+Then('raster perspective follows pitch on late and reattached layers', async function () {
+  const result = await this.page.evaluate(() => {
+    const map = test3d.map, checks = [];
+    const pane = map.createPane('lateRaster', map._rotatePane);
+    const first = new L.GridLayer({ pane: 'lateRaster', updateWhenIdle: true }).addTo(map);
+    const second = new L.GridLayer({ pane: 'lateRaster' }).addTo(map);
+    const check = () => {
+      const expected = 'preserve-3d';
+      checks.push([map._rotatePane, pane, first._container, second._container]
+        .every(el => el.style.transformStyle === expected));
+      checks.push(getComputedStyle(map._mapPane).transformStyle === 'preserve-3d');
+      checks.push([first, second].every(layer => Object.values(layer._levels)
+        .every(level => getComputedStyle(level.el).transformStyle === 'flat')));
+    };
+    check();
+    map.setPitch(0); check();
+    first.remove();
+    map.setPitch(75);
+    first.addTo(map); check();
+    map.setPitch(0); check();
+    map.setPitch(45); check();
+    first.remove(); second.remove();
+    pane.remove();
+    return checks;
+  });
+  assert.ok(result.every(Boolean), 'Late layers, custom panes and updateWhenIdle must follow pitch');
+});
+
+Then('pitched raster surfaces draw loaded tiles after rapid camera changes', { timeout: 30000 }, async function () {
+  await this.page.addStyleTag({ content: '.leaflet-control { display: none; }' });
+  const png = await this.page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(0, 0, 256, 256);
+    return canvas.toDataURL().split(',')[1];
+  });
+  await this.page.route(/\/pitched-tile\.png/, async route => {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await route.fulfill({ contentType: 'image/png', body: Buffer.from(png, 'base64') });
+  });
+  await this.page.evaluate(() => {
+    const map = test3d.map;
+    map.getContainer().style.width = '1000px';
+    map.getContainer().style.height = '731px';
+    map.invalidateSize({ animate: false });
+    map.setView([48.85478060234936, 2.28643600540333], 17, { animate: false });
+    test3d.tiles = new L.TileLayer('/pitched-tile.png?{z}/{x}/{y}', { maxNativeZoom: 17 }).addTo(map);
+  });
+  await this.page.waitForFunction(() => !test3d.tiles.isLoading());
+  await this.page.evaluate(() => {
+    const map = test3d.map, layer = test3d.tiles, level = layer._levels[layer._tileZoom];
+    map._setPitchAndBearing(60.5, 152.98861657457235);
+    level.origin = new L.Point(16990718, 11542325);
+    L.DomUtil.setTransform(level.el, new L.Point(-1816, 672), 1);
+    for (const tile of Object.values(layer._tiles)) {
+      L.DomUtil.setPosition(tile.el, new L.Point(tile.coords.x, tile.coords.y).scaleBy(layer.getTileSize()).subtract(level.origin));
+    }
+    map._pixelOrigin = new L.Point(16992534, 11541653);
+    L.DomUtil.setPosition(map._mapPane, new L.Point(-670, 1433));
+    map._setPitchTransform('matrix3d(-1.3127, 0.608476, 0.395287, -0.000360499, 0.373224, -1.19361, -0.775414, 0.000707172, -0.525431, -0.390956, 0.492424, -0.000449087, -2578.6, 2999.53, 2642.09, -1.40956)');
+  });
+  const checkPixels = async () => {
+    await this.page.waitForTimeout(400);
+    const image = await this.page.locator('#first').screenshot();
+    const missing = await this.page.evaluate(async base64 => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${base64}`;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      let missing = 0;
+      for (let y = 120; y < 700; y += 80) {
+        for (let x = 100; x < 950; x += 100) {
+          const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
+          if (g < 240 || r > 10 || b > 10) missing++;
+        }
+      }
+      return missing;
+    }, image.toString('base64'));
+    assert.equal(missing, 0, 'Actual raster pixels must cover the ground, not just loaded DOM images');
+  };
+  await checkPixels();
+  const checkMarker = async () => {
+    const points = await this.page.evaluate(() => {
+      const map = test3d.map;
+      const marker = new L.Marker(map.containerPointToLatLng([550, 390]), {
+        icon: new L.DivIcon({ className: '', html: '<div style="width:30px;height:30px;background:#ff00ff"></div>', iconSize: [30, 30], iconAnchor: [15, 15] })
+      }).addTo(map);
+      marker.bindTooltip('<div style="width:30px;height:30px;background:#00ffff"></div>', {
+        permanent: true, direction: 'right', opacity: 1
+      });
+      test3d.visibleMarker = marker;
+      const rect = marker.getTooltip().getElement().querySelector('div').getBoundingClientRect();
+      const container = map.getContainer().getBoundingClientRect();
+      return [map.latLngToContainerPoint(marker.getLatLng()), {
+        x: rect.left - container.left + rect.width / 2, y: rect.top - container.top + rect.height / 2
+      }];
+    });
+    await this.page.waitForTimeout(300);
+    const image = await this.page.locator('#first').screenshot();
+    const colors = await this.page.evaluate(async ({ base64, points }) => {
+      const img = new Image(); img.src = `data:image/png;base64,${base64}`; await img.decode();
+      const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0);
+      return points.map(point => [...ctx.getImageData(Math.round(point.x), Math.round(point.y), 1, 1).data]);
+    }, { base64: image.toString('base64'), points });
+    await this.page.evaluate(() => test3d.visibleMarker.remove());
+    const expected = [[255, 0, 255, 255], [0, 255, 255, 255]];
+    assert.ok(colors.every((color, i) => color.every((channel, j) => Math.abs(channel - expected[i][j]) <= 32)),
+      `Markers and permanent tooltips paint above the raster ground: ${JSON.stringify(colors)}`);
+  };
+  await checkMarker();
+  await this.page.evaluate(async () => {
+    const map = test3d.map;
+    for (let i = 0; i < 12; i++) {
+      map.setPitch([20, 75, 45][i % 3], { animate: true, duration: .15 });
+      map.setBearing(i * 61, { animate: true, duration: .15 });
+      map.setZoomAround([400, 350], i % 2 ? 17 : 18);
+      map.panBy([30, -20], { animate: true, duration: .1 });
+      await new Promise(resolve => setTimeout(resolve, 70));
+    }
+    await new Promise(resolve => setTimeout(resolve, 400));
+    map.setPitch(45); map.setBearing(153);
+    map.setView([48.85478060234936, 2.28643600540333], 17, { animate: false });
+  });
+  await this.page.waitForFunction(() => !test3d.tiles.isLoading());
+  await checkPixels();
+  await checkMarker();
+  await this.page.addStyleTag({ content: '.leaflet-control-rotate { display: block; }' });
+  await this.page.locator('.leaflet-control-rotate a').click();
+  await this.page.waitForFunction(() => test3d.map.getPitch() === 0 && test3d.map.getBearing() === 0);
+  await this.page.waitForFunction(() => !test3d.tiles.isLoading());
+  await checkPixels();
+  await checkMarker();
+  const styles = await this.page.evaluate(() => {
+    test3d.map.setPitch(0);
+    return [test3d.map._mapPane, test3d.map._rotatePane, test3d.tiles._container, test3d.tiles.getPane()]
+      .map(el => el.style.transformStyle);
+  });
+  assert.deepEqual(styles, Array(4).fill('preserve-3d'), 'Compass reset preserves the ground context at pitch zero');
+});
+
+Then('the Paris example keeps navigation inside the building archive', async function () {
+  const result = await this.page.evaluate(async () => {
+    const bounds = map.options.maxBounds;
+    const checks = [];
+    for (const [pitch, bearing] of [[0, 0], [45, 90], [85, 270]]) {
+      map.setPitch(pitch);
+      map.setBearing(bearing);
+      for (const location of [[48.91892, 1.99112], [48.7, 2.6]]) {
+        map.setView(location, 17, { animate: false });
+        await new Promise(resolve => setTimeout(resolve, 400));
+        checks.push({ valid: bounds.contains(map.getCenter()), pitch, center: map.getCenter() });
+      }
+      map.setZoom(1, { animate: false });
+      await new Promise(resolve => setTimeout(resolve, 400));
+      checks.push({ valid: map.getZoom() === 15 && bounds.contains(map.getCenter()), pitch, center: map.getCenter(), zoom: map.getZoom() });
+    }
+    return { checks, viscosity: map.options.maxBoundsViscosity };
+  });
+  assert.ok(result.checks.every(check => check.valid), JSON.stringify(result));
+  assert.equal(result.viscosity, 1);
+});
+
 Then('raster zoom transitions stay paused between WebGL frames and resume on removal', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;

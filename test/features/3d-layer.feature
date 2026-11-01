@@ -1,5 +1,21 @@
 @3d-layer
 Feature: Reusable 3D layers
+  Scenario: Cancelled building downloads release their slots and reload on return
+    Given a map with the standalone 3D module and no dependency import map
+    Then cancelled building downloads recover without errors or stale meshes
+
+  Scenario: Raster layers restore perspective after toggling and late attachment
+    Given a map with the standalone 3D module and no dependency import map
+    Then raster perspective follows pitch on late and reattached layers
+
+  Scenario: Pitched raster surfaces and markers remain visible after camera changes and compass reset
+    Given a map with the standalone 3D module and no dependency import map
+    Then pitched raster surfaces draw loaded tiles after rapid camera changes
+
+  Scenario: The Paris example prevents navigation outside its local archives
+    Given the Eiffel Tower example page is open
+    Then the Paris example keeps navigation inside the building archive
+
   Scenario: Raster zoom transitions advance only with shared WebGL frames
     Given a map with the standalone 3D module and no dependency import map
     Then raster zoom transitions stay paused between WebGL frames and resume on removal
