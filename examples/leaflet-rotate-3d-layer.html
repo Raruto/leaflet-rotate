@@ -57,6 +57,7 @@
 				'Paris buildings (3D)': new L.Layer3D({
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/volumesbatisparis/">Building volumes: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 					source: 'data/paris-buildings.pmtiles',
+					roofTexture: true,
 					ariaLabel: '3D view of the Eiffel Tower and Paris buildings',
 					featureStyle({ properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } }) {
 						if (!Number.isFinite(storeys) || storeys < 0 || ![0, 1].includes(ground) ||

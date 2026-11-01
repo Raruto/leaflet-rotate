@@ -156,6 +156,7 @@ L.PMTilesLayer = L.TileLayer.extend({
     this.url = new URL(url, document.baseURI).href;
     this._directories = new Map();
     this.on('tileunload', this._releaseTile, this);
+    this.on('load tileunload', () => L.Layer3D?._renderers.get(this._map)?.update());
     this.ready = Promise.resolve(this.options.archive || this).then(async archive => {
       const header = await archive.getHeader();
       this.options.archive = archive;
@@ -187,6 +188,18 @@ L.PMTilesLayer = L.TileLayer.extend({
   onRemove(map) {
     this._setTerrain3D(null);
     if (this._container) L.TileLayer.prototype.onRemove.call(this, map);
+  },
+
+  setOpacity(opacity) {
+    L.TileLayer.prototype.setOpacity.call(this, opacity);
+    L.Layer3D?._renderers.get(this._map)?.update();
+    return this;
+  },
+
+  setZIndex(zIndex) {
+    L.TileLayer.prototype.setZIndex.call(this, zIndex);
+    L.Layer3D?._renderers.get(this._map)?.update();
+    return this;
   },
 
   createTile(coords, done) {

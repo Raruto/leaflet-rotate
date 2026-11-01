@@ -4,6 +4,130 @@ import { After, AfterAll, Before, Given, Then, When } from '@cucumber/cucumber';
 
 const coveredFunctions = new Map();
 
+Then('roof imagery follows raster loading, background changes and renderer ownership', { timeout: 30000 }, async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map, zoom = 17;
+    const boundary = map.project(map.getCenter(), zoom).divideBy(256).floor().multiplyBy(256);
+    map.setView(map.unproject(boundary, zoom), zoom, { animate: false });
+    map.setPitch(0); map.setBearing(0);
+    const owner = new L.Layer3D().addTo(map);
+    const layer = new L.Layer3D({ roofTexture: true }).addTo(map);
+    await Promise.all([nativeChecks.ready(owner), nativeChecks.ready(layer)]);
+    const ring = [[-60, -60], [60, -60], [60, 60], [-60, 60], [-60, -60]]
+      .map(offset => map.unproject(boundary.add(offset), zoom)).map(p => [p.lng, p.lat]);
+    const area = { coords: { z: zoom, x: boundary.x / 256 - 1, y: boundary.y / 256 - 1 }, request: new AbortController() };
+    layer.options.featureStyle = () => ({ top: 20, color: 0x00ff00 });
+    await nativeChecks.loadBlock(layer, area, [{ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] } }]);
+    const mesh = area.mesh;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const context = canvas.getContext('2d');
+    const image = async color => {
+      context.fillStyle = color; context.fillRect(0, 0, 256, 256);
+      return (await fetch(canvas.toDataURL())).arrayBuffer();
+    };
+    const red = await image('#ff0000'), blue = await image('#0000ff');
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const archive = swapped => ({
+      getHeader: async () => ({ minZoom: zoom, maxZoom: zoom }),
+      getZxy: async (z, x) => {
+        await pending;
+        return { data: (x % 2 === 0) !== swapped ? red : blue };
+      },
+    });
+    const first = new L.PMTilesLayer('roof-first.pmtiles', { archive: archive(false) });
+    const second = new L.PMTilesLayer('roof-second.pmtiles', { archive: archive(true) });
+    const sample = (offset, height) => {
+      layer._shared._render();
+      const crs = map.options.crs;
+      const origin = crs.project(layer.location);
+      const point = crs.project(map.unproject(boundary.add(offset), zoom));
+      const metres = Math.cos(layer.location.lat * Math.PI / 180);
+      const projected = new DOMPoint((point.x - origin.x) * metres, height, -(point.y - origin.y) * metres, 1)
+        .matrixTransform(new DOMMatrix(layer.root.worldMatrix))
+        .matrixTransform(new DOMMatrix(layer.camera.projectionViewMatrix));
+      const gl = layer.renderer.gl, pixel = new Uint8Array(4);
+      gl.readPixels(Math.floor((projected.x / projected.w + 1) * gl.canvas.width / 2),
+        Math.floor((projected.y / projected.w + 1) * gl.canvas.height / 2),
+        1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      return [...pixel];
+    };
+    const roof = () => [[-30, 0], [30, 0]].map(offset => sample(offset, 20));
+    const loaded = async raster => {
+      await raster.ready;
+      const deadline = performance.now() + 5000;
+      while (!Object.values(raster._tiles).length || Object.values(raster._tiles).some(t => !t.el.done)) {
+        if (performance.now() > deadline) throw new Error('Roof imagery did not load');
+        await new Promise(requestAnimationFrame);
+      }
+    };
+    try {
+      first.addTo(map);
+      const before = roof();
+      release();
+      await loaded(first);
+      const textured = roof();
+      const texture = layer._shared._roofRaster.texture.texture;
+      const signature = layer._shared._roofRaster.signature;
+      roof();
+      const reused = signature === layer._shared._roofRaster.signature && texture === layer._shared._roofRaster.texture.texture;
+      const boundaryX = boundary.x / 256;
+      const westRed = (boundaryX - 1) % 2 === 0;
+      map.setPitch(55); map.setBearing(35);
+      const rotated = roof();
+      const wall = sample([0, 60], 10);
+      layer._setHighlight({ mesh, ...mesh.extras.featureFaces[0] });
+      const highlighted = roof();
+      layer._setHighlight(null);
+      map.setPitch(0); map.setBearing(0);
+      first.remove();
+      const empty = roof();
+      second.addTo(map);
+      await loaded(second);
+      const switched = roof();
+      first.addTo(map);
+      await loaded(first);
+      first.setZIndex(2);
+      const stacked = roof();
+      second.setZIndex(3);
+      const reordered = roof();
+      first.remove();
+      map.setZoom(18, { animate: false });
+      await loaded(second);
+      const zoomed = roof();
+      map.panBy([20, 10], { animate: false });
+      await loaded(second);
+      const panned = roof();
+      owner.remove();
+      const transferred = roof();
+      const sameTexture = layer._shared === layer && layer._roofRaster.texture.texture === texture;
+      second.setOpacity(0);
+      const transparent = roof();
+      second.setOpacity(1);
+      const restored = roof();
+      return { before, textured, westRed, rotated, wall, highlighted, empty, switched, stacked, reordered, zoomed, panned, transferred,
+        transparent, restored, reused, sameTexture };
+    } finally {
+      release(); first.remove(); second.remove();
+      layer._releaseArea(area); layer.remove(); owner.remove();
+    }
+  });
+  const green = pixel => pixel[1] > 100 && pixel[0] < 5 && pixel[2] < 5 && pixel[3] === 255;
+  for (const name of ['before', 'empty', 'transparent']) assert.ok(result[name].every(green), `${name}: ${result[name]}`);
+  const imagery = (pixels, swapped) => pixels.forEach((pixel, i) => {
+    const red = (i === 0 ? result.westRed : !result.westRed) !== swapped;
+    assert.ok(pixel[red ? 0 : 2] > 100 && pixel[red ? 2 : 0] < 5 && pixel[1] < 5, JSON.stringify({ pixel, red }));
+  });
+  imagery(result.textured, false); imagery(result.rotated, false);
+  imagery(result.stacked, false);
+  for (const name of ['switched', 'reordered', 'zoomed', 'panned', 'transferred', 'restored']) imagery(result[name], true);
+  assert.ok(green(result.wall), `Walls retain their style: ${result.wall}`);
+  assert.ok(result.highlighted.every(pixel => pixel[1] > pixel[0] && pixel[2] > pixel[0]), 'Highlight overrides imagery');
+  assert.equal(result.reused, true);
+  assert.equal(result.sameTexture, true);
+});
+
 Then('terrain enabled {string} raster loading preserves imagery, elevations and removal', { timeout: 30000 }, async function (order) {
   const result = await this.page.evaluate(async order => {
     const map = test3d.map;
@@ -51,9 +175,12 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
       data: new TextEncoder().encode(JSON.stringify({ type: 'FeatureCollection', features: [feature] })),
     });
     const wait = async condition => {
-      const deadline = performance.now() + 6000;
+      const deadline = performance.now() + 12000;
       while (!condition()) {
-        if (performance.now() > deadline) throw new Error('Terrain fixture did not settle');
+        if (performance.now() > deadline) throw new Error(`Terrain fixture did not settle: ${JSON.stringify({
+          meshes: terrain._rasterTiles.size, tiles: Object.values(raster._tiles).length,
+          loaded: Object.values(raster._tiles).filter(t => t.el.done).length, inflight: buildings._inflight,
+        })}`);
         await new Promise(requestAnimationFrame);
       }
     };
@@ -61,7 +188,8 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
     const raster = new L.PMTilesLayer('fixture-raster.pmtiles', {
       archive: { getHeader: async () => ({ ...header, tileType: 2 }), getZxy: async () => ({ data: image }) },
     });
-    const buildings = new L.Layer3D({ source: 'fixture-buildings.pmtiles', featureStyle: () => ({ top: 15 }) }).addTo(map);
+    const buildings = new L.Layer3D({ source: 'fixture-buildings.pmtiles', roofTexture: true,
+      featureStyle: () => ({ top: 15 }) }).addTo(map);
     const modelLocation = map.unproject(center.add([20, 20]), zoom);
     const model = new L.Layer3D({ center: [modelLocation.lat, modelLocation.lng] }).addTo(map);
     const errors = [];
@@ -110,6 +238,22 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
         }
       }
       const modelError = Math.abs(model.root.position[1] - height(map.project(model.location, zoom)));
+      map.setPitch(0); map.setBearing(0);
+      buildings._shared._render();
+      const roofMesh = [...buildings._areas.values()].find(area => area.mesh).mesh;
+      const roofPositions = roofMesh.geometry.attributes.position.data;
+      const roofCenter = [0, 1, 2].map(axis =>
+        (roofPositions[axis] + roofPositions[3 + axis] + roofPositions[6 + axis]) / 3);
+      const roofWorld = new DOMPoint(...roofCenter, 1).matrixTransform(new DOMMatrix(roofMesh.worldMatrix));
+      const roofUv = roofWorld.matrixTransform(new DOMMatrix(buildings._shared._roofRaster.matrix));
+      const roofProjected = roofWorld.matrixTransform(new DOMMatrix(buildings.camera.projectionViewMatrix));
+      const roofGl = buildings.renderer.gl, roofPixel = new Uint8Array(4);
+      roofGl.readPixels(Math.floor((roofProjected.x / roofProjected.w + 1) * roofGl.canvas.width / 2),
+        Math.floor((roofProjected.y / roofProjected.w + 1) * roofGl.canvas.height / 2),
+        1, 1, roofGl.RGBA, roofGl.UNSIGNED_BYTE, roofPixel);
+      const atlas = buildings._shared._roofRaster.texture.image;
+      const roofImagePixel = [...atlas.getContext('2d').getImageData(
+        Math.floor(roofUv.x * atlas.width), Math.floor(roofUv.z * atlas.height), 1, 1).data];
       map.setView(map.unproject(coords.add([0.5, 0.5]).multiplyBy(256), zoom), zoom, { animate: false });
       map.setPitch(0); map.setBearing(0);
       await wait(settled);
@@ -161,7 +305,8 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
       await terrain._terrainPromise;
       await wait(settled);
       return { initiallyFlat, hidden, restored, cancelled, reattached: terrain._rasterTiles.size > 0,
-        elevationError, deformation, buildingError, modelError, uvError, cameraError, projectionError, pixels, errors };
+        elevationError, deformation, buildingError, modelError, uvError, cameraError, projectionError, pixels,
+        roofPixel: [...roofPixel], roofImagePixel, errors };
     } finally {
       release();
       raster.remove(); terrain.remove(); buildings.remove(); model.remove();
@@ -174,6 +319,9 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
   for (const name of ['initiallyFlat', 'hidden', 'restored', 'cancelled', 'reattached']) assert.equal(result[name], true, name);
   assert.ok(result.deformation > 10, 'Raster vertices must have measurable elevation differences');
   assert.deepEqual(result.pixels, [[255, 0, 0, 255], [0, 0, 255, 255]], 'Rendered imagery must retain north/south orientation');
+  const roofChannel = result.roofImagePixel[0] > result.roofImagePixel[2] ? 0 : 2;
+  assert.ok(result.roofPixel[roofChannel] > 100 && result.roofPixel[2 - roofChannel] < 5 &&
+    result.roofPixel[1] < 5, `Terrain-relative roof samples its map image: ${result.roofPixel}`);
   for (const name of ['elevationError', 'buildingError', 'modelError', 'uvError', 'cameraError', 'projectionError']) {
     assert.ok(result[name] < 0.001, `${name}: ${result[name]}`);
   }

@@ -1,5 +1,9 @@
 @3d-layer
 Feature: Reusable 3D layers
+  Scenario: Building roofs use geographically aligned raster imagery and retain styled walls
+    Given a map with the standalone 3D module and no dependency import map
+    Then roof imagery follows raster loading, background changes and renderer ownership
+
   Scenario Outline: Terrain deforms raster tiles and keeps buildings and the camera at their ground elevation
     Given a map with the standalone 3D module and no dependency import map
     Then terrain enabled "<order>" raster loading preserves imagery, elevations and removal

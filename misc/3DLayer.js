@@ -645,7 +645,7 @@ L.Layer3D = L.Layer.extend({
       if (this._layers.size) {
         // Keep the original scene origin and GPU resources when ownership changes.
         const next = this._layers.values().next().value;
-        for (const key of ['_layers', '_sceneOrigin', '_size', '_zoomLevel', '_zoomTransitions', '_cursor']) {
+        for (const key of ['_layers', '_sceneOrigin', '_size', '_zoomLevel', '_zoomTransitions', '_cursor', '_roofRaster']) {
           next[key] = this[key];
           delete this[key];
         }
@@ -657,6 +657,8 @@ L.Layer3D = L.Layer.extend({
         map.on('zoomend', next._endZoom, next);
         next.update();
       } else {
+        if (this._roofRaster) this.renderer.gl.deleteTexture(this._roofRaster.texture.texture);
+        this._roofRaster = null;
         for (const animation of this._zoomTransitions?.keys() || []) animation.play();
         this._zoomTransitions = null;
         this.renderer.gl.canvas.remove();
@@ -833,6 +835,12 @@ L.Layer3D = L.Layer.extend({
       attribute vec3 normal;
       ${material.vertexColors ? 'attribute vec3 color;' : ''}
       ${textured ? 'attribute vec2 uv; varying vec2 vUv;' : ''}
+      ${material.roofTexture ? `
+        uniform mat4 worldMatrix;
+        uniform mat4 roofMatrix;
+        varying vec2 vRoofUv;
+        varying float vRoof;
+      ` : ''}
       uniform mat4 modelViewMatrix;
       uniform mat4 projectionMatrix;
       uniform mat3 normalMatrix;
@@ -846,6 +854,10 @@ L.Layer3D = L.Layer.extend({
           vNormal = normalMatrix * normal;
           vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
           ${textured ? 'vUv = uv;' : ''}
+          ${material.roofTexture ? `
+            vRoofUv = (roofMatrix * worldMatrix * vec4(position, 1.0)).xz;
+            vRoof = step(0.5, normal.y);
+          ` : ''}
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`;
     const fragment = `
@@ -863,6 +875,11 @@ L.Layer3D = L.Layer.extend({
       ${material.metalTexture ? 'uniform sampler2D metalTexture;' : ''}
       ${material.emissiveTexture ? 'uniform sampler2D emissiveTexture;' : ''}
       ${material.occlusionTexture ? 'uniform sampler2D occlusionTexture;' : ''}
+      ${material.roofTexture ? `
+        uniform sampler2D roofTexture;
+        varying vec2 vRoofUv;
+        varying float vRoof;
+      ` : ''}
       varying vec3 vColor;
       varying vec3 vNormal;
       varying vec3 vPosition;
@@ -885,6 +902,14 @@ L.Layer3D = L.Layer.extend({
         ${material.alphaMode === 'MASK' ? 'if (alpha < alphaCutoff) discard;' : ''}
         ${material.alphaMode === 'BLEND' ? 'if (alpha < 0.01) discard;' : ''}
         vec3 base = ${material.vertexColors ? 'toLinear(vColor)' : 'vColor'} * ${material.baseTexture?.internalFormat === this.renderer.gl.SRGB8_ALPHA8 ? 'texel.rgb' : 'toLinear(texel.rgb)'};
+        ${material.roofTexture ? `
+          if (vRoof > 0.5 && all(greaterThanEqual(vRoofUv, vec2(0.0))) &&
+            all(lessThanEqual(vRoofUv, vec2(1.0))) &&
+            distance(vColor, vec3(72.0 / 255.0, 217.0 / 255.0, 1.0)) > 0.001) {
+            vec4 roof = texture2D(roofTexture, vRoofUv);
+            base = mix(base, toLinear(roof.rgb), roof.a);
+          }
+        ` : ''}
         vec4 mr = ${material.metalTexture ? 'texture2D(metalTexture, vUv)' : 'vec4(1.0)'};
         float metal = clamp(metallic * mr.b, 0.0, 1.0);
         float rough = clamp(roughness * mr.g, 0.08, 1.0);
@@ -1409,7 +1434,7 @@ L.Layer3D = L.Layer.extend({
                     .map(([name, values]) => [name, { size: 3, data: new Float32Array(values) }])
                 )
               ),
-              program:     this._createProgram({ vertexColors: true }),
+              program:     this._createProgram({ vertexColors: true, roofTexture: Boolean(this.options.roofTexture) }),
               id:          L.Layer3D._nextId++,
               renderOrder: 0,
               extras:      { featureFaces },
@@ -1718,6 +1743,63 @@ L.Layer3D = L.Layer.extend({
       }
     });
     const renderer = this.renderer;
+    if ([...this._layers].some(layer => layer.options.roofTexture)) {
+      const gl = renderer.gl;
+      const rasters = Object.values(map._layers).filter(layer =>
+        L.PMTilesLayer && layer instanceof L.PMTilesLayer && layer._tiles && layer.options.opacity > 0);
+      const tiles = rasters.flatMap(layer => Object.values(layer._tiles)
+        .filter(tile => tile.el.done && !tile.el.request.signal.aborted && tile.el.isConnected)
+        .map(tile => ({ ...tile, layer })));
+      const signature = tiles.map(({ el, coords, layer }) =>
+        `${L.Util.stamp(el)}:${coords.z}:${coords.x}:${coords.y}:${layer.options.opacity}:${layer.options.zIndex}`).join('|');
+      const selection = rasters.map(layer =>
+        `${L.Util.stamp(layer)}:${layer.options.opacity}:${layer.options.zIndex}`).join('|');
+      // Retain the geographically aligned atlas until a tile batch finishes loading.
+      if (!this._roofRaster || this._roofRaster.selection !== selection ||
+        (!rasters.some(layer => layer.isLoading()) && this._roofRaster.signature !== signature)) {
+        const canvas = this._roofRaster?.texture.image || document.createElement('canvas');
+        const zoom = tiles.length ? Math.max(...tiles.map(tile => tile.coords.z)) : map.getZoom();
+        const bounds = new L.Bounds();
+        for (const { coords, layer } of tiles) {
+          const size = layer.getTileSize().multiplyBy(map.getZoomScale(zoom, coords.z));
+          bounds.extend(new L.Point(coords.x, coords.y).scaleBy(size));
+          bounds.extend(new L.Point(coords.x + 1, coords.y + 1).scaleBy(size));
+        }
+        const min = bounds.min || map.project(this._sceneOrigin, zoom);
+        const size = bounds.isValid() ? bounds.getSize() : new L.Point(1, 1);
+        // ponytail: cap at 4096 px; virtual textures if wide views need native detail.
+        const limit = Math.min(4096, gl.getParameter(gl.MAX_TEXTURE_SIZE));
+        const scale = Math.min(1, limit / Math.max(size.x, size.y));
+        canvas.width = Math.max(1, Math.ceil(size.x * scale));
+        canvas.height = Math.max(1, Math.ceil(size.y * scale));
+        const context = canvas.getContext('2d');
+        tiles.sort((a, b) => (a.layer.options.zIndex || 0) - (b.layer.options.zIndex || 0) || a.coords.z - b.coords.z);
+        for (const { coords, el, layer } of tiles) {
+          const tileSize = layer.getTileSize().multiplyBy(map.getZoomScale(zoom, coords.z));
+          const offset = new L.Point(coords.x, coords.y).scaleBy(tileSize).subtract(min);
+          context.globalAlpha = layer.options.opacity;
+          context.drawImage(el, offset.x * canvas.width / size.x, offset.y * canvas.height / size.y,
+            tileSize.x * canvas.width / size.x, tileSize.y * canvas.height / size.y);
+        }
+        const origin = map.project(this._sceneOrigin, zoom);
+        const pixels = map.options.crs.scale(zoom) / (40075016.68557849 * Math.cos(this._sceneOrigin.lat * Math.PI / 180));
+        const matrix = new DOMMatrix();
+        matrix.m11 = pixels / size.x; matrix.m33 = pixels / size.y;
+        matrix.m41 = (origin.x - min.x) / size.x; matrix.m43 = (origin.y - min.y) / size.y;
+        this._roofRaster = {
+          signature, selection, matrix: Array.from(matrix.toFloat64Array()),
+          texture: this._roofRaster?.texture || {
+            gl, texture: gl.createTexture(), image: canvas, internalFormat: gl.RGBA,
+            wrapS: gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE,
+            minFilter: gl.LINEAR, magFilter: gl.LINEAR, flipY: false,
+          },
+        };
+        this._roofRaster.texture.needsUpdate = true;
+      }
+    } else if (this._roofRaster) {
+      renderer.gl.deleteTexture(this._roofRaster.texture.texture);
+      this._roofRaster = null;
+    }
     // Visible meshes: opaque first, transparent surfaces back-to-front.
     const meshes = [];
     this.traverse(this.scene, mesh => { if (!mesh.visible) return true; if (mesh.geometry) meshes.push(mesh); });
@@ -1734,6 +1816,13 @@ L.Layer3D = L.Layer.extend({
       if (mesh.texture) {
         mesh.program.uniforms.baseTexture.value = mesh.texture;
         mesh.program.uniforms.opacity.value = mesh.opacity;
+      }
+      if (mesh.program._layerMaterial.roofTexture) {
+        Object.assign(mesh.program.uniforms, {
+          worldMatrix: { value: mesh.worldMatrix },
+          roofMatrix: { value: this._roofRaster.matrix },
+          roofTexture: { value: this._roofRaster.texture },
+        });
       }
       // The inverse-transpose upper 3x3 preserves normals under nonuniform scaling.
       const inverse = Array.from(new DOMMatrix(modelView).inverse().toFloat64Array());
