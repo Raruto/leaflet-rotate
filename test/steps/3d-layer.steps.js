@@ -1,7 +1,331 @@
 import assert from 'node:assert/strict';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { After, AfterAll, Before, Given, Then, When } from '@cucumber/cucumber';
 
 const coveredFunctions = new Map();
+
+Then('raster zoom transitions stay paused between WebGL frames and resume on removal', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map;
+    const tiles = new L.TileLayer('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=').addTo(map);
+    const first = new L.Layer3D().addTo(map), second = new L.Layer3D().addTo(map);
+    await Promise.all([first, second].map(nativeChecks.ready));
+    let samples = 0, frozen = true, transferred = false, resumed = false;
+    const render = first._render;
+    first._render = function () {
+      render.call(this);
+      if (!map._animatingZoom || !this._zoomTransitions?.size) return;
+      const animation = this._zoomTransitions.keys().next().value;
+      const time = animation.currentTime;
+      const before = getComputedStyle(animation.effect.target).transform;
+      const deadline = performance.now() + 40;
+      while (performance.now() < deadline) { /* Simulate a slow WebGL frame. */ }
+      frozen &&= animation.currentTime === time && animation.playState === 'paused' &&
+        getComputedStyle(animation.effect.target).transform === before;
+      samples++;
+    };
+    await new Promise(resolve => {
+      map.once('zoomend', resolve);
+      map.setZoomAround(map.getSize().divideBy(2), 18, { animate: true });
+    });
+    const cleaned = !first._zoomTransitions;
+    first._render = render;
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const moved = new Promise(resolve => map.once('zoomend', resolve));
+    map.setZoomAround(map.getSize().divideBy(2), 17, { animate: true });
+    const deadline = performance.now() + 2000;
+    while (!first._zoomTransitions?.size) {
+      if (performance.now() > deadline) throw new Error('Expected an active synchronized raster zoom transition');
+      await new Promise(requestAnimationFrame);
+    }
+    const transitions = first._zoomTransitions;
+    first.remove();
+    transferred = second._zoomTransitions === transitions;
+    second.remove();
+    resumed = [...transitions.keys()].every(animation => animation.playState !== 'paused');
+    await moved;
+    tiles.remove();
+    return { samples, frozen, cleaned, transferred, resumed };
+  });
+  assert.ok(result.samples > 0, 'Exercise actual CSS zoom transitions');
+  for (const name of ['frozen', 'cleaned', 'transferred', 'resumed']) assert.equal(result[name], true, name);
+});
+
+Then('pitched view resets preserve the ground perspective after accumulated pans', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map;
+    map.getContainer().style.width = '1000px';
+    map.getContainer().style.height = '731px';
+    map.invalidateSize({ animate: false });
+    const layer = new L.GridLayer({ maxNativeZoom: 17 }).addTo(map);
+    map.setZoom(18, { animate: false });
+    for (let i = 0; i < 5; i++) map.panBy([-250, -150], { animate: false });
+    map._setPitchAndBearing(85, 46.43810536434438);
+    const farBefore = map._getPitchFarY();
+    await new Promise(resolve => {
+      map.once('zoomend', resolve);
+      map.setView([48.85826, 2.2945], 19);
+    });
+    const panRetained = map._getMapPanePos().x !== 0;
+    map.setView([48.859, 2.294], 18, { animate: false });
+    const target = new L.LatLng(48.859, 2.294), size = map.getSize(), screenCenter = size.divideBy(2);
+    const center = map.project(target), angle = map.getBearing() * Math.PI / 180;
+    const pitch = map.getPitch() * Math.PI / 180, perspective = size.y * 1.5;
+    const errors = [];
+    for (const [x, y] of [[-100, -100], [100, -100], [-100, 100], [100, 100]]) {
+      const ll = map.unproject(center.add([x, y]));
+      const rx = x * Math.cos(angle) - y * Math.sin(angle);
+      const ry = x * Math.sin(angle) + y * Math.cos(angle);
+      const scale = perspective / (perspective - ry * Math.sin(pitch));
+      const expected = screenCenter.add([rx * scale, ry * Math.cos(pitch) * scale]);
+      errors.push(map.latLngToContainerPoint(ll).distanceTo(expected));
+    }
+    const farAfter = map._getPitchFarY(), pane = map._getMapPanePos().clone();
+    const centerError = map.latLngToContainerPoint(target).distanceTo(screenCenter);
+    layer.remove();
+    return { errors, farBefore, farAfter, pane, centerError, panRetained };
+  });
+  assert.equal(result.panRetained, true, 'Exercise animated zoom without resetting the accumulated pan');
+  assert.deepEqual(result.pane, { x: 0, y: 0 });
+  assert.ok(result.centerError < 1);
+  assert.ok(Math.max(...result.errors) < 1, `Reset ground projection: ${JSON.stringify(result)}`);
+  assert.ok(Math.abs(result.farAfter - result.farBefore) < 1, 'Resetting the view must not move the horizon');
+});
+
+Then('raster tiles remain aligned after panning before their first pitch change', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map;
+    map.getContainer().style.width = '1000px';
+    map.getContainer().style.height = '731px';
+    map.invalidateSize({ animate: false });
+    const layer = new L.GridLayer({ maxNativeZoom: 17 }).addTo(map);
+    const firstRotation = !layer._rotateOrigin;
+    map.setZoom(18, { animate: false });
+    for (let i = 0; i < 5; i++) map.panBy([-250, -150], { animate: false });
+    const center = map.getCenter();
+    map._setPitchAndBearing(85, 46.43810536434438);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const errors = [];
+    let missing = 0;
+    const size = map.getSize(), farY = map._getPitchFarY(), level = layer._levels[layer._tileZoom];
+    for (let y = Math.max(0, farY) + 10; y < size.y; y += 60) {
+      for (let x = 20; x < size.x; x += 100) {
+        const point = new L.Point(x, y), location = map.containerPointToLatLng(point);
+        const projected = map.project(location, level.zoom);
+        const coords = projected.divideBy(256).floor();
+        if (!layer._tiles[`${coords.x}:${coords.y}:${level.zoom}`]) missing++;
+        const position = projected.subtract(level.origin);
+        const reference = document.createElement('div');
+        reference.style.cssText = `position:absolute;width:0;height:0;left:${position.x}px;top:${position.y}px`;
+        level.el.appendChild(reference);
+        const rect = reference.getBoundingClientRect(), container = map.getContainer().getBoundingClientRect();
+        errors.push(Math.hypot(rect.left - container.left - x, rect.top - container.top - y));
+        reference.remove();
+      }
+    }
+    const stableCenter = map.project(center).distanceTo(map.project(map.getCenter()));
+    const pane = map._getMapPanePos();
+    layer.remove();
+    return { firstRotation, stableCenter, errors, missing, pane };
+  });
+  assert.equal(result.firstRotation, true, 'Exercise the first rotation after layer addition');
+  assert.ok(Math.abs(result.pane.x) > 1000 && Math.abs(result.pane.y) > 700);
+  assert.ok(result.stableCenter < 0.01);
+  assert.equal(result.missing, 0, 'Visible ground tiles remain present');
+  assert.ok(Math.max(...result.errors) < 2, `Rendered tile alignment: ${JSON.stringify(result)}`);
+});
+
+Then('building blocks cover pitched views and retain overlapping areas', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map;
+    const layer = new L.Layer3D({ source: 'paris-buildings.pmtiles' }).addTo(map);
+    await nativeChecks.ready(layer);
+    const idle = async () => { while (layer._inflight) await new Promise(requestAnimationFrame); };
+    await idle();
+    let requests = 0;
+    layer.getZxy = async () => { requests++; return undefined; };
+    const checks = [];
+    const verify = async change => {
+      const previous = new Map(layer._areas), before = requests;
+      change();
+      await idle();
+      const bounds = map.getBounds(), z = layer.header.minZoom;
+      const nw = map.project(bounds.getNorthWest(), z).divideBy(256).floor();
+      const se = map.project(bounds.getSouthEast(), z).divideBy(256).floor();
+      const archiveNW = map.project([layer.header.maxLat, layer.header.minLon], z).divideBy(256).floor();
+      const archiveSE = map.project([layer.header.minLat, layer.header.maxLon], z).divideBy(256).floor();
+      let missing = 0;
+      for (let x = Math.max(nw.x, archiveNW.x); x <= Math.min(se.x, archiveSE.x); x++) {
+        for (let y = Math.max(nw.y, archiveNW.y); y <= Math.min(se.y, archiveSE.y); y++) {
+          if (!layer._areas.get(`${x}/${y}`)?.done) missing++;
+        }
+      }
+      const retained = [...layer._areas].every(([key, area]) => !previous.has(key) || previous.get(key) === area);
+      const added = [...layer._areas.keys()].filter(key => !previous.has(key)).length;
+      checks.push({ missing, retained, requests: requests - before, added, count: layer._areas.size,
+        clipped: [...layer._areas.values()].every(({ coords }) =>
+          coords.x >= archiveNW.x && coords.x <= archiveSE.x &&
+          coords.y >= archiveNW.y && coords.y <= archiveSE.y) });
+    };
+    await verify(() => map.setPitch(75));
+    await verify(() => map.setBearing(270));
+    await verify(() => map.setBearing(90));
+    await verify(() => {
+      map.getContainer().style.width = '1000px';
+      map.getContainer().style.height = '600px';
+      map.invalidateSize({ animate: false });
+    });
+    await verify(() => map.setZoom(16, { animate: false }));
+    await verify(() => map.setView([48.85657, 2.33307], 16, { animate: false }));
+    await verify(() => map.fire('moveend'));
+    layer.remove();
+    return checks;
+  });
+  assert.ok(result.some(check => check.count > 9), 'Pitched views must load beyond the former 3x3 limit');
+  for (const check of result) {
+    assert.equal(check.missing, 0, `Every visible archive block is loaded: ${JSON.stringify(result)}`);
+    assert.equal(check.retained, true, 'Overlapping blocks retain their geometry');
+    assert.equal(check.clipped, true, 'Coverage stays inside the archive');
+    assert.equal(check.requests, check.added, 'Only new blocks are requested');
+  }
+});
+
+Then('the native PMTiles methods handle directories, compression and failures', async function () {
+  await this.context.unroute('**/misc/3DLayer.js');
+  await this.context.unroute('**/misc/PMTilesLayer.js');
+  await this.page.evaluate(() => { delete L.PMTilesLayer; delete L.Layer3D; });
+  await this.page.addScriptTag({ url: `${this.baseUrl}/misc/3DLayer.js` });
+  await this.page.addScriptTag({ url: `${this.baseUrl}/misc/PMTilesLayer.js` });
+  const exposesReaderClass = await this.page.evaluate(() => 'PMTiles' in L);
+  assert.equal(exposesReaderClass, false, 'PMTiles methods belong to their consuming layers');
+  const directory = entries => {
+    const bytes = [];
+    const write = value => {
+      do {
+        const byte = value % 128;
+        value = Math.floor(value / 128);
+        bytes.push(byte | (value ? 128 : 0));
+      } while (value);
+    };
+    write(entries.length);
+    let previous = 0;
+    for (const entry of entries) { write(entry.id - previous); previous = entry.id; }
+    for (const entry of entries) write(entry.run);
+    for (const entry of entries) write(entry.length);
+    entries.forEach((entry, i) => write(i && entry.offset === entries[i - 1].offset + entries[i - 1].length
+      ? 0 : entry.offset + 1));
+    return gzipSync(Buffer.from(bytes));
+  };
+  const first = gzipSync('first'), second = gzipSync('second');
+  const leaf = directory([{ id: 1, run: 2, length: first.length, offset: 0 },
+    { id: 4, run: 1, length: second.length, offset: first.length }]);
+  const root = directory([{ id: 1, run: 0, length: leaf.length, offset: 0 }]);
+  const header = Buffer.alloc(127);
+  header.write('PMTiles'); header[7] = 3;
+  const u64 = (offset, value) => header.writeBigUInt64LE(BigInt(value), offset);
+  u64(8, 127); u64(16, root.length);
+  u64(40, 127 + root.length); u64(48, leaf.length);
+  u64(56, 127 + root.length + leaf.length); u64(64, first.length + second.length);
+  header[97] = header[98] = 2; header[99] = 1; header[100] = header[101] = 1;
+  const archive = Buffer.concat([header, root, leaf, first, second]);
+  const plainRoot = gunzipSync(directory([{ id: 1, run: 2, length: 5, offset: 0 },
+    { id: 4, run: 1, length: 6, offset: 5 }]));
+  const plainHeader = Buffer.from(header);
+  plainHeader[97] = plainHeader[98] = 1;
+  plainHeader.writeBigUInt64LE(BigInt(plainRoot.length), 16);
+  plainHeader.writeBigUInt64LE(BigInt(127 + plainRoot.length), 56);
+  plainHeader.writeBigUInt64LE(11n, 64);
+  const plainArchive = Buffer.concat([plainHeader, plainRoot, Buffer.from('firstsecond')]);
+  const requests = [];
+  await this.page.route('**/fixture.pmtiles*', async route => {
+    const request = route.request();
+    const [start, end] = request.headers().range.match(/\d+/g).map(Number);
+    requests.push({ start, end });
+    let bytes = archive;
+    const url = new URL(request.url());
+    if (url.searchParams.has('plain')) bytes = plainArchive;
+    if (url.searchParams.has('version')) {
+      bytes = Buffer.from(archive); bytes[7] = 2;
+    }
+    if (url.searchParams.has('compression')) {
+      bytes = Buffer.from(archive); bytes[97] = 3;
+    }
+    if (url.searchParams.has('http')) return route.fulfill({ status: 503, body: '' });
+    if (url.searchParams.has('directory') && start === 127) {
+      const bad = Buffer.from([0x80]);
+      return route.fulfill({ status: 206,
+        headers: { 'Content-Range': `bytes ${start}-${end}/${archive.length}`, ETag: '"original"' },
+        body: Buffer.concat([bad, Buffer.alloc(end - start)]) });
+    }
+    const full = url.searchParams.has('full');
+    const truncated = url.searchParams.has('truncated');
+    await route.fulfill({
+      status: full ? 200 : 206,
+      headers: { 'Content-Range': `bytes ${start}-${end}/${bytes.length}`,
+        ETag: url.searchParams.has('changed') && start > 0 ? '"new"' : '"original"' },
+      body: full ? bytes : bytes.subarray(start, truncated ? end : end + 1),
+    });
+  });
+  const result = await this.page.evaluate(async () => {
+    const archive = new L.PMTilesLayer('fixture.pmtiles');
+    await archive.ready;
+    const header = archive.header;
+    const read = async (x, y) => {
+      const tile = await archive.getZxy(1, x, y);
+      return tile && new TextDecoder().decode(tile.data);
+    };
+    const tiles = await Promise.all([read(0, 0), read(0, 1), read(1, 1), read(1, 0)]);
+    const abort = new AbortController(); abort.abort();
+    const cancelled = await archive.getZxy(1, 0, 0, abort.signal).then(() => false, error => error.name === 'AbortError');
+    const errors = [];
+    for (const query of ['version', 'compression', 'http', 'truncated', 'changed']) {
+      const reader = new L.PMTilesLayer(`fixture.pmtiles?${query}`);
+      errors.push(await reader.ready.then(() => reader.getZxy(1, 0, 0))
+        .then(() => '', error => error.message));
+    }
+    const invalid = await archive.getZxy(1, 2, 0).then(() => false, error => error.message === 'Invalid PMTiles tile coordinates');
+    const full = new L.PMTilesLayer('fixture.pmtiles?full');
+    await full.ready;
+    const fullTile = await full.getZxy(1, 1, 0);
+    const plain = new L.PMTilesLayer('fixture.pmtiles?plain');
+    await plain.ready;
+    const plainTile = await plain.getZxy(1, 1, 0);
+    const badDirectory = new L.PMTilesLayer('fixture.pmtiles?directory');
+    const directoryError = await badDirectory.ready.then(() => badDirectory.getZxy(1, 0, 0))
+      .then(() => false, error => error instanceof Error);
+    return { tiles, cancelled, invalid, zoom: [header.minZoom, header.maxZoom], errors,
+      full: new TextDecoder().decode(fullTile.data), plain: new TextDecoder().decode(plainTile.data),
+      badDirectory: directoryError };
+  });
+  assert.deepEqual(result.tiles, ['first', 'first', undefined, 'second']);
+  assert.deepEqual(result.zoom, [1, 1]);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.invalid, true);
+  assert.equal(result.full, 'second');
+  assert.equal(result.plain, 'second');
+  assert.equal(result.badDirectory, true);
+  assert.deepEqual(result.errors, ['Expected a PMTiles v3 archive', 'Unsupported PMTiles compression: 3',
+    'Unable to read PMTiles: HTTP 503', 'Truncated PMTiles range', 'PMTiles archive changed; recreate the layer']);
+  assert.equal(requests.filter(request => request.start === 127).length, 5, 'One root request per reader');
+  const real = await this.page.evaluate(async () => {
+    const buildings = new L.Layer3D({ source: '../examples/data/paris-buildings.pmtiles' });
+    await nativeChecks.ready(buildings);
+    const header = buildings.header;
+    const point = test3d.map.project(new L.LatLng(48.85826, 2.2945), header.minZoom).divideBy(256).floor();
+    const tile = await buildings.getZxy(header.minZoom, point.x, point.y);
+    const collection = JSON.parse(new TextDecoder().decode(tile.data));
+    const raster = new L.PMTilesLayer('../examples/data/paris-orthophotos.pmtiles');
+    await raster.ready;
+    const rasterHeader = raster.header;
+    const rasterPoint = test3d.map.project(new L.LatLng(48.85826, 2.2945), rasterHeader.maxZoom).divideBy(256).floor();
+    const image = await raster.getZxy(rasterHeader.maxZoom, rasterPoint.x, rasterPoint.y);
+    const bitmap = await createImageBitmap(new Blob([image.data]));
+    return { type: collection.type, count: collection.features.length, width: bitmap.width };
+  });
+  assert.equal(real.type, 'FeatureCollection');
+  assert.ok(real.count > 0);
+  assert.equal(real.width, 256);
+});
 
 Before({ tags: '@3d-layer' }, async function () {
   if (process.env.COVERAGE_3D) {
@@ -165,15 +489,15 @@ Then('layer-owned objects preserve values and visibility without engine classes'
     const vector = [0, 0, 0];
     layer._setVector(vector, 2, 3, 4);
     const setters = vector.join() === '2,3,4';
-    const matrix = layer._createMatrix();
+    const matrix = Array.from(new DOMMatrix().toFloat64Array());
     const point = layer._transformPoint([...vector], matrix);
     const identity = [...point].join() === '2,3,4';
     let singular = false;
-    try { layer._invertMatrix(layer._createMatrix(), new Array(16).fill(0)); } catch (error) {
+    try { layer._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), new Array(16).fill(0)); } catch (error) {
       singular = error.message === 'Singular 3D transform';
     }
-    const scene = layer.createGroup();
-    const mesh = layer.createMesh({
+    const scene = nativeChecks.group();
+    const mesh = nativeChecks.mesh(layer, {
       position: [0, 0, 0, 1, 0, 0, 0, 1, 0],
       normal: [0, 0, 1, 0, 0, 1, 0, 0, 1],
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
@@ -194,7 +518,7 @@ Then('layer-owned objects preserve values and visibility without engine classes'
     ];
     const programs = [];
     for (const properties of nodes) {
-      const node = layer.createMesh({
+      const node = nativeChecks.mesh(layer, {
         position: [0, 0, 0, 1, 0, 0, 0, 1, 0],
         normal: [0, 0, 1, 0, 0, 1, 0, 0, 1],
         color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
@@ -207,8 +531,8 @@ Then('layer-owned objects preserve values and visibility without engine classes'
       programs.push(node.program);
       layer.setParent(node, scene);
     }
-    const hidden = layer.createGroup(); hidden.visible = false; layer.setParent(hidden, scene);
-    const hiddenMesh = layer.createGroup();
+    const hidden = nativeChecks.group(); hidden.visible = false; layer.setParent(hidden, scene);
+    const hiddenMesh = nativeChecks.group();
     Object.assign(hiddenMesh, { geometry: mesh.geometry, program: mesh.program, id: 4 });
     layer.setParent(hiddenMesh, hidden);
     layer.add(scene);
@@ -248,7 +572,7 @@ Then('a source block with {string} reports {string} without attaching a mesh', a
     ] };
     const data = invalid === 'collection' ? { type: 'Feature', properties: {} }
       : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry }] };
-    layer.archive = { getZxy: async () => ({ data: new TextEncoder().encode(JSON.stringify(data)) }) };
+    layer.getZxy = async () => ({ data: new TextEncoder().encode(JSON.stringify(data)) });
     const point = test3d.map.project(anchor, 16).divideBy(256).floor();
     const area = { coords: { z: 16, x: point.x, y: point.y }, request: new AbortController() };
     const errors = [];
@@ -269,6 +593,37 @@ Then('a source block with {string} reports {string} without attaching a mesh', a
 async function prepare3DChecks(page) {
   await page.evaluate(() => {
     window.nativeChecks = {
+      framed(layer, object, start, end) {
+        layer._shared._render();
+        let framed = true;
+        layer.traverse(object, mesh => {
+          if (!mesh.geometry) return;
+          const attribute = mesh.geometry.attributes.position;
+          for (let i = start ?? 0; i < (end ?? attribute.count); i++) {
+            const point = layer._readVector([0, 0, 0], attribute.data, i * attribute.size);
+            layer._transformPoint(point, mesh.worldMatrix);
+            layer._transformPoint(point, layer.camera.projectionViewMatrix);
+            if (Math.abs(point[0]) > 0.705 || Math.abs(point[1]) > 0.705 ||
+              point[2] < -1 || point[2] > 1) framed = false;
+          }
+        });
+        return framed;
+      },
+      group() {
+        return {
+          position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+          worldMatrix: Array.from(new DOMMatrix().toFloat64Array()), children: [], visible: true,
+        };
+      },
+      mesh(layer, attributes, program = layer._createProgram({ vertexColors: true })) {
+        return {
+          ...nativeChecks.group(),
+          gl: layer.renderer.gl,
+          geometry: layer._createGeometry(layer.renderer.gl, Object.fromEntries(Object.entries(attributes)
+            .map(([name, values]) => [name, { size: 3, data: new Float32Array(values) }]))),
+          program, id: L.Layer3D._nextId++, renderOrder: 0, extras: {},
+        };
+      },
       ready(layer) {
         return new Promise((resolve, reject) => {
           const loaded = () => { cleanup(); resolve(layer); };
@@ -283,17 +638,17 @@ async function prepare3DChecks(page) {
       },
       async loadBlock(layer, area, features) {
         while (layer._inflight) await new Promise(requestAnimationFrame);
-        const archive = layer.archive;
-        layer.archive = { getZxy: async () => ({
+        const getZxy = layer.getZxy;
+        layer.getZxy = async () => ({
           data: new TextEncoder().encode(JSON.stringify({ type: 'FeatureCollection', features })),
-        }) };
+        });
         layer._areas.set('fixture', area);
         try {
           layer._pump();
           while (layer._inflight) await new Promise(requestAnimationFrame);
           return area;
         } finally {
-          layer.archive = archive;
+          layer.getZxy = getZxy;
           layer._areas.delete('fixture');
         }
       },
@@ -420,9 +775,9 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     const near = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
     await Promise.all([origin, far, near].map(nativeChecks.ready));
     for (const [layer, height] of [[far, 0], [near, 20]]) {
-      layer.model = layer.createGroup();
+      layer.model = nativeChecks.group();
       layer.model.id = height ? 'near' : 'far';
-      const mesh = layer.createMesh({
+      const mesh = nativeChecks.mesh(layer, {
         position: [-60, height, -60, 0, height, 60, 60, height, -60],
         normal: [0, 1, 0, 0, 1, 0, 0, 1, 0],
         color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
@@ -445,37 +800,57 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     far.on('featureclick', ({ feature }) => { if (feature) farClicks++; });
     const click = position();
     const event = new MouseEvent('click', click);
-    const hit = near._findFeature(event);
-    const crs = map.options.crs;
-    const projected = crs.project(near._shared._sceneOrigin);
-    const metres = Math.cos(near._shared._sceneOrigin.lat * Math.PI / 180);
-    const expected = crs.unproject(new L.Point(
-      projected.x + hit.point[0] / metres, projected.y - hit.point[2] / metres));
+    const expected = near.location;
     const moved = new Promise(resolve => map.once('moveend', resolve));
     container.dispatchEvent(event);
     await moved;
     await new Promise(requestAnimationFrame);
-    const zoomed = map.getZoom() === 18 && map.getCenter().distanceTo(expected) < 0.1;
-    const diagnostic = { zoom: map.getZoom(), center: map.getCenter(), expected,
+    const firstZoom = map.getZoom();
+    const zoomed = firstZoom <= 18 && map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2 &&
+      nativeChecks.framed(near, near.model);
+    const diagnostic = { zoom: map.getZoom(), center: map.getCenter(), expected, framed: nativeChecks.framed(near, near.model),
       error: map.getCenter().distanceTo(expected), nearClicks, farClicks };
     const sharedPicking = nearClicks === 1 && farClicks === 1;
     container.dispatchEvent(new MouseEvent('click', position()));
-    const capped = map.getZoom() === 18;
+    const capped = map.getZoom() === firstZoom && map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2;
     const center = map.getCenter();
     container.dispatchEvent(new MouseEvent('click', { clientX: -1000, clientY: -1000 }));
-    const emptyUnchanged = map.getZoom() === 18 && map.getCenter().equals(center);
+    const emptyUnchanged = map.getZoom() === firstZoom && map.getCenter().equals(center);
     near.options.zoomOnClick = false;
     const reset = new Promise(resolve => map.once('moveend', resolve));
-    map.setZoom(17, { animate: false });
+    map.setZoom(firstZoom - 1, { animate: false });
     await reset;
     await new Promise(requestAnimationFrame);
     container.dispatchEvent(new MouseEvent('click', position()));
-    const disabledAndOccluded = map.getZoom() === 17;
+    const disabledAndOccluded = map.getZoom() === firstZoom - 1;
     const noTooltip = !container.querySelector('.leaflet-3d-tooltip');
+    near.options.zoomOnClick = true;
+    far.options.zoomOnClick = false;
+    map.options.maxZoom = 24;
+    let framingStable = true, zoomsOut = true;
+    diagnostic.poses = [];
+    const pickedMesh = near.model.children[0];
+    near._findFeature = () => ({ model: near.model, mesh: pickedMesh });
+    near.raycast = () => [{ object: pickedMesh }];
+    for (const [pitch, bearing] of [[0, 0], [45, 90], [75, 270], [85, 180]]) {
+      map.setPitch(pitch);
+      map.setBearing(bearing);
+      map.setView(near.location, 22, { animate: false });
+      near._onClick(new MouseEvent('click', position()));
+      const zoom = map.getZoom(), center = map.getCenter();
+      diagnostic.poses.push({ pitch, bearing, zoom, framed: nativeChecks.framed(near, near.model) });
+      zoomsOut &&= zoom < 22;
+      framingStable &&= nativeChecks.framed(near, near.model) &&
+        map.getPitch() === pitch && Math.abs(map.getBearing() - bearing) < 1e-8;
+      near._onClick(new MouseEvent('click', position()));
+      framingStable &&= map.getZoom() === zoom &&
+        map.project(center).distanceTo(map.project(map.getCenter())) < 2;
+    }
     near.remove();
     far.remove();
     origin.remove();
-    return { checks: { zoomed, sharedPicking, capped, emptyUnchanged, disabledAndOccluded, noTooltip }, diagnostic };
+    return { checks: { zoomed, sharedPicking, capped, emptyUnchanged, disabledAndOccluded, noTooltip,
+      framingStable, zoomsOut }, diagnostic };
   });
   for (const [name, value] of Object.entries(result.checks)) assert.equal(value, true, `${name}: ${JSON.stringify(result.diagnostic)}`);
 });
@@ -496,7 +871,7 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
       tooltip.getAttribute('role') === 'tooltip' && tooltip.getAttribute('aria-live') === 'polite';
     const rect = container.getBoundingClientRect();
     const position = { clientX: rect.left + 20, clientY: rect.top + 20 };
-    const mesh = layer.createMesh({
+    const mesh = nativeChecks.mesh(layer, {
       position: [0, 0, 0, 1, 0, 0, 0, 1, 0],
       normal: [0, 0, 1, 0, 0, 1, 0, 0, 1],
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
@@ -687,7 +1062,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       mesh.program = program;
     }
     layer._shared._render();
-    const probe = layer.createMesh({
+    const probe = nativeChecks.mesh(layer, {
       position: [-1, -1, 0.5, 1, -1, 0.5, 0, 1, 0.5, -1, -1, 0, 1, -1, 0, 0, 1, 0],
       normal: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1],
@@ -698,8 +1073,8 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     const sample = () => {
       layer._updateWorldMatrix(probe);
       layer._updateCamera(probeCamera);
-      const modelView = layer._multiplyMatrix(layer._createMatrix(), probeCamera.viewMatrix, probe.worldMatrix);
-      const inverse = layer._invertMatrix(layer._createMatrix(), modelView);
+      const modelView = layer._multiplyMatrix(Array.from(new DOMMatrix().toFloat64Array()), probeCamera.viewMatrix, probe.worldMatrix);
+      const inverse = layer._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), modelView);
       Object.assign(probe.program.uniforms, {
         modelViewMatrix: { value: modelView }, projectionMatrix: { value: probeCamera.projectionMatrix },
         normalMatrix: { value: [inverse[0], inverse[4], inverse[8], inverse[1], inverse[5], inverse[9],
@@ -838,7 +1213,7 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     const second = new Layer3D({ center: [48.8602, 2.298] }).addTo(map);
     await Promise.all([first, second].map(nativeChecks.ready));
     const backend = first;
-    const object = second.createGroup();
+    const object = nativeChecks.group();
     second.add(object);
     const shared = first._shared === first && second._shared === first &&
       L.Layer3D._renderers.get(map) === first &&
@@ -1256,11 +1631,12 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
     delete window.exampleClickFinished;
     await new Promise(requestAnimationFrame);
   });
-  this.exampleTowerZoom = await this.page.evaluate(target => ({
-    zoom: map.getZoom(), centerError: map.getCenter().distanceTo(new L.LatLng(target.center.lat, target.center.lng)),
-    bearing: map.getBearing(), pitch: map.getPitch(),
-    canvases: document.querySelectorAll('.leaflet-3d').length,
-  }), target);
+  this.exampleTowerZoom = await this.page.evaluate(() => {
+    const tower = layers._layers.find(entry => entry.layer.model).layer;
+    return { zoom: map.getZoom(), framed: nativeChecks.framed(tower, tower.model),
+      bearing: map.getBearing(), pitch: map.getPitch(),
+      canvases: document.querySelectorAll('.leaflet-3d').length };
+  });
   this.exampleTowerTarget = target;
   await this.page.mouse.move(810, 610);
   await this.page.waitForFunction(() => {
@@ -1278,8 +1654,7 @@ Then('the tower information is shown and the click zooms without pinning the too
   assert.equal(hover.role, 'tooltip');
   assert.equal(hover.cursor, 'pointer');
   const zoom = this.exampleTowerZoom, target = this.exampleTowerTarget;
-  assert.equal(zoom.zoom, target.zoom + 1);
-  assert.ok(zoom.centerError < 0.1, `Ground position error: ${zoom.centerError} m`);
+  assert.equal(zoom.framed, true, 'The entire tower fits inside the viewport margins');
   assert.equal(zoom.bearing, target.bearing);
   assert.equal(zoom.pitch, target.pitch);
   assert.equal(zoom.canvases, 1);
@@ -1652,7 +2027,11 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     delete window.buildingClickZoom;
     await new Promise(requestAnimationFrame);
   });
-  assert.equal(await this.page.evaluate(() => map.getZoom()), zoomBeforeClick + 1);
+  assert.equal(await this.page.evaluate(() => {
+    const buildings = layers._layers.find(entry => entry.layer.options.source).layer;
+    const feature = buildings.hoveredFeature;
+    return nativeChecks.framed(buildings, feature.mesh, feature.vertexStart, feature.vertexEnd);
+  }), true, 'Only the selected building must fit inside the viewport margins');
   await this.page.evaluate(() => {
     for (const type of ['mouseout', 'mouseleave']) {
       map.getContainer().dispatchEvent(new MouseEvent(type, { relatedTarget: document.body }));
@@ -1689,7 +2068,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
     map.eachLayer(layer => { if (layer.group) buildings = layer; });
     return buildings.group.children.length;
   });
-  const away = () => this.page.evaluate(() => map.setView([48.85657, 2.33307], 16, { animate: false }));
+  const away = () => this.page.evaluate(() => map.setView([48.85657, 2.39], 16, { animate: false }));
   const back = () => this.page.evaluate(() => map.setView([48.8582601, 2.29449985], 17, { animate: false }));
 
   await away();
@@ -1742,11 +2121,15 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   await status('2 Paris building volumes loaded');
   this.retainedAtLowZoom = await meshes() === 1;
   await this.page.waitForTimeout(100);
-  this.noRequestsForCameraChanges = this.buildingRequests.length === requestsBeforeCameraChanges;
+  this.expandedForCameraChanges = this.buildingRequests.length > requestsBeforeCameraChanges;
   this.areaBudget = await this.page.evaluate(() => {
     let buildings;
     map.eachLayer(layer => { if (layer.group) buildings = layer; });
-    return { areas: buildings._areas.size, inflight: buildings._inflight };
+    const z = buildings.header.minZoom;
+    const nw = map.project([buildings.header.maxLat, buildings.header.minLon], z).divideBy(256).floor();
+    const se = map.project([buildings.header.minLat, buildings.header.maxLon], z).divideBy(256).floor();
+    return { areas: buildings._areas.size, inflight: buildings._inflight,
+      maximum: (se.x - nw.x + 1) * (se.y - nw.y + 1) };
   });
   this.cancelledConstruction = await this.page.evaluate(async feature => {
     let buildings;
@@ -1760,7 +2143,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   }, this.sampleBuildings[0]);
 });
 
-Then('3D neighbourhoods stay bounded, release distant volumes, and recover from failures', function () {
+Then('3D coverage follows the viewport, releases distant volumes, and recovers from failures', function () {
   assert.equal(this.lastBuildingTile.z, 16);
   assert.equal(this.releasedAfterPan, true);
   assert.equal(this.reloadedOnReturn, true);
@@ -1769,8 +2152,8 @@ Then('3D neighbourhoods stay bounded, release distant volumes, and recover from 
   assert.match(this.failureText, /HTTP 503/);
   assert.equal(this.recoveredBuildings, true);
   assert.equal(this.retainedAtLowZoom, true);
-  assert.equal(this.noRequestsForCameraChanges, true);
-  assert.ok(this.areaBudget.areas <= 9);
+  assert.equal(this.expandedForCameraChanges, true);
+  assert.ok(this.areaBudget.areas > 9 && this.areaBudget.areas <= this.areaBudget.maximum);
   assert.ok(this.areaBudget.inflight <= 2);
   assert.ok(this.maxBuildingConcurrency <= 2, `Concurrent archive requests: ${this.maxBuildingConcurrency}`);
   assert.equal(this.cancelledConstruction, true);

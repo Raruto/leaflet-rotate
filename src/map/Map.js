@@ -72,6 +72,19 @@ L.Map.mergeOptions({
 L.Map.include({
 
     /**
+     * Rebuild perspective before Leaflet calculates the origin of a reset view.
+     * A reset clears the outer pane translation, unlike a completed pan.
+     */
+    _resetView() {
+        if (this._pitch) {
+            delete this._pitchPan;
+            L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
+            this._updatePitchTransform();
+        }
+        return mapProto._resetView.apply(this, arguments);
+    },
+
+    /**
      * Apply an immediate animated-zoom frame without waiting for a transition delay.
      *
      * @param {L.LatLng} center Target center.

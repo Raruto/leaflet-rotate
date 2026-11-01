@@ -1070,6 +1070,7 @@ var leafletRotate = (() => {
     /**
      * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
      * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).
+     * The first event also synchronizes levels created before any accumulated pans.
      * 
      * @listens L.Map~rotate
      * 
@@ -1081,7 +1082,7 @@ var leafletRotate = (() => {
         return;
       }
       const origin = map.getPixelOrigin();
-      if (this._rotateOrigin && !this._rotateOrigin.equals(origin) && !map._animatingZoom && this._levels) {
+      if ((!this._rotateOrigin || !this._rotateOrigin.equals(origin)) && !map._animatingZoom && this._levels) {
         this._setZoomTransforms(map.getCenter(), map.getZoom());
       }
       this._rotateOrigin = origin;
@@ -1322,6 +1323,18 @@ var leafletRotate = (() => {
     pitchMaxDistance: 3
   });
   L.Map.include({
+    /**
+     * Rebuild perspective before Leaflet calculates the origin of a reset view.
+     * A reset clears the outer pane translation, unlike a completed pan.
+     */
+    _resetView() {
+      if (this._pitch) {
+        delete this._pitchPan;
+        L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
+        this._updatePitchTransform();
+      }
+      return mapProto._resetView.apply(this, arguments);
+    },
     /**
      * Apply an immediate animated-zoom frame without waiting for a transition delay.
      *

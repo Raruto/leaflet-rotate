@@ -15,7 +15,7 @@
  *
  * File layout: Leaflet lifecycle and public helpers; GLB/material loading; polygon
  * triangulation and picking; PMTiles extrusion; shared camera; procedural math/GPU operations.
- * Only PMTiles sources import a library. Models are static triangles, without
+ * PMTiles v3 reading is implemented directly by this layer. Models are static triangles, without
  * animation, skinning, morph targets, normal maps, shadows or required extensions.
  *
  * Events: ready; error {error}; progress {enabled, loaded, skipped, pending, errors};
@@ -33,7 +33,7 @@
  * @property {string} [source] PMTiles URL containing Polygon/MultiPolygon GeoJSON.
  * @property {function(Object): (ExtrusionStyle|null)} [featureStyle] Source styling; null skips.
  * @property {function(PickedFeature): (Node|string)} [tooltipContent] No HTML string evaluation.
- * @property {boolean} [zoomOnClick=false] Zoom one level onto the nearest clicked surface.
+ * @property {boolean} [zoomOnClick=false] Frame the entire nearest clicked object.
  * @property {string} [attribution] Standard Leaflet attribution HTML.
  * @property {string} [ariaLabel='3D scene'] Shared canvas accessible name.
  *
@@ -65,6 +65,173 @@
  */
 
 L.Layer3D = L.Layer.extend({
+  /**
+   * PMTiles v3 range reader.
+   * Supports uncompressed/gzip sections. Other compression methods fail explicitly.
+   * Specification: https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md
+   */
+  /** Read exactly one archive range; reject changed archives rather than mix revisions. */
+  async _read(offset, length, signal) {
+    signal?.throwIfAborted();
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(length) ||
+      offset < 0 || length <= 0 || !Number.isSafeInteger(offset + length)) {
+      throw new Error('Invalid PMTiles byte range');
+    }
+    const response = await fetch(this.url, {
+      headers: { Range: `bytes=${offset}-${offset + length - 1}` }, signal,
+    });
+    if (!response.ok) throw new Error(`Unable to read PMTiles: HTTP ${response.status}`);
+    const etag = response.headers.get('ETag');
+    if (this._etag && etag !== this._etag) throw new Error('PMTiles archive changed; recreate the layer');
+    if (etag) this._etag = etag;
+    let data = await response.arrayBuffer();
+    if (response.status === 200) data = data.slice(offset, offset + length);
+    else if (response.status !== 206 ||
+      !response.headers.get('Content-Range')?.startsWith(`bytes ${offset}-${offset + length - 1}/`)) {
+      throw new Error('Invalid PMTiles range response');
+    }
+    if (data.byteLength !== length) throw new Error('Truncated PMTiles range');
+    return data;
+  },
+
+  async _decompress(data, compression) {
+    if (compression === 1) return data;
+    if (compression !== 2) throw new Error(`Unsupported PMTiles compression: ${compression}`);
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  },
+
+  /** Cache header initialization; failures remain visible to all callers. */
+  getHeader() {
+    return this._header ||= this._read(0, 127).then(data => {
+      const view = new DataView(data);
+      if (new TextDecoder().decode(data.slice(0, 7)) !== 'PMTiles' || view.getUint8(7) !== 3) {
+        throw new Error('Expected a PMTiles v3 archive');
+      }
+      const header = {};
+      const fields = ['rootDirectoryOffset', 'rootDirectoryLength', 'jsonMetadataOffset', 'jsonMetadataLength',
+        'leafDirectoryOffset', 'leafDirectoryLength', 'tileDataOffset', 'tileDataLength',
+        'numAddressedTiles', 'numTileEntries', 'numTileContents'];
+      fields.forEach((name, i) => {
+        const value = Number(view.getBigUint64(8 + i * 8, true));
+        if (!Number.isSafeInteger(value)) throw new Error('PMTiles offset/count exceeds safe integer range');
+        header[name] = value;
+      });
+      ['clustered', 'internalCompression', 'tileCompression', 'tileType', 'minZoom', 'maxZoom']
+        .forEach((name, i) => { header[name] = view.getUint8(96 + i); });
+      ['minLon', 'minLat', 'maxLon', 'maxLat'].forEach((name, i) => {
+        header[name] = view.getInt32(102 + i * 4, true) / 1e7;
+      });
+      header.centerZoom = view.getUint8(118);
+      header.centerLon = view.getInt32(119, true) / 1e7;
+      header.centerLat = view.getInt32(123, true) / 1e7;
+      if (header.minZoom > header.maxZoom || header.maxZoom > 26 ||
+        header.rootDirectoryOffset < 127 || !header.rootDirectoryLength ||
+        header.minLon > header.maxLon || header.minLat > header.maxLat) throw new Error('Invalid PMTiles header');
+      for (const compression of [header.internalCompression, header.tileCompression]) {
+        if (![1, 2].includes(compression)) throw new Error(`Unsupported PMTiles compression: ${compression}`);
+      }
+      return header;
+    });
+  },
+
+  /** Share index requests; tile cancellation must not abort an index needed by another caller. */
+  _directory(offset, length, compression) {
+    const key = `${offset}:${length}`;
+    if (!this._directories.has(key)) {
+      if (this._directories.size >= 32) this._directories.delete(this._directories.keys().next().value);
+      const pending = this._read(offset, length).then(data => this._decompress(data, compression)).then(data => {
+        const bytes = new Uint8Array(data);
+        let cursor = 0;
+        const varint = () => {
+          let value = 0;
+          for (let factor = 1; factor <= 2 ** 49; factor *= 128) {
+            if (cursor >= bytes.length) throw new Error('Truncated PMTiles directory');
+            const byte = bytes[cursor++];
+            value += (byte & 127) * factor;
+            if (!Number.isSafeInteger(value)) throw new Error('Invalid PMTiles directory integer');
+            if (byte < 128) return value;
+          }
+          throw new Error('Invalid PMTiles directory integer');
+        };
+        const count = varint();
+        if (count > (bytes.length - cursor) / 4) throw new Error('Invalid PMTiles directory count');
+        const entries = [];
+        let tileId = 0;
+        for (let i = 0; i < count; i++) {
+          tileId += varint();
+          if (!Number.isSafeInteger(tileId) || (i && tileId <= entries[i - 1].tileId)) {
+            throw new Error('Invalid PMTiles directory tile IDs');
+          }
+          entries.push({ tileId });
+        }
+        for (const entry of entries) entry.runLength = varint();
+        for (const entry of entries) {
+          entry.length = varint();
+          if (!entry.length) throw new Error('Invalid PMTiles directory length');
+        }
+        entries.forEach((entry, i) => {
+          const value = varint();
+          if (!value && !i) throw new Error('Invalid PMTiles directory offset');
+          entry.offset = value ? value - 1 : entries[i - 1].offset + entries[i - 1].length;
+        });
+        if (cursor !== bytes.length) throw new Error('Trailing PMTiles directory data');
+        return entries;
+      }).catch(error => {
+        if (this._directories.get(key) === pending) this._directories.delete(key);
+        throw error;
+      });
+      this._directories.set(key, pending);
+    }
+    return this._directories.get(key);
+  },
+
+  /** Nearest directory entry at/before the Hilbert ID, then follow leaf pointers. */
+  async getZxy(z, x, y, signal) {
+    if (![z, x, y].every(Number.isInteger) || z < 0 || z > 26 ||
+      x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) throw new Error('Invalid PMTiles tile coordinates');
+    signal?.throwIfAborted();
+    let tileId = (4 ** z - 1) / 3;
+    const n = 2 ** z;
+    // Same cumulative Hilbert ordering used by build/pmtiles.js.
+    for (let s = n / 2; s >= 1; s /= 2) {
+      const rx = (x & s) ? 1 : 0, ry = (y & s) ? 1 : 0;
+      tileId += s * s * ((3 * rx) ^ ry);
+      if (!ry) {
+        if (rx) { x = n - 1 - x; y = n - 1 - y; }
+        [x, y] = [y, x];
+      }
+    }
+    const header = await this.getHeader();
+    signal?.throwIfAborted();
+    if (z < header.minZoom || z > header.maxZoom) return;
+    let offset = header.rootDirectoryOffset, length = header.rootDirectoryLength;
+    const visited = new Set();
+    for (let depth = 0; depth < 4; depth++) {
+      if (visited.has(offset)) throw new Error('Cyclic PMTiles directory');
+      visited.add(offset);
+      const entries = await this._directory(offset, length, header.internalCompression);
+      signal?.throwIfAborted();
+      let low = 0, high = entries.length - 1;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (entries[mid].tileId <= tileId) low = mid + 1;
+        else high = mid - 1;
+      }
+      const entry = entries[high];
+      if (!entry) return;
+      if (entry.runLength) {
+        if (tileId - entry.tileId >= entry.runLength) return;
+        if (entry.offset + entry.length > header.tileDataLength) throw new Error('PMTiles tile outside data section');
+        const data = await this._decompress(await this._read(header.tileDataOffset + entry.offset, entry.length, signal), header.tileCompression);
+        signal?.throwIfAborted();
+        return { data };
+      }
+      if (entry.offset + entry.length > header.leafDirectoryLength) throw new Error('PMTiles directory outside leaf section');
+      offset = header.leafDirectoryOffset + entry.offset;
+      length = entry.length;
+    }
+    throw new Error('PMTiles directory depth exceeds four levels');
+  },
 
   statics: {
     /** Rendering owner per map; entries are removed on the last layer removal. */
@@ -88,6 +255,8 @@ L.Layer3D = L.Layer.extend({
    */
   initialize(options) {
     L.Util.setOptions(this, options);
+    this.url = this.options.source ? new URL(this.options.source, document.baseURI).href : null;
+    this._directories = new Map();
     if (this.options.center) {
       this.location = new L.LatLng(this.options.center[0], this.options.center[1]);
     }
@@ -100,12 +269,18 @@ L.Layer3D = L.Layer.extend({
     // Defer initialization so callers can subscribe to ready/error after construction.
     queueMicrotask(async () => {
       try {
-        this.root = this.createGroup();
+        this.root = {
+          position:    [0, 0, 0],
+          rotation:    [0, 0, 0],
+          scale:       [1, 1, 1],
+          worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+          children:    [],
+          visible:     true,
+        };
         this.raycaster = { origin: [0, 0, 0], direction: [0, 0, 0] };
         if (this.options.source) {
           this.group = this.root;
-          this.archive = await import('https://unpkg.com/pmtiles@4.5.0/dist/esm/index.js?module').then(({ PMTiles }) => new PMTiles(new URL(this.options.source, document.baseURI).href));
-          this.header = await this.archive.getHeader();
+          this.header = await this.getHeader();
           const { minZoom, minLon, minLat, maxLon, maxLat } = this.header;
           if (!Number.isInteger(minZoom) || minZoom < 0 || minZoom > 30 ||
             ![minLon, minLat, maxLon, maxLat].every(Number.isFinite) ||
@@ -174,9 +349,8 @@ L.Layer3D = L.Layer.extend({
               throw new Error('Model textures currently require untransformed TEXCOORD_0 UVs');
             }
             const gl = this.renderer.gl;
-            const internalFormat = color && gl.SRGB8_ALPHA8 || gl.RGBA;
             // A glTF image may serve both color and data maps: those cannot share a GPU format.
-            const key = `${reference.index}:${internalFormat}`;
+            const key = `${reference.index}:${color && gl.SRGB8_ALPHA8 || gl.RGBA}`;
             if (!textures.has(key)) {
               const texture = description.textures[reference.index];
               const sampler = description.samplers?.[texture.sampler] || {};
@@ -190,8 +364,9 @@ L.Layer3D = L.Layer.extend({
                 magFilter:      gl.LINEAR,
                 image:          images[texture.source],
                 flipY:          false,
-                internalFormat,
-                wrapS:          sampler.wrapS || gl.REPEAT, wrapT: sampler.wrapT || gl.REPEAT,
+                internalFormat: color && gl.SRGB8_ALPHA8 || gl.RGBA,
+                wrapS:          sampler.wrapS || gl.REPEAT,
+                wrapT:          sampler.wrapT || gl.REPEAT,
                 minFilter:      sampler.minFilter || gl.LINEAR_MIPMAP_LINEAR,
                 magFilter:      sampler.magFilter || gl.LINEAR,
               });
@@ -202,18 +377,19 @@ L.Layer3D = L.Layer.extend({
           const materials = (description.materials || []).map(material => {
             const pbr = material.pbrMetallicRoughness || {};
             return {
-              color: (pbr.baseColorFactor || [1, 1, 1, 1]).slice(0, 3),
-              opacity: pbr.baseColorFactor?.[3] ?? 1,
-              metallic: pbr.metallicFactor ?? 1, roughness: pbr.roughnessFactor ?? 1,
-              baseTexture: textureFor(pbr.baseColorTexture, true),
-              metalTexture: textureFor(pbr.metallicRoughnessTexture),
-              emissiveTexture: textureFor(material.emissiveTexture, true),
-              occlusionTexture: textureFor(material.occlusionTexture),
-              emissive: material.emissiveFactor || [0, 0, 0],
+              color:             (pbr.baseColorFactor || [1, 1, 1, 1]).slice(0, 3),
+              opacity:           pbr.baseColorFactor?.[3] ?? 1,
+              metallic:          pbr.metallicFactor ?? 1,
+              roughness:         pbr.roughnessFactor ?? 1,
+              baseTexture:       textureFor(pbr.baseColorTexture, true),
+              metalTexture:      textureFor(pbr.metallicRoughnessTexture),
+              emissiveTexture:   textureFor(material.emissiveTexture, true),
+              occlusionTexture:  textureFor(material.occlusionTexture),
+              emissive:          material.emissiveFactor || [0, 0, 0],
               occlusionStrength: material.occlusionTexture?.strength ?? 1,
-              alphaMode: material.alphaMode || 'OPAQUE',
-              alphaCutoff: material.alphaCutoff ?? 0.5,
-              doubleSided: material.doubleSided,
+              alphaMode:         material.alphaMode || 'OPAQUE',
+              alphaCutoff:       material.alphaCutoff ?? 0.5,
+              doubleSided:       material.doubleSided,
             };
           });
           let nodes;
@@ -271,7 +447,14 @@ L.Layer3D = L.Layer.extend({
               const spec = description.nodes[index];
               if (!spec) throw new Error('Invalid glTF node');
               active.add(index);
-              const group = this.createGroup();
+              const group = {
+                position:    [0, 0, 0],
+                rotation:    [0, 0, 0],
+                scale:       [1, 1, 1],
+                worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+                children:    [],
+                visible:     true,
+              };
               group.name = spec.name;
               if (spec.matrix) group.matrix = this._copyMatrix(Array.from(new DOMMatrix().toFloat64Array()), spec.matrix);
               else {
@@ -323,7 +506,19 @@ L.Layer3D = L.Layer.extend({
                   resources.push(program);
                   const geometry = this._createGeometry(this.renderer.gl, attributes);
                   resources.push(geometry);
-                  const mesh = this._createMeshObject(this.renderer.gl, { geometry, program });
+                  const mesh = {
+                    position:    [0, 0, 0],
+                    rotation:    [0, 0, 0],
+                    scale:       [1, 1, 1],
+                    worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+                    children:    [],
+                    visible:     true,
+                    gl: this.renderer.gl,
+                    geometry,
+                    program,
+                    id: L.Layer3D._nextId++,
+                    renderOrder: 0
+                  };
                   mesh.name = description.meshes[spec.mesh].name; mesh.extras = spec.extras || {};
                   this.setParent(mesh, group);
                 }
@@ -345,7 +540,14 @@ L.Layer3D = L.Layer.extend({
               throw error;
             }
           }
-          const model = this.createGroup();
+          const model = {
+            position:    [0, 0, 0],
+            rotation:    [0, 0, 0],
+            scale:       [1, 1, 1],
+            worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+            children:    [],
+            visible:     true,
+          };
           model.id = url;
           model.extras = description.extras || {};
           if (!nodes.length) throw new Error('Expected a glTF model with a non-empty scene');
@@ -388,9 +590,15 @@ L.Layer3D = L.Layer.extend({
     if (this.root) this._attach(map);
   },
 
-  /** Source neighborhoods reload only after movement; camera redraws use shared events. */
+  /** Reconcile source coverage when the visible ground footprint changes. */
   getEvents() {
-    return this.options.source ? { moveend: this._updateArea } : {};
+    return this.options.source ? {
+      moveend: this._updateArea,
+      zoomend: this._updateArea,
+      rotate: this._updateArea,
+      pitch: this._updateArea,
+      resize: this._updateArea,
+    } : {};
   },
 
   /** Release source meshes/UI; retain manually added objects and model CPU data. */
@@ -425,7 +633,7 @@ L.Layer3D = L.Layer.extend({
       if (this._layers.size) {
         // Keep the original scene origin and GPU resources when ownership changes.
         const next = this._layers.values().next().value;
-        for (const key of ['_layers', '_sceneOrigin', '_size', '_zoomLevel', '_cursor']) {
+        for (const key of ['_layers', '_sceneOrigin', '_size', '_zoomLevel', '_zoomTransitions', '_cursor']) {
           next[key] = this[key];
           delete this[key];
         }
@@ -437,6 +645,8 @@ L.Layer3D = L.Layer.extend({
         map.on('zoomend', next._endZoom, next);
         next.update();
       } else {
+        for (const animation of this._zoomTransitions?.keys() || []) animation.play();
+        this._zoomTransitions = null;
         this.renderer.gl.canvas.remove();
         this.renderer.gl.getExtension('WEBGL_lose_context')?.loseContext();
         L.Layer3D._renderers.delete(map);
@@ -462,7 +672,14 @@ L.Layer3D = L.Layer.extend({
       this._shared = this;
       this._layers = new Set();
       this._sceneOrigin = this.location;
-      this.scene = this.createGroup();
+      this.scene = {
+        position:    [0, 0, 0],
+        rotation:    [0, 0, 0],
+        scale:       [1, 1, 1],
+        worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+        children:    [],
+        visible:     true,
+      };
       // Perspective camera state: fov in degrees, near/far in scene metres.
       this.camera = {
         position:             [0, 0, 0],
@@ -529,7 +746,7 @@ L.Layer3D = L.Layer.extend({
 
   /**
    * Adds a scene node or mesh in layer-local coordinates and schedules a redraw.
-   * Requires ready; use createGroup/createMesh to construct compatible objects.
+   * Requires initialization and a compatible scene node.
    * @param {Object} object
    * @returns {L.Layer3D} This layer.
    */
@@ -551,45 +768,6 @@ L.Layer3D = L.Layer.extend({
   },
 
   /**
-   * Creates detached CPU data after ready. position/rotation/scale are ordinary [x,y,z]
-   * arrays; use layer.setParent()/traverse() and update() after changing attached data.
-   * @returns {Object} An empty scene node.
-   */
-  createGroup() {
-    return {
-      position:    [0, 0, 0],
-      rotation:    [0, 0, 0],
-      scale:       [1, 1, 1],
-      worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
-      children:    [],
-      visible:     true,
-    };
-  },
-
-  /**
-   * Creates a non-indexed mesh from flat `position`, `normal` and `color` arrays (3 items per vertex).
-   * The default program uses vertex colors and simple directional lighting.
-   *
-   * @param {Object} attributes Flat arrays; position/normal/color each have three values per vertex.
-   * @param {Object} [material] WebGL program, not a material style or glTF material.
-   * @returns {Object} A detached mesh in this map's GPU context.
-   */
-  createMesh(attributes, material) {
-    if (!this.renderer) throw new Error('Add the layer to a map before creating a mesh');
-    const data = {};
-    for (const name in attributes) {
-      data[name] = { size: 3, data: new Float32Array(attributes[name]) };
-    }
-    const geometry = this._createGeometry(this.renderer.gl, data);
-    const mesh = this._createMeshObject(this.renderer.gl, {
-      geometry,
-      program: material || this._createProgram({ vertexColors: true })
-    });
-    mesh.extras = {};
-    return mesh;
-  },
-
-  /**
    * Build a shader variant from a retained style and re-create textures on context changes.
    * Model color factors are linear; polygon vertex colors are stored as sRGB.
    * BLEND disables depth writes and needs mesh sorting; MASK discards texels below
@@ -603,7 +781,7 @@ L.Layer3D = L.Layer.extend({
     for (const name of ['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']) {
       const texture = material[name];
       if (texture && texture.gl !== this.renderer.gl) {
-        material[name] = this.renderer.gl, {
+        material[name] = {
           gl:             this.renderer.gl,
           texture:        this.renderer.gl.createTexture(),
           internalFormat: this.renderer.gl.RGBA,
@@ -722,16 +900,17 @@ L.Layer3D = L.Layer.extend({
         emissive:          { value: material.emissive || [0, 0, 0] },
         ...Object.fromEntries(['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']
           .filter(name => material[name]).map(name => [name, { value: material[name] }])),
-      }
+      },
+      program: gl.createProgram(),
+      shaders: [],
     };
-    program.program = gl.createProgram();
-    program.shaders = [];
     for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]]) {
       const shader = gl.createShader(type);
       gl.shaderSource(shader, source); gl.compileShader(shader);
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
         const error = gl.getShaderInfoLog(shader);
-        gl.deleteShader(shader); this._removeProgram(program);
+        gl.deleteShader(shader);
+        this._removeProgram(program);
         throw new Error(`Unable to compile Layer3D shader: ${error}`);
       }
       program.shaders.push(shader); gl.attachShader(program.program, shader);
@@ -983,21 +1162,19 @@ L.Layer3D = L.Layer.extend({
     return hits.sort((a, b) => a.distance - b.distance);
   },
 
-  /** Reconcile the desired 3x3 archive neighborhood, cancelling blocks outside it. */
+  /** Cover the visible ground bounds and one bordering block, clipped to the archive. */
   _updateArea() {
     if (!this._map || !this.header) return;
     const z = this.header.minZoom;
     const center = this._map.project(this._map.getCenter(), z).divideBy(256).floor();
+    const bounds = this._map.getBounds();
+    const nw = this._map.project(bounds.getNorthWest(), z).divideBy(256).floor();
+    const se = this._map.project(bounds.getSouthEast(), z).divideBy(256).floor();
+    const archiveNW = this._map.project([this.header.maxLat, this.header.minLon], z).divideBy(256).floor();
+    const archiveSE = this._map.project([this.header.minLat, this.header.maxLon], z).divideBy(256).floor();
     const wanted = new Map();
-    // Nine storage blocks and two active loads bound work independently of map zoom.
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const x = center.x + dx, y = center.y + dy;
-        if (x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) continue;
-        const nw = this._map.unproject([x * 256, y * 256], z);
-        const se = this._map.unproject([(x + 1) * 256, (y + 1) * 256], z);
-        if (se.lat > this.header.maxLat || nw.lat < this.header.minLat ||
-          se.lng < this.header.minLon || nw.lng > this.header.maxLon) continue;
+    for (let x = Math.max(0, nw.x - 1, archiveNW.x); x <= Math.min(2 ** z - 1, se.x + 1, archiveSE.x); x++) {
+      for (let y = Math.max(0, nw.y - 1, archiveNW.y); y <= Math.min(2 ** z - 1, se.y + 1, archiveSE.y); y++) {
         wanted.set(`${x}/${y}`, { z, x, y });
       }
     }
@@ -1007,7 +1184,9 @@ L.Layer3D = L.Layer.extend({
         this._areas.delete(key);
       }
     }
-    for (const [key, coords] of wanted) {
+    // Load the nearest new blocks first without rebuilding retained geometry.
+    for (const [key, coords] of [...wanted].sort(([, a], [, b]) =>
+      Math.hypot(a.x - center.x, a.y - center.y) - Math.hypot(b.x - center.x, b.y - center.y))) {
       if (!this._areas.has(key)) this._areas.set(key, { coords, request: new AbortController() });
     }
     this._pump();
@@ -1024,7 +1203,7 @@ L.Layer3D = L.Layer.extend({
       (async () => {
         try {
           const coords = area.coords, { z, x, y } = coords;
-          const result = await this.archive.getZxy(z, x, y, area.request.signal);
+          const result = await this.getZxy(z, x, y, area.request.signal);
           if (area.request.signal.aborted) return;
           const data = result ? JSON.parse(new TextDecoder().decode(result.data))
             : { type: 'FeatureCollection', features: [] };
@@ -1118,10 +1297,33 @@ L.Layer3D = L.Layer.extend({
             Object.assign(area, { mesh: null, buildings: 0, skipped, done: true });
             return;
           }
-          const mesh = this.createMesh({ position: positions, normal: normals, color: colors });
-          mesh.extras.featureFaces = featureFaces;
-          Object.assign(area, { mesh, buildings: featureFaces.length, skipped, done: true });
-          this.add(mesh);
+          Object.assign(area, {
+            mesh: {
+              position:    [0, 0, 0],
+              rotation:    [0, 0, 0],
+              scale:       [1, 1, 1],
+              worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+              children:    [],
+              visible:     true,
+              gl:          this.renderer.gl,
+              geometry:    this._createGeometry(
+                this.renderer.gl,
+                Object.fromEntries(
+                  Object
+                    .entries({ position: positions, normal: normals, color: colors })
+                    .map(([name, values]) => [name, { size: 3, data: new Float32Array(values) }])
+                )
+              ),
+              program:     this._createProgram({ vertexColors: true }),
+              id:          L.Layer3D._nextId++,
+              renderOrder: 0,
+              extras:      { featureFaces },
+            },
+            buildings: featureFaces.length,
+            skipped,
+            done: true
+          });
+          this.add(area.mesh);
         } catch (error) {
           if (area.request.signal.aborted) return;
           area.error = error.message;
@@ -1257,10 +1459,45 @@ L.Layer3D = L.Layer.extend({
       const crs = map.options.crs;
       const origin = crs.project(this._shared._sceneOrigin);
       const metres = Math.cos(this._shared._sceneOrigin.lat * Math.PI / 180);
-      // Drop height and unproject the ground footprint, not the pitched screen position.
+      const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+      this._updateWorldMatrix(this.scene);
+      this.traverse(feature.model || feature.mesh, mesh => {
+        if (!mesh.visible) return true;
+        if (!mesh.geometry) return;
+        const attribute = mesh.geometry.attributes.position;
+        const point = [0, 0, 0];
+        for (let i = feature.model ? 0 : feature.vertexStart;
+          i < (feature.model ? attribute.count : feature.vertexEnd); i++) {
+          this._transformPoint(this._readVector(point, attribute.data, i * attribute.size), mesh.worldMatrix);
+          for (let axis = 0; axis < 3; axis++) {
+            min[axis] = Math.min(min[axis], point[axis]);
+            max[axis] = Math.max(max[axis], point[axis]);
+          }
+        }
+      });
+      if (!min.every(Number.isFinite) || !max.every(Number.isFinite)) {
+        this.fire('error', { error: new Error('Cannot frame a 3D object without finite geometry') });
+        return;
+      }
+      const x = (min[0] + max[0]) / 2, z = (min[2] + max[2]) / 2;
       const center = crs.unproject(new L.Point(
-        origin.x + feature.point[0] / metres, origin.y - feature.point[2] / metres));
-      map.setView(center, Math.min(map.getZoom() + 1, map.getMaxZoom()));
+        origin.x + x / metres, origin.y - z / metres));
+      const size = map.getSize(), perspective = size.y * 1.5;
+      const pitch = map.getPitch() * Math.PI / 180, bearing = map.getBearing() * Math.PI / 180;
+      let distance = 0.1;
+      // Fit all eight world bounds corners inside the central 70% of the pitched viewport.
+      for (const px of [min[0], max[0]]) for (const height of [min[1], max[1]]) for (const pz of [min[2], max[2]]) {
+        const right = Math.cos(bearing) * (px - x) - Math.sin(bearing) * (pz - z);
+        const ground = Math.sin(bearing) * (px - x) + Math.cos(bearing) * (pz - z);
+        const down = Math.cos(pitch) * ground - Math.sin(pitch) * height;
+        const toward = Math.sin(pitch) * ground + Math.cos(pitch) * height;
+        distance = Math.max(distance, toward + perspective *
+          Math.max(Math.abs(right) / (size.x * 0.35), Math.abs(down) / (size.y * 0.35)));
+      }
+      const zoom = Math.log2(perspective * 40075016.68557849 * metres / (distance * crs.scale(0)));
+      const snap = map.options.zoomSnap;
+      map.setView(center, Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(),
+        snap ? Math.floor(zoom / snap) * snap : zoom)));
     }
     this.fire('featureclick', { feature, originalEvent: event });
   },
@@ -1323,6 +1560,8 @@ L.Layer3D = L.Layer.extend({
 
   /** Stop using the outgoing level after zoomend; the next redraw uses current tiles. */
   _endZoom() {
+    for (const animation of this._zoomTransitions?.keys() || []) animation.finish();
+    this._zoomTransitions = null;
     this._zoomLevel = null;
     this.update();
   },
@@ -1338,6 +1577,22 @@ L.Layer3D = L.Layer.extend({
     const map = this._map;
     const size = map.getSize();
     if (!size.x || !size.y) return;
+    if (map._animatingZoom) {
+      this._zoomTransitions ||= new Map();
+      const now = performance.now();
+      for (const animation of map.getContainer().getAnimations({ subtree: true })) {
+        if (!(animation instanceof CSSTransition) || animation.transitionProperty !== 'transform' ||
+          !animation.effect.target.classList.contains('leaflet-zoom-animated') ||
+          this._zoomTransitions.has(animation)) continue;
+        const time = animation.currentTime || 0;
+        animation.pause();
+        this._zoomTransitions.set(animation, { start: now, time });
+      }
+      // Freeze CSS between WebGL frames: the compositor must not outrun the canvas.
+      for (const [animation, { start, time }] of this._zoomTransitions) {
+        animation.currentTime = Math.min(animation.effect.getComputedTiming().endTime, time + now - start);
+      }
+    }
     if (!this._size || !this._size.equals(size)) {
       const { gl, dpr } = this.renderer;
       this.renderer.width = size.x; this.renderer.height = size.y;
@@ -1398,7 +1653,8 @@ L.Layer3D = L.Layer.extend({
       (a.program.transparent
         ? (a.renderOrder || 0) - (b.renderOrder || 0) ||
         b._sortDepth - a._sortDepth || a.id - b.id
-        : a.id - b.id));
+        : a.id - b.id)
+    );
     renderer.gl.viewport(0, 0, renderer.gl.canvas.width, renderer.gl.canvas.height);
     renderer.gl.depthMask(true); renderer.gl.clear(renderer.gl.COLOR_BUFFER_BIT | renderer.gl.DEPTH_BUFFER_BIT);
     for (const mesh of meshes) {
@@ -1511,8 +1767,7 @@ L.Layer3D = L.Layer.extend({
     z[0], z[1], z[2], 0, ...camera.position, 1]);
     const f = 1 / Math.tan(camera.fov * Math.PI / 360);
     const n = camera.near, r = camera.far;
-    this._copyMatrix(camera.projectionMatrix, [f / camera.aspect, 0, 0, 0, 0, f, 0, 0,
-      0, 0, (r + n) / (n - r), -1, 0, 0, 2 * r * n / (n - r), 0]);
+    this._copyMatrix(camera.projectionMatrix, [f / camera.aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (r + n) / (n - r), -1, 0, 0, 2 * r * n / (n - r), 0]);
     this._multiplyMatrix(camera.projectionViewMatrix, camera.projectionMatrix, camera.viewMatrix);
   },
 
@@ -1569,16 +1824,27 @@ L.Layer3D = L.Layer.extend({
   _createGeometry(gl, attributes) {
     for (const [name, attribute] of Object.entries(attributes)) {
       attribute.size ||= 1;
-      attribute.count = attribute.data.length / attribute.size;
-      attribute.type = attribute.data instanceof Float32Array ? gl.FLOAT
-        : attribute.data instanceof Uint8Array ? gl.UNSIGNED_BYTE
-          : attribute.data instanceof Uint16Array ? gl.UNSIGNED_SHORT : gl.UNSIGNED_INT;
+      attribute.count  = attribute.data.length / attribute.size;
+      attribute.type   = attribute.data instanceof Float32Array
+        ? gl.FLOAT
+        : attribute.data instanceof Uint8Array
+          ? gl.UNSIGNED_BYTE
+          : attribute.data instanceof Uint16Array
+            ? gl.UNSIGNED_SHORT
+            : gl.UNSIGNED_INT;
       attribute.target = name === 'index' ? gl.ELEMENT_ARRAY_BUFFER : gl.ARRAY_BUFFER;
       attribute.buffer = gl.createBuffer();
       gl.bindBuffer(attribute.target, attribute.buffer);
       gl.bufferData(attribute.target, attribute.data, gl.STATIC_DRAW);
     }
-    return { gl, attributes, drawRange: { start: 0, count: attributes.index?.count || attributes.position.count } };
+    return {
+      gl,
+      attributes,
+      drawRange: {
+        start: 0,
+        count: attributes.index?.count || attributes.position.count
+      }
+    };
   },
 
   /** Cache local AABB and center for ray picking and transparent mesh sorting. */
@@ -1614,11 +1880,6 @@ L.Layer3D = L.Layer.extend({
   },
 
   _removeGeometry(geometry) { for (const attribute of Object.values(geometry.attributes)) geometry.gl.deleteBuffer(attribute.buffer); },
-
-  /** Scene data plus context-bound geometry/program handles. @private */
-  _createMeshObject(gl, { geometry, program }) {
-    return Object.assign(this.createGroup(), { gl, geometry, program, id: L.Layer3D._nextId++, renderOrder: 0 });
-  },
 
 });
 

@@ -1,5 +1,25 @@
 @3d-layer
 Feature: Reusable 3D layers
+  Scenario: Raster zoom transitions advance only with shared WebGL frames
+    Given a map with the standalone 3D module and no dependency import map
+    Then raster zoom transitions stay paused between WebGL frames and resume on removal
+
+  Scenario: PMTiles layer methods handle range archives without external libraries
+    Given a map with the standalone 3D module and no dependency import map
+    Then the native PMTiles methods handle directories, compression and failures
+
+  Scenario: Building blocks cover the visible ground through camera changes
+    Given a map with the standalone 3D module and no dependency import map
+    Then building blocks cover pitched views and retain overlapping areas
+
+  Scenario: Raster tile levels follow the first camera change after accumulated pans
+    Given a map with the standalone 3D module and no dependency import map
+    Then raster tiles remain aligned after panning before their first pitch change
+
+  Scenario: Resetting a pitched view after animated zoom restores the ground camera
+    Given a map with the standalone 3D module and no dependency import map
+    Then pitched view resets preserve the ground perspective after accumulated pans
+
   Scenario: Configured glTF loading retains objects and loads external PBR assets
     Given a map with the standalone 3D module and no dependency import map
     Then configured models preserve external assets and can be detached and reattached
@@ -62,7 +82,7 @@ Feature: Reusable 3D layers
     Given the Paris buildings example is open with sample volumes
     Then the building volumes preserve courtyards and elevated floors
     When I move and toggle the Paris building volumes
-    Then 3D neighbourhoods stay bounded, release distant volumes, and recover from failures
+    Then 3D coverage follows the viewport, releases distant volumes, and recovers from failures
 
   Scenario Outline: Model failures are reported without attaching broken geometry
     Given a map with the standalone 3D module and no dependency import map

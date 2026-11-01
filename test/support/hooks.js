@@ -46,22 +46,24 @@ Before(async function () {
     await route.fulfill({ response, body, headers: response.headers() });
   });
   // Deterministic PMTiles: tests answer tiles through the exposed `pmtilesTile(url, z, x, y)` binding.
-  await this.context.route('https://unpkg.com/pmtiles@*/**', route => route.fulfill({
-    contentType: 'text/javascript',
-    body: `export class PMTiles {
-      constructor(url) { this.url = url; }
-      async getHeader() {
+  const pmtilesMock = `for (const prototype of [L.PMTilesLayer?.prototype, L.Layer3D?.prototype].filter(Boolean)) {
+      prototype.getHeader = async function () {
         return this.url.endsWith('/paris-buildings.pmtiles')
           ? { minZoom: 16, maxZoom: 16, minLon: 2.2424, minLat: 48.8162, maxLon: 2.416, maxLat: 48.9022 }
           : { minZoom: 11, maxZoom: 19 };
-      }
-      async getZxy(z, x, y) {
+      };
+      prototype.getZxy = async function (z, x, y) {
         const tile = await window.pmtilesTile?.(this.url, z, x, y);
         if (tile?.error) throw new Error(tile.error);
         return tile ? { data: new TextEncoder().encode(tile).buffer } : undefined;
-      }
-    }`
-  }));
+      };
+    }`;
+  const mockPMTiles = async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: `${await response.text()}\n${pmtilesMock}` });
+  };
+  await this.context.route('**/misc/3DLayer.js', mockPMTiles);
+  await this.context.route('**/misc/PMTilesLayer.js', mockPMTiles);
   this.page = await this.context.newPage();
 });
 
