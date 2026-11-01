@@ -109,46 +109,47 @@ Canvas marker positions follow Leaflet's zoom-transition timing without scaling 
 
 #### Standalone 3D layers (native WebGL)
 
-Load [misc/3DLayer.js](misc/3DLayer.js) with a standard script tag after Leaflet and leaflet-rotate. It registers `L.Layer3D` globally, independently of the main plugin bundle. Rendering, static model loading, vector/matrix operations and polygon triangulation are implemented internally using WebGL 2 and browser APIs: no OGL, three.js, earcut, module scripts or import map are needed. WebGL 2 is required; an unavailable context reports an error through `ready` and the `error` event. All instances on the same map automatically share one WebGL canvas, scene and camera for correct occlusion, with a separate group and geographic origin per layer. Different maps use separate renderers. Only polygon sources dynamically import the PMTiles archive reader from unpkg; models and manually created meshes need no additional libraries.
+Load [misc/3DLayer.js](misc/3DLayer.js) with a standard script tag after Leaflet and leaflet-rotate. It registers `L.Layer3D` globally, independently of the main plugin bundle. Rendering, static model loading, vector/matrix operations and polygon triangulation are implemented internally using WebGL 2 and browser APIs: no OGL, three.js, earcut, module scripts or import map are needed. WebGL 2 and `Promise.withResolvers()` are required; initialization failures are reported through the `error` event. All instances on the same map automatically share one WebGL canvas, scene and camera for correct occlusion, with a separate group and geographic origin per layer. Different maps use separate renderers. Only polygon sources dynamically import the PMTiles archive reader from unpkg; models and manually created meshes need no additional libraries.
 
-Renderer creation, camera synchronization and cleanup are managed directly by `Layer3D`, with shared state per map and no separate renderer class.
+Renderer creation, camera synchronization and cleanup are managed directly by the first attached `Layer3D` instance, without a separate shared-state object or renderer class. If that instance is removed, a remaining layer takes ownership of the existing resources and map events, preserving the scene's original geographic origin.
+
+The canvas uses a fixed z-index of `450` and caps its pixel ratio at `2`. Models retain their glTF `OPAQUE`, `MASK` or `BLEND` alpha mode, without a layer-level override.
 
 ```html
 <script src="./misc/3DLayer.js"></script>
 <script>
-(async function () {
-const tower = await new L.Layer3D({ center: [48.8582601, 2.29449985], ariaLabel: '3D landmarks' }).addTo(map).ready;
-tower.add(await tower.loadModel('eiffel-tower.glb'));
-const buildings = await new L.Layer3D().addTo(map).ready;
-// tower.renderer === buildings.renderer
-})().catch(console.error);
+const tower = new L.Layer3D({
+    center: [48.8582601, 2.29449985], model: 'eiffel-tower.glb', ariaLabel: '3D landmarks'
+}).on('error', ({ error }) => console.error(error)).addTo(map);
+const buildings = new L.Layer3D().on('ready', () => {
+    // tower.renderer === buildings.renderer
+}).on('error', ({ error }) => console.error(error)).addTo(map);
 </script>
 ```
 
-World coordinates are metres from each layer's `location`: x east, y up, z south. Use `new L.Layer3D({ center: [lat, lng], ... })` to specify that origin. Without `center`, the layer takes the map centre on first addition. That origin stays fixed when moving the map or re-adding the layer. The positional `new L.Layer3D(location, options)` form remains supported and takes precedence over `center`. Georeferenced GeoJSON sources do not need an explicit origin; models generally need an explicit location to place them geographically. The first attached layer sets the shared canvas options and camera origin until the last layer is removed. Removing a layer detaches only its group; removing the last disposes the renderer. Re-adding layers preserves their objects and recreates the canvas as needed. Await `ready` to handle initialization failures (also emitted as an `error` event).
+World coordinates are metres from each layer's `location`: x east, y up, z south. The constructor accepts a single options object: `new L.Layer3D({ center: [lat, lng], ... })`. `center` accepts only a `[lat, lng]` array. Without `center`, the layer takes the map centre on first addition. That origin stays fixed when moving the map or re-adding the layer. Georeferenced GeoJSON sources do not need an explicit origin; models generally need an explicit center to place them geographically. The first attached layer sets the shared canvas options and camera origin until the last layer is removed. Removing a layer detaches only its group; removing the last disposes the renderer. Re-adding layers preserves their objects and recreates the canvas as needed. Subscribe to `ready` before using loaded objects and to `error` to handle initialization failures. Initialization is deferred so listeners can be registered immediately after construction; `ready` fires only once, not on re-addition.
 
 | Option / method | Description |
 | --- | --- |
-| `center` | Geographic origin (`[lat, lng]` or `L.LatLng`); defaults to the map centre on first addition. |
+| `center` | Geographic origin as `[lat, lng]`; defaults to the map centre on first addition. |
 | `ariaLabel` | Accessible name of the canvas (default `'3D scene'`). |
-| `zIndex` | Canvas z-index (default `450`: above tiles and vectors, below markers). |
-| `maxPixelRatio` | Upper bound of the canvas device pixel ratio (default `2`). |
 | `zoomOnClick` | Default `false`. When enabled, clicking a visible 3D object centers the map on its ground position and zooms in one level, capped at the map's maximum zoom. Works with models and polygon sources, with or without tooltips; only the nearest 3D surface triggers zoom when layers overlap. |
-| `model` | Optional glTF/GLB URL, resolved relative to the page. Loaded and added automatically before `ready` resolves. |
-| `modelAlphaMode` | Optional override (`OPAQUE`, `MASK`, `BLEND`, `COVERAGE`); otherwise respects glTF materials, including the tower's original `BLEND` transparency. `COVERAGE` uses multisample alpha-to-coverage with depth writes, but can lose fine texture details; it falls back to `MASK` without antialiasing. |
+| `model` | Optional glTF/GLB URL, resolved relative to the page. Loaded and added automatically before the `ready` event. Supports indexed/interleaved attributes, sparse accessors, node matrices/quaternions and independent repeated mesh nodes. |
 | `rotation`, `scale` | Optional model `[x, y, z]` rotation in radians and scale factors. |
 | `attribution` | Standard Leaflet attribution, added/removed automatically with the layer. |
-| `layer.ready` | Promise resolved once initialization and configured data/model loading finish (`ready` event). A configured model must be added to a map before awaiting readiness, because its GPU resources need that map's WebGL context. |
+| `ready` / `error` events | Subscribe with `.on('ready', ...)` and `.on('error', ({ error }) => ...)` before adding the layer. `ready` fires once initialization and configured loading finish; there is no `layer.ready` promise. A configured model needs the layer added to a map before loading can finish. |
 | `add(object)` / `remove(object)` | Adds or removes an object in this layer's group and redraws. `remove()` without arguments removes the Leaflet layer. |
 | `update()` | Schedules a redraw after changing objects. |
-| `loadModel(url)` | Loads a static glTF/GLB model after adding the layer to a map, using the internal loader. Supports indexed and interleaved attributes, sparse accessors, node matrices/quaternions and independent repeated mesh nodes. |
-| `createGroup()` / `createMesh({ position, normal, color }, program?)` | Creates an internal Transform or a non-indexed Mesh from flat arrays. Mesh creation requires the layer on a map; the default program uses vertex colors with simple directional/ambient lighting. |
+| `createGroup()` / `createMesh({ position, normal, color }, program?)` | Creates scene data or a non-indexed mesh from flat arrays. Nodes have ordinary `[x, y, z]` arrays for `position`, `rotation` and `scale`, with no methods or custom prototypes. Mesh creation requires the layer on a map; the default program uses vertex colors with simple directional/ambient lighting. |
+| `setParent(node, parent)` / `traverse(node, callback)` | Layer-owned scene operations: reparent/detach (`parent = null`), or walk descendants depth-first. A truthy callback return skips that node's descendants. Call `update()` after changing attached data. |
 | `color(value)` / `setVertexColor(mesh, start, end, color)` | Creates an sRGB color (`0x48d9ff`, `'#48d9ff'`) and paints a vertex range. HSL inputs use linear-space components, matching the former three.js styling, then encode to sRGB for storage. |
 | `triangulate(contour, holes?)` / `isClockWise(points)` | Polygon helpers for `{ x, y }` points. |
-| `raycast(event, objects?, recursive?)` | Intersections under a mouse event, nearest first (`object`, `point`, `faceIndex`, `distance`). |
-| `Native`, `scene`, `camera`, `renderer`, `root` | Internal primitives and underlying objects for advanced use (`Native` replaces the former `OGL` property; it is not an OGL-compatible library). The canvas/context are `renderer.gl.canvas` / `renderer.gl`; mesh attributes are `geometry.attributes`, with typed arrays in `.data`. |
+| `raycast(event, objects?, recursive?)` | Intersections under a mouse event, nearest first (`object`, `point`, `faceIndex`, `distance`). `point` is an ordinary `[x, y, z]` array in shared-world metres. |
+| `scene`, `camera`, `renderer`, `root` | Plain data managed procedurally by `Layer3D`: no engine classes, method tables, custom prototypes or `Native` namespace. Use layer helpers, not methods on these objects. The canvas/context are `renderer.gl.canvas` / `renderer.gl`; mesh attributes are `geometry.attributes`, with typed arrays in `.data`. |
 
 For polygon volumes, configure `Layer3D` directly instead of defining a subclass:
+
+`featureStyle` and `tooltipContent`, when supplied, must be functions; their types are not checked during initialization.
 
 ```js
 const volumes = new L.Layer3D({
@@ -158,13 +159,13 @@ const volumes = new L.Layer3D({
         bottom: feature.properties.baseHeight || 0,
         color: 0xd9b38c
     })
-}).on('error', ({ error }) => console.error(error)).addTo(map);
-await volumes.ready;
+}).on('ready', () => console.log('Archive loaded'))
+  .on('error', ({ error }) => console.error(error)).addTo(map);
 ```
 
 `source` is a PMTiles archive containing polygon/multipolygon GeoJSON feature collections; its reader is imported directly by `Layer3D`. `featureStyle(feature)` returns `{ top, bottom?, color? }` in metres, or `null` to skip a feature. Invalid heights report errors. The layer handles polygon holes, elevated undersides, batched vertex-colored meshes, deduplication between archive blocks, cancellation and geometry disposal. Styling and tooltip content are the only dataset-specific logic.
 
-Hover highlighting is built in. `highlightColor` defaults to `0x48d9ff`. Supply only `tooltipContent(feature)` returning a DOM node or text to enable a tooltip. The layer creates and styles its own `.leaflet-3d-tooltip` element inside the map, sets accessible tooltip/live-region attributes, positions and hides it, and removes it when disabled. Re-enabling the layer recreates it. No tooltip markup is needed in the page. The map cursor becomes `pointer` while a tooltip is visible and restores its previous style when hidden. Clicking does not pin the tooltip or highlight: moving off a feature or leaving the map clears both. `featurehover` and `featureclick` events expose `{ feature, originalEvent }`. Features contain `id` and `properties`. `progress` exposes `{ enabled, loaded, skipped, pending, errors }` for page-specific status messages.
+Hover highlighting is built in, using `0x48d9ff`. Supply only `tooltipContent(feature)` returning a DOM node or text to enable a tooltip. The layer creates and styles its own `.leaflet-3d-tooltip` element inside the map, sets accessible tooltip/live-region attributes, positions and hides it, and removes it when disabled. Re-enabling the layer recreates it. No tooltip markup is needed in the page. The map cursor becomes `pointer` while a tooltip is visible and restores its previous style when hidden. Clicking does not pin the tooltip or highlight: moving off a feature or leaving the map clears both. `featurehover` and `featureclick` events expose `{ feature, originalEvent }`. Features contain `id` and `properties`. `progress` exposes `{ enabled, loaded, skipped, pending, errors }` for page-specific status messages.
 
 The renderer supports static glTF/GLB triangle meshes, node transforms, base-color textures, metallic/roughness factors and textures, emissive and occlusion maps, double-sided materials and glTF alpha modes (OPAQUE, MASK, BLEND). A compact metallic/roughness shader combines a warm directional light, sky/ground ambient lighting, specular reflections and linear-space color processing. Color textures use hardware sRGB decoding/filtering; glTF color factors remain linear. Polygon buildings use Lambert shading; hemisphere and directional light strengths match the former three.js renderer. No tone mapping is applied, matching the original renderer's output. The Eiffel Tower uses its original embedded textures. This is not a full PBR engine: normal maps, environment maps, cast shadows and material extensions are not implemented. Transparent meshes are sorted back-to-front using transformed geometry centers, not shared node origins; double-sided transparent models draw back faces before front faces. Sorting remains per mesh rather than per triangle. Texture references currently require untransformed TEXCOORD_0 UVs. Models with animations, skins, morph targets, non-triangle primitives or required extensions report an error. Ordinary static models with repeated mesh nodes keep independent transforms. The last layer's removal releases the WebGL context; re-adding a layer recreates GPU geometry, programs and textures from retained CPU data/images.
 
@@ -173,6 +174,8 @@ Polygon roofs use internal ear clipping with visibility-tested hole bridges and 
 `tooltipContent` also works with configured GLB/glTF models. The callback receives `{ id, properties, model, mesh }`: `id` is the model URL, `properties` is its glTF `extras`, `model` is the loaded root and `mesh` is the intersected mesh. Nested meshes are picked recursively. Model programs remain unchanged on hover; the tooltip, pointer cursor and hover/click events behave like polygon tooltips, without click-to-pin.
 
 Picked model and polygon features also expose `point`, the intersection in shared scene coordinates (metres from the shared renderer's origin). Enable `zoomOnClick: true` to zoom onto the clicked object, as in the Eiffel Tower example; this does not pin the tooltip.
+
+Run the renderer/example BDD scenarios on both supported Leaflet versions with `node build/test.js --tags '@3d-layer'`. To also print Chromium/V8 coverage of named JavaScript functions in `misc/3DLayer.js`, set `COVERAGE_3D=1` before running the same command (PowerShell: `$env:COVERAGE_3D='1'`). Coverage is aggregated across scenarios; it measures function execution, not line/branch coverage or GLSL shader coverage. Unexecuted named functions are listed with source line numbers. Coverage collection is disabled by default.
 
 PMTiles remains separate: load [misc/PMTilesLayer.js](misc/PMTilesLayer.js) with a standard script tag to register `L.PMTilesLayer`, based on `L.TileLayer` and dedicated to raster tiles. It dynamically imports the archive reader from unpkg, including its fflate dependency. The layer owns requests, cancellation on tile unload or zoom changes, image decoding and object URL cleanup. Missing or invalid raster tiles report errors through Leaflet's `tileerror` event. `tile.done` and `tile.error` expose load state. GeoJSON volumes belong in `Layer3D`, not this raster layer.
 

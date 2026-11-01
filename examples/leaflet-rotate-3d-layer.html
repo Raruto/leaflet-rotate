@@ -68,7 +68,7 @@
 						content.innerHTML = `<b>Building</b><br>Estimated height: ${(storeys + 1) * 3} m · ${storeys} storeys${Number.isFinite(floors) ? ` · ${floors} ground floors` : ''}${ground === 0 ? ' · elevated ground floor' : ''}`;
 						return content;
 					}
-				}).addTo(map),
+				}).on('error', ({ error }) => console.error(error)).addTo(map),
 				// OSM way 5013364 links to 3dmr=4; revision 3 is a CC0, metre-scale GLB.
 				// Register the four ground corners to OSM pillars 69034127/135/179/180.
 				// The GLB is axis-aligned, not north-aligned; its horizontal footprint is slightly undersized.
@@ -84,7 +84,7 @@
 					rotation: [0, 45.81 * Math.PI / 180, 0],
 					scale: [1.0257, 1, 1.0167],
 					attribution: '<a href="https://3dmr.eu/model/4">CC0 model: n42k / Blend Swap</a>',
-				}).addTo(map),
+				}).on('error', ({ error }) => console.error(error)).addTo(map),
 			
 			}, { collapsed: false }).addTo(map);
 		</script>

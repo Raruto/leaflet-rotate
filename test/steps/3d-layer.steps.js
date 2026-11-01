@@ -1,17 +1,310 @@
 import assert from 'node:assert/strict';
-import { Given, Then, When } from '@cucumber/cucumber';
+import { After, AfterAll, Before, Given, Then, When } from '@cucumber/cucumber';
+
+const coveredFunctions = new Map();
+
+Before({ tags: '@3d-layer' }, async function () {
+  if (process.env.COVERAGE_3D) {
+    await this.page.coverage.startJSCoverage({ resetOnNavigation: false });
+  }
+});
+
+After({ tags: '@3d-layer' }, async function () {
+  if (!process.env.COVERAGE_3D) return;
+  const entries = await this.page.coverage.stopJSCoverage();
+  for (const entry of entries.filter(entry => entry.url.endsWith('/misc/3DLayer.js'))) {
+    for (const fn of entry.functions) {
+      const range = fn.ranges[0];
+      if (!fn.functionName) continue;
+      const key = `${range.startOffset}:${range.endOffset}`;
+      const previous = coveredFunctions.get(key);
+      coveredFunctions.set(key, {
+        name: fn.functionName,
+        line: entry.source.slice(0, range.startOffset).split('\n').length,
+        covered: Boolean(range.count || previous?.covered),
+      });
+    }
+  }
+});
+
+AfterAll(function () {
+  if (!process.env.COVERAGE_3D || !coveredFunctions.size) return;
+  const functions = [...coveredFunctions.values()];
+  const covered = functions.filter(fn => fn.covered).length;
+  console.log(`Layer3D named-function coverage: ${covered}/${functions.length} (${(covered / functions.length * 100).toFixed(1)}%)`);
+  console.log('Uncovered functions:', functions.filter(fn => !fn.covered).map(fn => `${fn.name}:${fn.line}`).join(', '));
+});
+
+Then('configured models preserve external assets and can be detached and reattached', async function () {
+  const png = await this.page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 2;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#808080'; context.fillRect(0, 0, 2, 2);
+    return canvas.toDataURL().split(',')[1];
+  });
+  const vertices = new Float32Array([-1, -1, 0, 1, -1, 0, 0, 1, 0]);
+  const description = {
+    asset: { version: '2.0' },
+    buffers: [{ uri: 'vertices.bin', byteLength: 60 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 },
+      { buffer: 0, byteOffset: 36, byteLength: 24 }],
+    accessors: [{ bufferView: 0, componentType: 5126, type: 'VEC3', count: 3 },
+      { bufferView: 1, componentType: 5126, type: 'VEC2', count: 3 }],
+    images: [{ uri: 'texture.png' }], textures: [{ source: 0 }],
+    materials: [{
+      pbrMetallicRoughness: { baseColorFactor: [0.6, 0.3, 0.1, 1], metallicFactor: 0.5,
+        roughnessFactor: 0.4, baseColorTexture: { index: 0 }, metallicRoughnessTexture: { index: 0 } },
+      emissiveTexture: { index: 0 }, emissiveFactor: [0.1, 0.2, 0.3],
+      occlusionTexture: { index: 0, strength: 0.6 },
+    }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, material: 0 }] }],
+    nodes: [{ mesh: 0 }], scenes: [{ nodes: [0] }],
+  };
+  await this.page.route('**/manual/model.gltf', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(description),
+  }));
+  await this.page.route('**/manual/vertices.bin', route => route.fulfill({
+    body: Buffer.concat([Buffer.from(vertices.buffer), Buffer.from(new Float32Array([0, 0, 1, 0, 0.5, 1]).buffer)]),
+    contentType: 'application/octet-stream',
+  }));
+  await this.page.route('**/manual/texture.png', route => route.fulfill({
+    contentType: 'image/png', body: Buffer.from(png, 'base64'),
+  }));
+  const result = await this.page.evaluate(async () => {
+    const url = new URL('manual/model.gltf', document.baseURI).href;
+    const layer = new L.Layer3D({ model: url });
+    let ready = false;
+    const loaded = nativeChecks.ready(layer).then(() => { ready = true; });
+    await new Promise(requestAnimationFrame);
+    const waitsForMap = !ready && !layer.model && !layer.renderer;
+    layer.addTo(test3d.map);
+    await loaded;
+    const model = layer.model;
+    let mesh;
+    layer.traverse(model, node => { if (node.geometry) mesh = node; });
+    const style = mesh.program._layerMaterial, gl = layer.renderer.gl;
+    const attached = model.parent === layer.root && !('ready' in layer);
+    const maps = style.baseTexture.internalFormat === gl.SRGB8_ALPHA8 &&
+      style.metalTexture.internalFormat === gl.RGBA &&
+      style.baseTexture === style.emissiveTexture && style.metalTexture === style.occlusionTexture &&
+      style.baseTexture !== style.metalTexture;
+    const factors = style.color.join() === '0.6,0.3,0.1' && style.metallic === 0.5 &&
+      style.roughness === 0.4 && style.occlusionStrength === 0.6;
+    const normals = [...mesh.geometry.attributes.normal.data].join() === '0,0,1,0,0,1,0,0,1';
+    layer.add(model);
+    layer._shared._render();
+    const uploaded = style.baseTexture.uploaded === style.baseTexture.image &&
+      style.metalTexture.uploaded === style.metalTexture.image;
+    const program = mesh.program;
+    layer.remove(model);
+    const retained = !model.parent && mesh.program === program && gl.isProgram(program.program);
+    layer.add(model);
+    const reattached = model.parent === layer.root;
+    layer.remove();
+    return { waitsForMap, attached, maps, factors, normals, uploaded, retained, reattached };
+  });
+  for (const [name, value] of Object.entries(result)) {
+    assert.equal(value, true, name);
+  }
+  delete description.meshes[0].primitives[0].attributes.TEXCOORD_0;
+  await this.page.route('**/manual/no-uv.gltf', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(description),
+  }));
+  const missingUV = await this.page.evaluate(async () => {
+    const layer = new L.Layer3D({ model: 'manual/no-uv.gltf' }).addTo(test3d.map);
+    let programs = 0;
+    const createProgram = layer._createProgram;
+    layer._createProgram = function (...args) { programs++; return createProgram.apply(this, args); };
+    const error = await nativeChecks.ready(layer).then(() => null, error => error);
+    const result = error?.message === 'Textured model mesh requires UV coordinates' &&
+      programs === 0 && !layer.model && layer.root.children.length === 0;
+    layer.remove();
+    return result;
+  });
+  assert.equal(missingUV, true, 'Missing UVs are rejected before allocating mesh resources');
+});
+
+Then('DOM tooltip content stays inside the map without interpreting text as HTML', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map, container = map.getContainer();
+    container.style.cursor = 'crosshair';
+    const node = document.createElement('div');
+    node.textContent = '<img src=x onerror=alert(1)>';
+    const layer = new L.Layer3D({ tooltipContent: () => node }).addTo(map);
+    await nativeChecks.ready(layer);
+    const rect = container.getBoundingClientRect();
+    const feature = { id: 'dom', model: {}, properties: {} };
+    layer._findFeature = () => feature;
+    container.dispatchEvent(new MouseEvent('mousemove', {
+      clientX: rect.right - 2, clientY: rect.bottom - 2,
+    }));
+    const tooltip = layer._featureTooltip;
+    const bounds = tooltip.getBoundingClientRect();
+    const contained = bounds.left >= rect.left && bounds.right <= rect.right &&
+      bounds.top >= rect.top && bounds.bottom <= rect.bottom;
+    const literal = tooltip.firstChild === node && !tooltip.querySelector('img') &&
+      tooltip.textContent === '<img src=x onerror=alert(1)>';
+    const shown = !tooltip.hidden && container.style.cursor === 'pointer';
+    layer._findFeature = () => null;
+    container.dispatchEvent(new MouseEvent('mousemove', { clientX: rect.left, clientY: rect.top }));
+    const restored = tooltip.hidden && container.style.cursor === 'crosshair' && !layer.hoveredFeature;
+    layer.remove();
+    const cleaned = !tooltip.isConnected && container.style.cursor === 'crosshair';
+    container.style.cursor = '';
+    return { contained, literal, shown, restored, cleaned };
+  });
+  for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
+});
+
+Then('layer-owned objects preserve values and visibility without engine classes', async function () {
+  const result = await this.page.evaluate(async () => {
+    const layer = new L.Layer3D();
+    await nativeChecks.ready(layer);
+    layer.addTo(test3d.map);
+    const vector = [0, 0, 0];
+    layer._setVector(vector, 2, 3, 4);
+    const setters = vector.join() === '2,3,4';
+    const matrix = layer._createMatrix();
+    const point = layer._transformPoint([...vector], matrix);
+    const identity = [...point].join() === '2,3,4';
+    let singular = false;
+    try { layer._invertMatrix(layer._createMatrix(), new Array(16).fill(0)); } catch (error) {
+      singular = error.message === 'Singular 3D transform';
+    }
+    const scene = layer.createGroup();
+    const mesh = layer.createMesh({
+      position: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+      normal: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+      color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
+    });
+    const objects = [scene, layer.camera, layer.raycaster, layer.renderer, mesh, mesh.geometry, mesh.program];
+    const noEngine = !('Native' in L.Layer3D) && !('Native' in layer) && !('loadModel' in layer) &&
+      objects.every(object => object.constructor === Object) &&
+      Object.getPrototypeOf(vector) === Array.prototype && Object.getPrototypeOf(matrix) === Array.prototype &&
+      objects.every(object => Object.getPrototypeOf(object) === Object.prototype &&
+        Object.values(object).every(value => typeof value !== 'function')) &&
+      !Object.keys(L.Layer3D.prototype).some(name => /Methods|Prototype/.test(name));
+    const independent = scene.position !== layer.root.position &&
+      scene.children !== layer.root.children && scene.worldMatrix !== layer.root.worldMatrix;
+    const nodes = [
+      { id: 1, program: { transparent: true }, _sortDepth: 0.2 },
+      { id: 2, program: { transparent: false } },
+      { id: 3, program: { transparent: true }, _sortDepth: 0.8 },
+    ];
+    const programs = [];
+    for (const properties of nodes) {
+      const node = layer.createMesh({
+        position: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+        normal: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+        color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
+      }, layer._createProgram({ vertexColors: true }));
+      node.program.transparent = properties.program.transparent;
+      node.program.blend = [layer.renderer.gl.SRC_ALPHA, layer.renderer.gl.ONE_MINUS_SRC_ALPHA,
+        layer.renderer.gl.ONE, layer.renderer.gl.ONE_MINUS_SRC_ALPHA];
+      // The shared renderer computes depth from geometry centers, not authored node origins.
+      layer._setVector(node.position, 0, 0, properties.id === 3 ? -100 : 0);
+      programs.push(node.program);
+      layer.setParent(node, scene);
+    }
+    const hidden = layer.createGroup(); hidden.visible = false; layer.setParent(hidden, scene);
+    const hiddenMesh = layer.createGroup();
+    Object.assign(hiddenMesh, { geometry: mesh.geometry, program: mesh.program, id: 4 });
+    layer.setParent(hiddenMesh, hidden);
+    layer.add(scene);
+    const order = [];
+    const use = layer._useProgram;
+    layer._useProgram = function (program) {
+      if (programs.includes(program)) order.push(programs.indexOf(program) + 1);
+      return use.call(this, program);
+    };
+    layer._shared._render();
+    layer._useProgram = use;
+    const sorted = order.join() === '2,3,1';
+    layer.traverse(scene, node => {
+      if (node !== hiddenMesh && node.geometry?.attributes) {
+        layer._removeGeometry(node.geometry); layer._removeProgram(node.program);
+      }
+    });
+    layer._removeGeometry(mesh.geometry);
+    layer._removeProgram(mesh.program);
+    layer.remove();
+    return { setters, identity, singular, sorted, noEngine, independent };
+  });
+  for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
+});
+
+Then('a source block with {string} reports {string} without attaching a mesh', async function (invalid, message) {
+  const result = await this.page.evaluate(async invalid => {
+    const layer = new L.Layer3D().addTo(test3d.map);
+    await nativeChecks.ready(layer);
+    layer.options.featureStyle = () => ({ top: 10 });
+    const anchor = layer.location, west = anchor.lng, south = anchor.lat;
+    let geometry = { type: 'Polygon', coordinates: [[[west, south]]] };
+    if (invalid === 'geometry') geometry = { type: 'Point', coordinates: [west, south] };
+    if (invalid === 'coordinates') geometry = { type: 'Polygon', coordinates: [[['bad', south]]] };
+    if (invalid === 'empty polygon') geometry = { type: 'MultiPolygon', coordinates: [
+      [[[west, south], [west + 0.001, south], [west, south + 0.001], [west, south]]], [],
+    ] };
+    const data = invalid === 'collection' ? { type: 'Feature', properties: {} }
+      : { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry }] };
+    layer.archive = { getZxy: async () => ({ data: new TextEncoder().encode(JSON.stringify(data)) }) };
+    const point = test3d.map.project(anchor, 16).divideBy(256).floor();
+    const area = { coords: { z: 16, x: point.x, y: point.y }, request: new AbortController() };
+    const errors = [];
+    layer.on('error', event => errors.push(event.error.message));
+    layer._areas.set('invalid-fixture', area);
+    layer._pump();
+    while (layer._inflight) await new Promise(requestAnimationFrame);
+    const result = { error: area.error, events: errors, attached: layer.root.children.length, done: Boolean(area.done) };
+    layer.remove();
+    return result;
+  }, invalid);
+  assert.equal(result.error, message);
+  assert.deepEqual(result.events, [message]);
+  assert.equal(result.attached, 0);
+  assert.equal(result.done, false);
+});
 
 async function prepare3DChecks(page) {
   await page.evaluate(() => {
     window.nativeChecks = {
-      bounds(root, Native) {
-        root.updateMatrixWorld(true);
-        const min = new Native.Vec3(Infinity), max = new Native.Vec3(-Infinity);
-        root.traverse(mesh => {
+      ready(layer) {
+        return new Promise((resolve, reject) => {
+          const loaded = () => { cleanup(); resolve(layer); };
+          const failed = ({ error }) => { cleanup(); reject(error); };
+          const cleanup = () => {
+            layer.off('ready', loaded);
+            layer.off('error', failed);
+          };
+          layer.on('ready', loaded);
+          layer.on('error', failed);
+        });
+      },
+      async loadBlock(layer, area, features) {
+        while (layer._inflight) await new Promise(requestAnimationFrame);
+        const archive = layer.archive;
+        layer.archive = { getZxy: async () => ({
+          data: new TextEncoder().encode(JSON.stringify({ type: 'FeatureCollection', features })),
+        }) };
+        layer._areas.set('fixture', area);
+        try {
+          layer._pump();
+          while (layer._inflight) await new Promise(requestAnimationFrame);
+          return area;
+        } finally {
+          layer.archive = archive;
+          layer._areas.delete('fixture');
+        }
+      },
+      bounds(root, backend) {
+        backend._updateWorldMatrix(root, true);
+        const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+        backend.traverse(root, mesh => {
           if (!mesh.geometry) return;
           const position = mesh.geometry.attributes.position;
           for (let i = 0; i < position.count; i++) {
-            const point = new Native.Vec3().fromArray(position.data, i * position.size).applyMatrix4(mesh.worldMatrix);
+            const point = backend._transformPoint(backend._readVector([0, 0, 0], position.data, i * position.size), mesh.worldMatrix);
             for (let j = 0; j < 3; j++) { min[j] = Math.min(min[j], point[j]); max[j] = Math.max(max[j], point[j]); }
           }
 
@@ -19,30 +312,33 @@ async function prepare3DChecks(page) {
         });
         return { min, max };
       },
-      intersections(mesh, origin, direction, Native) {
-        const ray = new Native.Raycast();
-        const inverse = new Native.Mat4().inverse(mesh.worldMatrix);
-        origin = new Native.Vec3().copy(origin).applyMatrix4(inverse);
-        direction = new Native.Vec3().copy(direction).transformDirection(inverse);
-        const position = mesh.geometry.attributes.position;
-        const hits = [];
-        for (let i = 0; i < position.count; i += 3) {
-          const a = new Native.Vec3().fromArray(position.data, i * 3);
-          const b = new Native.Vec3().fromArray(position.data, (i + 1) * 3);
-          const c = new Native.Vec3().fromArray(position.data, (i + 2) * 3);
-          const distance = ray.intersectTriangle(a, b, c, true, origin, direction);
-          if (distance) hits.push(new Native.Vec3().copy(direction).multiply(distance).add(origin).applyMatrix4(mesh.worldMatrix));
+      intersections(mesh, origin, direction, backend) {
+        const camera = backend.camera, ray = structuredClone(backend.raycaster);
+        backend.camera = {
+          ...structuredClone(camera), position: [...origin],
+          target: origin.map((v, i) => v + direction[i]), up: [0, 0, 1],
+        };
+        try {
+          const rect = backend._map.getContainer().getBoundingClientRect();
+          return backend.raycast({
+            clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+          }, [mesh], false).map(hit => hit.point);
+        } finally {
+          backend.camera = camera;
+          backend.raycaster = ray;
         }
-        return hits;
       },
     };
   });
 }
 
 Then('native triangulation and glTF decoding preserve geometry without library requests', async function () {
+  await this.page.route('**/accessors.gltf?*', route => route.fulfill({
+    contentType: 'application/json', body: new URL(route.request().url()).searchParams.get('fixture'),
+  }));
   const result = await this.page.evaluate(async () => {
     const layer = new L.Layer3D().addTo(test3d.map);
-    await layer.ready;
+    await nativeChecks.ready(layer);
     const square = (x, y, size) => [{ x, y }, { x: x + size, y },
       { x: x + size, y: y + size }, { x, y: y + size }];
     const shapes = [
@@ -87,15 +383,25 @@ Then('native triangulation and glTF decoding preserve geometry without library r
       materials: [], nodes: [{ mesh: 0, translation: [1, 2, 3] }, { mesh: 0, translation: [4, 5, 6] }],
       scenes: [{ nodes: [0, 1] }], scene: 0,
     };
-    const model = layer.Native.parse(layer, description);
-    const [first, second] = model.scene.map(node => node.children[0]);
+    description.asset = { version: '2.0' };
+    description.buffers = [{
+      byteLength: buffer.byteLength,
+      uri: `data:application/octet-stream;base64,${btoa(String.fromCharCode(...new Uint8Array(buffer)))}`,
+    }];
+    const url = new URL('accessors.gltf', document.baseURI);
+    url.searchParams.set('fixture', JSON.stringify(description));
+    const configured = new L.Layer3D({ model: url.href }).addTo(test3d.map);
+    await nativeChecks.ready(configured);
+    const model = configured.model;
+    const [first, second] = model.children.map(node => node.children[0]);
     const decoded = [...first.geometry.attributes.position.data].join() === '0,0,0,2,0,0,0,1,0' &&
       [...first.geometry.attributes.normal.data].join() === '0,0,1,0,0,1,0,0,1' &&
       first !== second && first.geometry !== second.geometry;
-    first.parent.updateMatrixWorld();
-    second.parent.updateMatrixWorld();
-    const transformed = new layer.Native.Vec3(2, 0, 0).applyMatrix4(first.worldMatrix).toArray().join() === '3,2,3';
-    for (const mesh of [first, second]) { mesh.geometry.remove(); mesh.program.remove(); }
+    layer._updateWorldMatrix(first.parent);
+    layer._updateWorldMatrix(second.parent);
+    const transformed = [...layer._transformPoint([2, 0, 0], first.worldMatrix)].join() === '3,2,3';
+    for (const mesh of [first, second]) { layer._removeGeometry(mesh.geometry); layer._removeProgram(mesh.program); }
+    configured.remove();
     layer.remove();
     return { triangulated, invalidRejected, decoded, transformed };
   });
@@ -112,7 +418,7 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     const origin = new L.Layer3D().addTo(map);
     const far = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
     const near = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
-    await Promise.all([origin.ready, far.ready, near.ready]);
+    await Promise.all([origin, far, near].map(nativeChecks.ready));
     for (const [layer, height] of [[far, 0], [near, 20]]) {
       layer.model = layer.createGroup();
       layer.model.id = height ? 'near' : 'far';
@@ -121,17 +427,18 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
         normal: [0, 1, 0, 0, 1, 0, 0, 1, 0],
         color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
       });
-      mesh.setParent(layer.model);
+      near.setParent(mesh, layer.model);
       layer.add(layer.model);
     }
+    origin.remove();
     const container = map.getContainer();
     const position = () => {
       near._shared._render();
-      const point = new near.Native.Vec3(0, 20, 0).applyMatrix4(near.root.worldMatrix);
-      near.camera.project(point);
+      const point = near._transformPoint([0, 20, 0], near.root.worldMatrix);
+      near._transformPoint(point, near.camera.projectionViewMatrix);
       const rect = container.getBoundingClientRect();
-      return { clientX: rect.left + (point.x + 1) * rect.width / 2,
-        clientY: rect.top + (1 - point.y) * rect.height / 2 };
+      return { clientX: rect.left + (point[0] + 1) * rect.width / 2,
+        clientY: rect.top + (1 - point[1]) * rect.height / 2 };
     };
     let nearClicks = 0, farClicks = 0;
     near.on('featureclick', ({ feature }) => { if (feature) nearClicks++; });
@@ -140,10 +447,10 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     const event = new MouseEvent('click', click);
     const hit = near._findFeature(event);
     const crs = map.options.crs;
-    const projected = crs.project(near._shared.location);
-    const metres = Math.cos(near._shared.location.lat * Math.PI / 180);
+    const projected = crs.project(near._shared._sceneOrigin);
+    const metres = Math.cos(near._shared._sceneOrigin.lat * Math.PI / 180);
     const expected = crs.unproject(new L.Point(
-      projected.x + hit.point.x / metres, projected.y - hit.point.z / metres));
+      projected.x + hit.point[0] / metres, projected.y - hit.point[2] / metres));
     const moved = new Promise(resolve => map.once('moveend', resolve));
     container.dispatchEvent(event);
     await moved;
@@ -181,7 +488,7 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
       featureStyle: () => ({ top: 10 }),
       tooltipContent: feature => `Height: ${feature.properties.height} m`,
     }).addTo(map);
-    await layer.ready;
+    await nativeChecks.ready(layer);
     const container = map.getContainer();
     container.style.cursor = 'crosshair';
     const tooltip = container.querySelector('.leaflet-3d-tooltip');
@@ -212,11 +519,12 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
     container.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: document.body }));
     container.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: document.body }));
     const leaveCleared = tooltip.hidden && container.style.cursor === 'crosshair' && !layer.highlightedFeature;
-    const other = new L.Layer3D(map.getCenter(), {
+    const other = new L.Layer3D({
+      center: [map.getCenter().lat, map.getCenter().lng],
       source: 'paris-buildings.pmtiles', featureStyle: () => ({ top: 10 }),
       tooltipContent: () => 'Other feature',
     }).addTo(map);
-    await other.ready;
+    await nativeChecks.ready(other);
     layer._showFeature(feature, position);
     other._showFeature(feature, position);
     layer.remove();
@@ -230,8 +538,8 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
     layer._showFeature(feature, position);
     layer.remove();
     const restoredCursor = container.style.cursor === 'crosshair';
-    mesh.geometry.remove();
-    mesh.program.remove();
+    layer._removeGeometry(mesh.geometry);
+    layer._removeProgram(mesh.program);
     container.style.cursor = '';
     return { created, displayed, clickNotPinned, hidden, leaveCleared, sharedCursor, removed, recreated, restoredCursor };
   });
@@ -244,8 +552,8 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
     const initial = map.getCenter();
     const beforeReady = new L.Layer3D({ ariaLabel: 'Automatic origin' }).addTo(map);
     const afterReady = new L.Layer3D();
-    await Promise.all([beforeReady.ready, afterReady.ready]);
-    const deferred = afterReady.location === null && !afterReady.renderer;
+    await Promise.all([beforeReady, afterReady].map(nativeChecks.ready));
+    const deferred = afterReady.location == null && !afterReady.renderer;
     afterReady.addTo(map);
     const origins = beforeReady.location.equals(initial) && afterReady.location.equals(initial);
     const shared = beforeReady.renderer === afterReady.renderer &&
@@ -259,8 +567,10 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
       beforeReady.renderer === afterReady.renderer;
     beforeReady.remove();
     afterReady.remove();
-    const explicit = new L.Layer3D({ lat: 48.858, lng: 2.295 });
-    await explicit.ready;
+    const center = [48.858, 2.295];
+    const explicit = new L.Layer3D({ center });
+    await nativeChecks.ready(explicit);
+    center[0] = 0;
     const explicitPreserved = explicit.location.equals([48.858, 2.295]);
     return { deferred, origins, shared, retained, explicitPreserved };
   });
@@ -273,22 +583,21 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     const layer = new L.Layer3D({
       center: [48.8582601, 2.29449985],
       model: '../misc/eiffel-tower.glb',
-      modelAlphaMode: 'COVERAGE',
       rotation: [0, 0.8, 0],
       scale: [1.02, 1, 1.01],
       attribution: 'Test model attribution',
       tooltipContent: feature => feature.model === layer.model ? 'Eiffel Tower' : 'Unexpected model',
     }).addTo(map);
-    await layer.ready;
-    const geometry = nativeChecks.bounds(layer.model, layer.Native);
+    await nativeChecks.ready(layer);
+    const geometry = nativeChecks.bounds(layer.model, layer);
     const centered = layer.location.equals([48.8582601, 2.29449985]);
     const attached = layer.model.parent === layer.root;
-    const rotation = layer.model.rotation.y;
-    const scale = layer.model.scale.toArray();
+    const rotation = layer.model.rotation[1];
+    const scale = [...layer.model.scale];
     const attribution = map.attributionControl.getContainer().textContent.includes('Test model attribution');
     layer._shared._render();
-    let texturedMeshes = 0, maskedMeshes = 0;
-    layer.model.traverse(mesh => {
+    let texturedMeshes = 0, transparentMeshes = 0;
+    layer.traverse(layer.model, mesh => {
       if (!mesh.program) return;
       const style = mesh.program._layerMaterial;
       if (style.baseTexture) {
@@ -297,16 +606,10 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
         }
         texturedMeshes++;
       }
-      if (style.alphaMode === 'COVERAGE' && !mesh.program.transparent && mesh.program.depthWrite) maskedMeshes++;
+      if (style.alphaMode === 'BLEND' && mesh.program.transparent && !mesh.program.depthWrite) transparentMeshes++;
     });
     const gl = layer.renderer.gl;
-    let coverageDraws = 0;
-    layer.model.traverse(mesh => {
-      if (!mesh.geometry) return;
-      mesh.onBeforeRender(({ mesh }) => {
-        if (mesh.program._alphaCoverage && gl.isEnabled(gl.SAMPLE_ALPHA_TO_COVERAGE)) coverageDraws++;
-      });
-    });
+    const drawGeometry = layer._drawGeometry;
     const pixels = () => {
       layer._shared._render();
       const data = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
@@ -315,7 +618,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     };
     const texturedPixels = pixels();
     const textures = new Map();
-    layer.model.traverse(mesh => {
+    layer.traverse(layer.model, mesh => {
       const texture = mesh.program?.uniforms.baseTexture?.value;
       if (!texture || textures.has(texture)) return;
       textures.set(texture, texture.image);
@@ -335,12 +638,11 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
           Math.abs(texturedPixels[i + 1] - plainPixels[i + 1]) +
           Math.abs(texturedPixels[i + 2] - plainPixels[i + 2]) > 10) changedPixels++;
     }
-    const realisticMaterials = texturedMeshes > 0 && maskedMeshes > 0 && changedPixels > 100 &&
-      (!gl.getContextAttributes().antialias || coverageDraws > 0) && !gl.isEnabled(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    const realisticMaterials = texturedMeshes > 0 && transparentMeshes > 0 && changedPixels > 100;
     const programs = new Map();
     const passes = new Map();
     let linearTextures = true;
-    layer.model.traverse(mesh => {
+    layer.traverse(layer.model, mesh => {
       if (!mesh.program) return;
       programs.set(mesh, mesh.program);
       const style = { ...mesh.program._layerMaterial, alphaMode: 'BLEND' };
@@ -348,28 +650,40 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       if (style.baseTexture && gl.SRGB8_ALPHA8 && style.baseTexture.internalFormat !== gl.SRGB8_ALPHA8) {
         linearTextures = false;
       }
-      mesh.onBeforeRender(({ mesh }) => {
-        if (!mesh.program.transparent) return;
-        if (!passes.has(mesh)) passes.set(mesh, []);
-        passes.get(mesh).push(mesh.program.cullFace);
-      });
     });
+    layer._drawGeometry = function (geometry, program, mode) {
+      if (program.transparent) {
+        if (!passes.has(geometry)) passes.set(geometry, []);
+        passes.get(geometry).push(program.cullFace);
+      }
+      return drawGeometry.call(this, geometry, program, mode);
+    };
     layer._shared._render();
-    const list = layer.renderer.getRenderList({
-      scene: layer.scene, camera: layer.camera, frustumCull: true, sort: true,
-    }).filter(mesh => mesh.program.transparent);
+    const list = [];
+    const useProgram = layer._useProgram;
+    layer._useProgram = function (program) {
+      const mesh = [...programs.keys()].find(mesh => mesh.program === program);
+      if (mesh && !list.includes(mesh)) list.push(mesh);
+      return useProgram.call(this, program);
+    };
+    passes.clear();
+    layer._shared._render();
+    layer._useProgram = useProgram;
     const depths = list.map(mesh => {
-      const point = new layer.Native.Vec3().copy(mesh.geometry.bounds.center).applyMatrix4(mesh.worldMatrix);
-      layer.camera.project(point);
-      return point.z;
+      const point = layer._transformPoint([...mesh.geometry.bounds.center], mesh.worldMatrix);
+      layer._transformPoint(point, layer.camera.projectionViewMatrix);
+      return point[2];
     });
     const transparentOrder = depths.length > 1 && depths.every((depth, i) =>
       !i || depths[i - 1] >= depth) && Math.max(...depths) > Math.min(...depths);
-    const doubleSidedPasses = passes.size > 0 && [...passes].every(([mesh, faces]) =>
-      faces.length === 2 && faces[0] === gl.FRONT && faces[1] === gl.BACK &&
-      !mesh.program.depthWrite && mesh.program.cullFace === null);
+    const doubleSidedPasses = passes.size > 0 && [...passes].every(([geometry, faces]) => {
+      const mesh = [...programs.keys()].find(mesh => mesh.geometry === geometry);
+      return faces.length === 2 && faces[0] === gl.FRONT && faces[1] === gl.BACK &&
+        !mesh.program.depthWrite && mesh.program.cullFace === null;
+    });
+    layer._drawGeometry = drawGeometry;
     for (const [mesh, program] of programs) {
-      mesh.program.remove();
+      layer._removeProgram(mesh.program);
       mesh.program = program;
     }
     layer._shared._render();
@@ -378,11 +692,23 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       normal: [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1],
     }, layer._createProgram({ vertexColors: true, alphaMode: 'MASK' }));
-    const probeCamera = new layer.Native.Camera(gl);
-    probeCamera.position.set(0, 0, 3);
-    probeCamera.lookAt(new layer.Native.Vec3());
+    const probeCamera = structuredClone(layer.camera);
+    layer._setVector(probeCamera.position, 0, 0, 3);
+    layer._setVector(probeCamera.target, ...[0, 0, 0]);
     const sample = () => {
-      layer.renderer.render({ scene: probe, camera: probeCamera });
+      layer._updateWorldMatrix(probe);
+      layer._updateCamera(probeCamera);
+      const modelView = layer._multiplyMatrix(layer._createMatrix(), probeCamera.viewMatrix, probe.worldMatrix);
+      const inverse = layer._invertMatrix(layer._createMatrix(), modelView);
+      Object.assign(probe.program.uniforms, {
+        modelViewMatrix: { value: modelView }, projectionMatrix: { value: probeCamera.projectionMatrix },
+        normalMatrix: { value: [inverse[0], inverse[4], inverse[8], inverse[1], inverse[5], inverse[9],
+          inverse[2], inverse[6], inverse[10]] },
+      });
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      gl.depthMask(true); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      layer._useProgram(probe.program);
+      layer._drawGeometry(probe.geometry, probe.program, gl.TRIANGLES);
       const pixel = new Uint8Array(4);
       gl.readPixels(Math.floor(gl.drawingBufferWidth / 2), Math.floor(gl.drawingBufferHeight / 2),
         1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
@@ -398,20 +724,20 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     const secondPixel = sample();
     const depthOrderIndependent = firstPixel.every((value, index) => value === secondPixel[index]) &&
       firstPixel[0] > firstPixel[2] && firstPixel[3] === 255;
-    probe.geometry.remove();
-    probe.program.remove();
+    layer._removeGeometry(probe.geometry);
+    layer._removeProgram(probe.program);
     const container = map.getContainer();
     const rect = container.getBoundingClientRect();
     let position;
-    layer.model.traverse(object => {
+    layer.traverse(layer.model, object => {
       if (position || !object.geometry) return;
       const vertices = object.geometry.attributes.position;
       for (let i = 0; i < Math.min(vertices.count, 90); i++) {
-        const point = new layer.Native.Vec3().fromArray(vertices.data, i * vertices.size).applyMatrix4(object.worldMatrix);
-        layer.camera.project(point);
-        if (Math.abs(point.x) >= 1 || Math.abs(point.y) >= 1) continue;
-        const candidate = { clientX: Math.floor(rect.left + (point.x + 1) * rect.width / 2),
-          clientY: Math.floor(rect.top + (1 - point.y) * rect.height / 2) };
+        const point = layer._transformPoint(layer._readVector([0, 0, 0], vertices.data, i * vertices.size), object.worldMatrix);
+        layer._transformPoint(point, layer.camera.projectionViewMatrix);
+        if (Math.abs(point[0]) >= 1 || Math.abs(point[1]) >= 1) continue;
+        const candidate = { clientX: Math.floor(rect.left + (point[0] + 1) * rect.width / 2),
+          clientY: Math.floor(rect.top + (1 - point[1]) * rect.height / 2) };
         if (layer._findFeature(candidate)?.model === layer.model) {
           position = candidate;
           break;
@@ -444,7 +770,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       restoredHit.mesh.geometry.gl === layer.renderer.gl &&
       restoredHit.mesh.program.gl === layer.renderer.gl;
     let restoredTextures = true;
-    layer.model.traverse(mesh => {
+    layer.traverse(layer.model, mesh => {
       const texture = mesh.program?.uniforms.baseTexture?.value;
       if (texture && texture.gl !== layer.renderer.gl) restoredTextures = false;
     });
@@ -452,7 +778,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     return { centered, attached, rotation, scale, attribution, attributionRemoved, retained,
       modelTooltip, hoverOnly, tooltipRemoved, tooltipRecreated, restoredGPU, restoredTextures, realisticMaterials,
       depthOrderIndependent, linearTextures, transparentOrder, doubleSidedPasses,
-      height: geometry.max.y - geometry.min.y };
+      height: geometry.max[1] - geometry.min[1] };
   });
   assert.ok(result.height > 299 && result.height < 301);
   assert.equal(result.rotation, 0.8);
@@ -503,40 +829,63 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
   this.shared3d = await this.page.evaluate(async () => {
     const { Layer3D, map } = test3d;
     const control = new L.Control.Layers().addTo(map);
-    const pending = new Layer3D(map.getCenter()).addTo(map);
+    const pending = new Layer3D({ center: [map.getCenter().lat, map.getCenter().lng] }).addTo(map);
     pending.remove();
-    await pending.ready;
+    await nativeChecks.ready(pending);
     const pendingRemoved = !document.querySelector('.leaflet-3d');
-    const first = new Layer3D([48.8582601, 2.29449985]).addTo(map);
+    const first = new Layer3D({ center: [48.8582601, 2.29449985] }).addTo(map);
     control.addOverlay(first, 'First 3D layer');
-    const second = new Layer3D([48.8602, 2.298]).addTo(map);
-    await Promise.all([first.ready, second.ready]);
-    const Native = first.Native;
+    const second = new Layer3D({ center: [48.8602, 2.298] }).addTo(map);
+    await Promise.all([first, second].map(nativeChecks.ready));
+    const backend = first;
     const object = second.createGroup();
     second.add(object);
-    const shared = first.renderer === second.renderer && first.camera === second.camera &&
+    const shared = first._shared === first && second._shared === first &&
+      L.Layer3D._renderers.get(map) === first &&
+      first.renderer === second.renderer && first.camera === second.camera &&
       first.scene === second.scene && first.root !== second.root &&
       first.root.parent === second.root.parent && document.querySelectorAll('.leaflet-3d').length === 1;
     first._shared._render();
-    const world = new Native.Vec3(10, 0, 20).applyMatrix4(second.root.worldMatrix);
-    const screen = new Native.Vec3().copy(world);
-    second.camera.project(screen);
+    const world = backend._transformPoint([10, 0, 20], second.root.worldMatrix);
+    const screen = [...world];
+    backend._transformPoint(screen, second.camera.projectionViewMatrix);
     const crs = map.options.crs;
     const point = crs.project(second.location);
     const metres = Math.cos(second.location.lat * Math.PI / 180);
     const latlng = crs.unproject(new L.Point(point.x + 10 / metres, point.y - 20 / metres));
     const expected = map.latLngToContainerPoint(latlng);
     const size = map.getSize();
-    const error = new L.Point((screen.x + 1) * size.x / 2, (1 - screen.y) * size.y / 2).distanceTo(expected);
+    const error = new L.Point((screen[0] + 1) * size.x / 2, (1 - screen[1]) * size.y / 2).distanceTo(expected);
     const renderer = second.renderer;
+    const canvasDefaults = renderer.gl.canvas.style.zIndex === '450' &&
+      renderer.dpr === Math.min(window.devicePixelRatio, 2);
     let disposals = 0;
-    const sharedRenderer = second._shared;
-    const dispose = sharedRenderer.dispose;
-    sharedRenderer.dispose = function () { disposals++; dispose.call(this); };
+    const contextLoss = renderer.gl.getExtension('WEBGL_lose_context');
+    const loseContext = contextLoss.loseContext;
+    contextLoss.loseContext = function () { disposals++; loseContext.call(this); };
+    const sceneOrigin = first.location;
+    const matrix = [...first.camera.projectionViewMatrix];
+    first.update();
+    first._animateZoom();
     first.remove();
-    const retained = second.renderer === renderer && renderer.gl.canvas.isConnected && disposals === 0;
+    await new Promise(requestAnimationFrame);
+    const retained = second.renderer === renderer && renderer.gl.canvas.isConnected && disposals === 0 &&
+      second._shared === second && L.Layer3D._renderers.get(map) === second &&
+      second._sceneOrigin === sceneOrigin && !first._frame &&
+      second.camera.projectionViewMatrix.every((value, index) => Math.abs(value - matrix[index]) < 1e-10);
+    const otherMap = new L.Map('second', { center: second.location, zoom: 17, rotate: true });
+    first.addTo(otherMap);
+    const movedOwner = first._shared === first && first.renderer !== renderer &&
+      second._shared === second && second.renderer === renderer;
+    otherMap.setBearing(70);
+    map.setBearing(65);
+    await new Promise(requestAnimationFrame);
+    const independentUpdates = first._sceneOrigin === first.location &&
+      second.camera.projectionViewMatrix.some((value, index) => Math.abs(value - matrix[index]) > 1e-6);
+    first.remove();
     first.addTo(map);
-    const rejoined = first.renderer === renderer;
+    const rejoined = first.renderer === renderer && first._shared === second &&
+      first.root.position.every(value => Math.abs(value) < 1e-8);
     const overlayRegistration = control._layers.filter(entry => entry.layer === first).length === 1 &&
       control._layers.find(entry => entry.layer === first).name === 'First 3D layer';
     const checkbox = () => [...map.getContainer().querySelectorAll('.leaflet-control-layers-overlays label')]
@@ -545,17 +894,21 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     const checkboxDisabled = !map.hasLayer(first);
     checkbox().click();
     const checkboxEnabled = map.hasLayer(first) && first.renderer === renderer;
-    const otherMap = new L.Map('second', { center: second.location, zoom: 17, rotate: true });
-    const other = await new Layer3D(second.location).addTo(otherMap).ready;
+    const other = await nativeChecks.ready(new Layer3D({
+      center: [second.location.lat, second.location.lng],
+    }).addTo(otherMap));
     const isolated = other.renderer !== renderer && document.querySelectorAll('.leaflet-3d').length === 2;
-    first.remove();
     second.remove();
+    const transferredAgain = first._shared === first && first.renderer === renderer &&
+      first._sceneOrigin === sceneOrigin && renderer.gl.canvas.isConnected && disposals === 0;
+    first.remove();
     const released = disposals === 1 && !renderer.gl.canvas.isConnected && other.renderer.gl.canvas.isConnected;
     second.addTo(map);
     const restored = second.renderer !== renderer && second.root.children.includes(object);
     map.remove();
     otherMap.remove();
-    return { pendingRemoved, shared, error, retained, rejoined, isolated, released, restored,
+    return { pendingRemoved, shared, canvasDefaults, error, retained, movedOwner, independentUpdates, rejoined, isolated,
+      transferredAgain, released, restored,
       overlayRegistration, checkboxDisabled, checkboxEnabled,
       cleaned: !document.querySelector('.leaflet-3d') };
   });
@@ -569,16 +922,16 @@ Then('3D groups retain their geographic origins and share resources only on the 
   assert.deepEqual(this.oglRequests, []);
 });
 
-Then('an unavailable WebGL context rejects readiness and emits an error without leaving a canvas', async function () {
+Then('an unavailable WebGL context emits an error without leaving a canvas', async function () {
   const result = await this.page.evaluate(async () => {
     const getContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (type, ...args) {
       return type === 'webgl2' ? null : getContext.call(this, type, ...args);
     };
-    const layer = new test3d.Layer3D(test3d.map.getCenter()).addTo(test3d.map);
+    const layer = new test3d.Layer3D().addTo(test3d.map);
     let emitted;
     layer.on('error', event => { emitted = event.error; });
-    const error = await layer.ready.then(() => null, error => error);
+    const error = await nativeChecks.ready(layer).then(() => null, error => error);
     HTMLCanvasElement.prototype.getContext = getContext;
     layer.remove();
     return { rejected: error instanceof Error, emitted: error === emitted,
@@ -672,7 +1025,11 @@ Given('the Eiffel Tower example page is open', { timeout: 60000 }, async functio
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
   await this.page.waitForFunction(() => window.map && typeof window.map.getPitch === 'function');
-  await this.page.evaluate(() => Promise.all(layers._layers.map(entry => entry.layer.ready)));
+  await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
+    !(layer instanceof L.Layer3D) || (layer.root && (!layer.options.model || layer.model) &&
+      (!layer.options.source || layer.header))));
+  await this.page.evaluate(() => Promise.all(layers._layers
+    .filter(({ layer }) => !(layer instanceof L.Layer3D)).map(({ layer }) => layer.ready)));
   const layout = await this.page.evaluate(() => {
     const rect = map.getContainer().getBoundingClientRect();
     return {
@@ -698,6 +1055,236 @@ Given('the Eiffel Tower example page is open', { timeout: 60000 }, async functio
   assert.match(layout.orthophotoUrl, /\/examples\/data\/paris-orthophotos\.pmtiles$/);
 });
 
+When('I load a configured 3D model with {string}', async function (failure) {
+  let body, status = 200;
+  if (failure === 'HTTP error') { status = 404; body = 'Not found'; }
+  else if (failure === 'unsupported glTF') {
+    body = JSON.stringify({ asset: { version: '2.0' }, animations: [{}] });
+  } else {
+    body = Buffer.alloc(24);
+    body.writeUInt32LE(0x46546c67, 0);
+    body.writeUInt32LE(2, 4);
+    body.writeUInt32LE(24, 8);
+    body.writeUInt32LE(32, 12);
+    body.writeUInt32LE(0x4e4f534a, 16);
+  }
+  await this.page.route('**/test/invalid-model.glb', route => route.fulfill({
+    status, body, contentType: 'application/octet-stream',
+  }));
+  this.invalid3d = await this.page.evaluate(async () => {
+    const layer = new L.Layer3D({ model: 'invalid-model.glb' }).addTo(test3d.map);
+    let emitted;
+    layer.on('error', event => { emitted = event.error; });
+    const error = await nativeChecks.ready(layer).then(() => null, error => error);
+    const result = { rejected: error instanceof Error, sameError: error === emitted,
+      message: error?.message, noGeometry: !layer.model && layer.root.children.length === 0 };
+    layer.remove();
+    return { ...result, removed: !test3d.map.hasLayer(layer),
+      noCanvas: !document.querySelector('.leaflet-3d') };
+  });
+});
+
+Then('3D initialization emits {string} as an error', function (message) {
+  assert.equal(this.invalid3d.rejected, true);
+  assert.equal(this.invalid3d.sameError, true);
+  assert.equal(this.invalid3d.message, message);
+  assert.equal(this.invalid3d.removed, true);
+  assert.equal(this.invalid3d.noCanvas, true);
+});
+
+Then('the failed model has no attached geometry', function () {
+  assert.equal(this.invalid3d.noGeometry, true);
+});
+
+Then('building style for {int} storeys, {int} floors and ground {int} is {string}',
+  async function (storeys, floors, ground, expected) {
+    const result = await this.page.evaluate(({ storeys, floors, ground }) => {
+      const layer = layers._layers.find(entry => entry.layer.options.source).layer;
+      const feature = { properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } };
+      const style = layer.options.featureStyle(feature);
+      return style === null ? null : {
+        heights: `${style.top}/${style.bottom}`,
+        color: layer.color(style.color),
+        text: layer.options.tooltipContent(feature).textContent,
+      };
+    }, { storeys, floors, ground });
+    if (expected === 'skip') { assert.equal(result, null); return; }
+    assert.equal(result.heights, expected);
+    assert.ok(Object.values(result.color).every(value => Number.isFinite(value) && value >= 0 && value <= 1));
+    assert.ok(result.text.includes(`Estimated height: ${expected.split('/')[0]} m`));
+    assert.ok(result.text.includes(`${storeys} storeys`));
+    assert.equal(result.text.includes('elevated ground floor'), ground === 0);
+  });
+
+When('I select the {string} background in the 3D example', async function (background) {
+  await this.page.evaluate(() => {
+    const overlays = layers._layers.filter(entry => entry.overlay).map(entry => entry.layer);
+    window.exampleSceneBefore = {
+      overlays, renderer: overlays[0].renderer, canvas: overlays[0].renderer.gl.canvas,
+      model: overlays.find(layer => layer.model).model,
+      center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
+    };
+  });
+  await this.page.getByRole('radio', { name: background, exact: true }).check();
+});
+
+Then('only the {string} background is active and the 3D scene is unchanged', async function (background) {
+  await this.page.waitForFunction(background => {
+    const entries = layers._layers.filter(entry => !entry.overlay && map.hasLayer(entry.layer));
+    return entries.length === 1 && entries[0].name === background;
+  }, background);
+  const result = await this.page.evaluate(() => {
+    const before = window.exampleSceneBefore;
+    const overlays = layers._layers.filter(entry => entry.overlay).map(entry => entry.layer);
+    const tower = overlays.find(layer => layer.model);
+    return {
+      enabled: overlays.length === 2 && overlays.every(layer => map.hasLayer(layer)),
+      shared: overlays.every(layer => layer.renderer === before.renderer),
+      canvas: document.querySelectorAll('.leaflet-3d').length === 1 &&
+        before.canvas.isConnected && tower.renderer.gl.canvas === before.canvas,
+      model: tower.model === before.model && tower.model.parent === tower.root,
+      camera: map.getCenter().equals(before.center) && map.getZoom() === before.zoom &&
+        map.getBearing() === before.bearing && map.getPitch() === before.pitch,
+    };
+  });
+  for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
+});
+
+When('I disable and restore the 3D overlays through the layer control', async function () {
+  const towerControl = this.page.getByRole('checkbox', { name: 'Eiffel Tower (3D)', exact: true });
+  const buildingsControl = this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true });
+  await this.page.evaluate(() => {
+    const tower = layers._layers.find(entry => entry.layer.model).layer;
+    window.exampleOverlayBefore = { tower, model: tower.model, canvas: tower.renderer.gl.canvas };
+  });
+  await towerControl.uncheck();
+  const towerDisabled = await this.page.evaluate(() => {
+    const before = window.exampleOverlayBefore;
+    const buildings = layers._layers.find(entry => entry.layer.options.source).layer;
+    return !map.hasLayer(before.tower) && map.hasLayer(buildings) &&
+      before.canvas.isConnected && buildings.renderer.gl.canvas === before.canvas &&
+      !map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
+      !before.tower._featureTooltip;
+  });
+  await buildingsControl.uncheck();
+  const allDisabled = await this.page.evaluate(() =>
+    !document.querySelector('.leaflet-3d') && !document.querySelector('.leaflet-3d-tooltip') &&
+    !window.exampleOverlayBefore.canvas.isConnected);
+  await towerControl.check();
+  await this.page.waitForFunction(() => {
+    const tower = window.exampleOverlayBefore.tower;
+    return tower.renderer && tower.model.parent === tower.root;
+  });
+  const towerRestored = await this.page.evaluate(() => {
+    const before = window.exampleOverlayBefore;
+    const tower = before.tower;
+    return map.hasLayer(tower) && tower.model === before.model &&
+      tower.renderer.gl.canvas !== before.canvas && tower.renderer.gl.canvas.isConnected &&
+      map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
+      tower._featureTooltip.hidden;
+  });
+  await buildingsControl.check();
+  const bothRestored = await this.page.evaluate(() => {
+    const overlays = layers._layers.filter(entry => entry.overlay).map(entry => entry.layer);
+    return overlays.every(layer => map.hasLayer(layer)) &&
+      overlays[0].renderer === overlays[1].renderer &&
+      document.querySelectorAll('.leaflet-3d').length === 1;
+  });
+  this.exampleOverlayChecks = { towerDisabled, allDisabled, towerRestored, bothRestored };
+});
+
+Then('the 3D canvas and model attribution follow the enabled overlays', function () {
+  for (const [name, value] of Object.entries(this.exampleOverlayChecks)) assert.equal(value, true, name);
+});
+
+When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 }, async function () {
+  const target = await this.page.evaluate(() => {
+    const tower = layers._layers.find(entry => entry.layer.model).layer;
+    tower._shared._render();
+    const rect = map.getContainer().getBoundingClientRect();
+    let target;
+    tower.traverse(tower.model, mesh => {
+      if (target || !mesh.geometry) return;
+      const { position, index } = mesh.geometry.attributes;
+      const count = index?.count || position.count;
+      for (let i = 0; i < count; i += 3) {
+        const point = [0, 0, 0];
+        for (let j = 0; j < 3; j++) {
+          const offset = (index ? index.data[i + j] : i + j) * position.size;
+          for (let axis = 0; axis < 3; axis++) point[axis] += position.data[offset + axis];
+        }
+        tower._transformPoint(point.map(v => v / 3), mesh.worldMatrix);
+        tower._transformPoint(point, tower.camera.projectionViewMatrix);
+        if (Math.abs(point[0]) > 0.7 || Math.abs(point[1]) > 0.7) continue;
+        const candidate = {
+          x: Math.round(rect.left + (point[0] + 1) * rect.width / 2),
+          y: Math.round(rect.top + (1 - point[1]) * rect.height / 2),
+        };
+        const event = { clientX: candidate.x, clientY: candidate.y };
+        const hit = tower._findFeature(event);
+        if (hit?.model !== tower.model ||
+            tower.raycast(event, tower.scene.children, true)[0]?.object !== hit.mesh) continue;
+        const crs = map.options.crs;
+        const origin = crs.project(tower._shared._sceneOrigin);
+        const metres = Math.cos(tower._shared._sceneOrigin.lat * Math.PI / 180);
+        target = { ...candidate, center: crs.unproject(new L.Point(
+          origin.x + hit.point[0] / metres, origin.y - hit.point[2] / metres)),
+        zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch() };
+        break;
+      }
+    });
+    if (!target) throw new Error('No visible tower triangle available for a mouse click');
+    return target;
+  });
+  await this.page.mouse.move(target.x, target.y);
+  await this.page.waitForFunction(() => {
+    const tower = layers._layers.find(entry => entry.layer.model).layer;
+    return tower._featureTooltip && !tower._featureTooltip.hidden &&
+      tower.hoveredFeature?.model === tower.model;
+  });
+  this.exampleTowerHover = await this.page.evaluate(() => {
+    const tower = layers._layers.find(entry => entry.layer.model).layer;
+    return { text: tower._featureTooltip.textContent, role: tower._featureTooltip.getAttribute('role'),
+      cursor: map.getContainer().style.cursor };
+  });
+  await this.page.evaluate(() => {
+    window.exampleClickFinished = new Promise(resolve => map.once('moveend', resolve));
+  });
+  await this.page.mouse.click(target.x, target.y);
+  await this.page.evaluate(async () => {
+    await window.exampleClickFinished;
+    delete window.exampleClickFinished;
+    await new Promise(requestAnimationFrame);
+  });
+  this.exampleTowerZoom = await this.page.evaluate(target => ({
+    zoom: map.getZoom(), centerError: map.getCenter().distanceTo(new L.LatLng(target.center.lat, target.center.lng)),
+    bearing: map.getBearing(), pitch: map.getPitch(),
+    canvases: document.querySelectorAll('.leaflet-3d').length,
+  }), target);
+  this.exampleTowerTarget = target;
+  await this.page.mouse.move(810, 610);
+  await this.page.waitForFunction(() => {
+    const tower = layers._layers.find(entry => entry.layer.model).layer;
+    return tower._featureTooltip.hidden && !tower.hoveredFeature &&
+      map.getContainer().style.cursor !== 'pointer';
+  });
+});
+
+Then('the tower information is shown and the click zooms without pinning the tooltip', function () {
+  const hover = this.exampleTowerHover;
+  for (const text of ['Eiffel Tower', '330 m', '300 m structure', '1889', 'Gustave Eiffel', 'Champ de Mars']) {
+    assert.ok(hover.text.includes(text), text);
+  }
+  assert.equal(hover.role, 'tooltip');
+  assert.equal(hover.cursor, 'pointer');
+  const zoom = this.exampleTowerZoom, target = this.exampleTowerTarget;
+  assert.equal(zoom.zoom, target.zoom + 1);
+  assert.ok(zoom.centerError < 0.1, `Ground position error: ${zoom.centerError} m`);
+  assert.equal(zoom.bearing, target.bearing);
+  assert.equal(zoom.pitch, target.pitch);
+  assert.equal(zoom.canvases, 1);
+});
+
 When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async function () {
   await this.page.waitForFunction(() =>
     Object.values(map._layers).some(layer => layer.model && layer.renderer),
@@ -709,11 +1296,11 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       if (layer.renderer && !layer.model) tower = layer;
       if (layer.model) eiffel = layer;
     });
-    const Native = tower.Native;
-    const bounds = nativeChecks.bounds(eiffel.model, Native);
-    const height = bounds.max.y - bounds.min.y;
+    const backend = tower;
+    const bounds = nativeChecks.bounds(eiffel.model, backend);
+    const height = bounds.max[1] - bounds.min[1];
     let meshes = 0;
-    eiffel.model.traverse(object => { if (object.geometry) meshes++; });
+    backend.traverse(eiffel.model, object => { if (object.geometry) meshes++; });
     const errors = [];
     // Outer ground corners: OSM nodes 33388343, 33388336, 33388327 and 33388350.
     const feet = [
@@ -740,9 +1327,9 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       const size = map.getSize();
       for (const [x, z] of [[-40, -40], [0, 0], [40, 40]]) {
         const expected = map.layerPointToContainerPoint(origin.add([x * scale, z * scale]));
-        const ndc = new Native.Vec3(x, 0, z);
-        tower.camera.project(ndc);
-        const actual = new L.Point((ndc.x + 1) * size.x / 2, (1 - ndc.y) * size.y / 2);
+        const ndc = [x, 0, z];
+        backend._transformPoint(ndc, tower.camera.projectionViewMatrix);
+        const actual = new L.Point((ndc[0] + 1) * size.x / 2, (1 - ndc[1]) * size.y / 2);
         errors.push(actual.distanceTo(expected));
       }
       const level = baseLayer._levels[baseLayer._tileZoom];
@@ -755,16 +1342,16 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       const borderX = parseFloat(style.borderLeftWidth);
       const borderY = parseFloat(style.borderTopWidth);
       for (const foot of feet) {
-        const world = new Native.Vec3(...foot.local).applyMatrix4(eiffel.model.worldMatrix);
-        const geographic = map.unproject(map.project(tower.location).add([world.x * scale, world.z * scale]), zoom);
+        const world = backend._transformPoint([...foot.local], eiffel.model.worldMatrix);
+        const geographic = map.unproject(map.project(tower.location).add([world[0] * scale, world[2] * scale]), zoom);
         footprintErrors.push(geographic.distanceTo(new L.LatLng(...foot.latlng)));
         const point = map.project(new L.LatLng(...foot.latlng), baseLayer._tileZoom).subtract(level.origin);
         probe.style.transform = `translate3d(${point.x}px,${point.y}px,0)`;
         const ground = probe.getBoundingClientRect();
         const expected = new L.Point(ground.x - rect.x - borderX, ground.y - rect.y - borderY);
-        const ndc = new Native.Vec3().copy(world);
-        tower.camera.project(ndc);
-        const actual = new L.Point((ndc.x + 1) * size.x / 2, (1 - ndc.y) * size.y / 2);
+        const ndc = [...world];
+        backend._transformPoint(ndc, tower.camera.projectionViewMatrix);
+        const actual = new L.Point((ndc[0] + 1) * size.x / 2, (1 - ndc[1]) * size.y / 2);
         tileErrors.push(actual.distanceTo(expected));
       }
       probe.remove();
@@ -773,12 +1360,13 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
     const zoomErrors = [];
     let animatedFrames = 0;
     let hiddenFrames = 0;
-    const render = tower.renderer.render;
-    tower.renderer.render = function (...args) {
+    const shared = tower._shared;
+    const render = shared._render;
+    shared._render = function (...args) {
       render.apply(this, args);
       if (!map._animatingZoom) return;
       animatedFrames++;
-      if (this.gl.canvas.hidden) hiddenFrames++;
+      if (this.renderer.gl.canvas.hidden) hiddenFrames++;
       const level = tower._shared._zoomLevel;
       const probe = document.createElement('span');
       probe.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0';
@@ -797,9 +1385,9 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
           ground.x - rect.x - parseFloat(style.borderLeftWidth),
           ground.y - rect.y - parseFloat(style.borderTopWidth)
         );
-        const ndc = new Native.Vec3(x, 0, z);
-        tower.camera.project(ndc);
-        const actual = new L.Point((ndc.x + 1) * size.x / 2, (1 - ndc.y) * size.y / 2);
+        const ndc = [x, 0, z];
+        backend._transformPoint(ndc, tower.camera.projectionViewMatrix);
+        const actual = new L.Point((ndc[0] + 1) * size.x / 2, (1 - ndc[1]) * size.y / 2);
         zoomErrors.push(actual.distanceTo(expected));
       }
       probe.remove();
@@ -815,7 +1403,7 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
         map.setZoomAround(new L.Point(320, 220), zoom, { animate: true });
       });
     }
-    tower.renderer.render = render;
+    shared._render = render;
 
     map.setView(tower.location, 17, { animate: false });
     map.setPitch(60);
@@ -914,7 +1502,11 @@ Given('the Paris buildings example is open with sample volumes', { timeout: 6000
   await this.page.setViewportSize({ width: 800, height: 600 });
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
-  await this.page.evaluate(() => Promise.all(layers._layers.map(entry => entry.layer.ready)));
+  await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
+    !(layer instanceof L.Layer3D) || (layer.root && (!layer.options.model || layer.model) &&
+      (!layer.options.source || layer.header))));
+  await this.page.evaluate(() => Promise.all(layers._layers
+    .filter(({ layer }) => !(layer instanceof L.Layer3D)).map(({ layer }) => layer.ready)));
   await this.page.waitForFunction(() => {
     const buildings = Object.values(map._layers).find(layer => layer.group);
     const error = buildings && [...buildings._areas.values()].find(area => area.error);
@@ -932,30 +1524,30 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       if (layer.renderer && !layer.model) tower = layer;
       if (layer.group) buildings = layer;
     });
-    const Native = tower.Native;
+    const backend = tower;
     const mesh = buildings.group.children[0];
-    mesh.updateMatrixWorld(true);
+    backend._updateWorldMatrix(mesh, true);
     const origin = map.options.crs.project(tower.location);
     const metres = Math.cos(tower.location.lat * Math.PI / 180);
     const hits = (lat, lon) => {
       const point = map.options.crs.project(new L.LatLng(lat, lon));
       return nativeChecks.intersections(mesh,
-        new Native.Vec3((point.x - origin.x) * metres, 100, -(point.y - origin.y) * metres),
-        new Native.Vec3(0, -1, 0), Native).map(point => point.y);
+        [(point.x - origin.x) * metres, 100, -(point.y - origin.y) * metres],
+        [0, -1, 0], backend).map(point => point[1]);
     };
     const elevated = map.options.crs.project(new L.LatLng(48.8587, 2.2962));
     const underside = nativeChecks.intersections(mesh,
-      new Native.Vec3((elevated.x - origin.x) * metres, 0, -(elevated.y - origin.y) * metres),
-      new Native.Vec3(0, 1, 0), Native).map(point => point.y);
+      [(elevated.x - origin.x) * metres, 0, -(elevated.y - origin.y) * metres],
+      [0, 1, 0], backend).map(point => point[1]);
     const geometry = mesh.geometry;
-    geometry.computeBoundingSphere();
+    backend._computeBounds(geometry);
     return {
       holes: hits(48.8587, 2.2957),
       underside,
       roof: hits(48.85855, 2.29555),
       multipart: [hits(48.8587, 2.2962), hits(48.8587, 2.2967)],
-      min: geometry.bounds.min.y,
-      max: geometry.bounds.max.y,
+      min: geometry.bounds.min[1],
+      max: geometry.bounds.max[1],
       sharedScene: buildings.root.parent === buildings.scene &&
         Object.values(map._layers).filter(layer => layer instanceof L.Layer3D)
           .every(layer => layer.renderer === buildings.renderer),
@@ -987,19 +1579,19 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     let content;
     try {
       buildings.options.featureStyle = feature => ({ top: feature.properties.height, bottom: 7, color: 0xff0000 });
-      content = await buildings._createMesh([{ ...feature, id: 'custom-volume',
-        properties: { height: 22 } }], area);
+      content = await nativeChecks.loadBlock(buildings, area, [{ ...feature, id: 'custom-volume',
+        properties: { height: 22 } }]);
       const geometry = content.mesh.geometry;
-      geometry.computeBoundingSphere();
+      L.Layer3D.prototype._computeBounds(geometry);
       buildings.options.featureStyle = () => ({ top: 3, bottom: 4 });
-      const error = await buildings._createMesh([feature], area).then(() => null, error => error.message);
-      return { top: geometry.bounds.max.y, bottom: geometry.bounds.min.y,
+      const invalid = await nativeChecks.loadBlock(buildings, { coords, request: new AbortController() }, [feature]);
+      const error = invalid.error;
+      return { top: geometry.bounds.max[1], bottom: geometry.bounds.min[1],
         color: Array.from(geometry.attributes.color.data.slice(0, 3)),
         id: content.mesh.extras.featureFaces[0].id, error };
     } finally {
       buildings.options.featureStyle = original;
-      content?.mesh.geometry.remove();
-      content?.mesh.program.remove();
+      buildings._releaseArea(content);
     }
   }, this.sampleBuildings[0]);
   assert.deepEqual(genericStyle, { top: 22, bottom: 7, color: [1, 0, 0], id: 'custom-volume',
@@ -1011,7 +1603,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       if (layer.renderer && !layer.model) tower = layer;
       if (layer.group) buildings = layer;
     });
-    const Native = tower.Native;
+    const backend = tower;
     buildings.featureEvents = [];
     buildings.on('featurehover featureclick', event => {
       buildings.featureEvents.push({ type: event.type, id: event.feature?.id });
@@ -1019,16 +1611,12 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     const range = buildings.group.children[0].extras.featureFaces[0];
     const origin = map.options.crs.project(tower.location);
     const point = map.options.crs.project(new L.LatLng(48.85855, 2.29555));
-    const world = new Native.Vec3(
-      (point.x - origin.x) * Math.cos(tower.location.lat * Math.PI / 180),
-      15,
-      -(point.y - origin.y) * Math.cos(tower.location.lat * Math.PI / 180)
-    );
-    tower.camera.project(world);
+    const world = [(point.x - origin.x) * Math.cos(tower.location.lat * Math.PI / 180), 15, -(point.y - origin.y) * Math.cos(tower.location.lat * Math.PI / 180)];
+    backend._transformPoint(world, tower.camera.projectionViewMatrix);
     const rect = map.getContainer().getBoundingClientRect();
     const position = {
-      clientX: rect.left + (world.x + 1) * rect.width / 2,
-      clientY: rect.top + (1 - world.y) * rect.height / 2
+      clientX: rect.left + (world[0] + 1) * rect.width / 2,
+      clientY: rect.top + (1 - world[1]) * rect.height / 2
     };
     const before = Array.from(
       buildings.group.children[0].geometry.attributes.color.data.slice(range.vertexStart * 3, range.vertexStart * 3 + 3)
@@ -1167,8 +1755,8 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
     const area = { coords: { z: buildings.header.minZoom, x: point.x, y: point.y }, request: new AbortController() };
     const before = buildings.root.children.length;
     requestAnimationFrame(() => area.request.abort());
-    const content = await buildings._createMesh(Array(10000).fill(feature), area);
-    return content === null && buildings.root.children.length === before;
+    await nativeChecks.loadBlock(buildings, area, Array(10000).fill(feature));
+    return !area.done && !area.mesh && buildings.root.children.length === before;
   }, this.sampleBuildings[0]);
 });
 

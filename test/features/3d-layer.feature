@@ -1,17 +1,41 @@
 @3d-layer
 Feature: Reusable 3D layers
+  Scenario: Configured glTF loading retains objects and loads external PBR assets
+    Given a map with the standalone 3D module and no dependency import map
+    Then configured models preserve external assets and can be detached and reattached
+
+  Scenario: DOM tooltips stay inside the map and restore the previous cursor
+    Given a map with the standalone 3D module and no dependency import map
+    Then DOM tooltip content stays inside the map without interpreting text as HTML
+
+  Scenario: Layer-owned objects preserve math and scene ordering without engine classes
+    Given a map with the standalone 3D module and no dependency import map
+    Then layer-owned objects preserve values and visibility without engine classes
+
+  Scenario Outline: Invalid source blocks report errors without partial meshes
+    Given a map with the standalone 3D module and no dependency import map
+    Then a source block with "<invalid>" reports "<message>" without attaching a mesh
+
+    Examples:
+      | invalid            | message                     |
+      | collection         | Invalid GeoJSON response    |
+      | geometry           | Unsupported GeoJSON geometry |
+      | coordinates        | Invalid GeoJSON coordinates |
+      | empty polygon      | Empty GeoJSON polygon       |
+      | short ring         | Invalid GeoJSON polygon ring |
+
   Scenario: Automatic origins are assigned on first addition and stay fixed
     Given a map with the standalone 3D module and no dependency import map
     Then 3D layers without a location keep their first map origin
 
-  Scenario: Independent layers initialize without rendering dependencies and share one renderer per map
+  Scenario: Independent layers share one renderer and transfer ownership without changing geographic origins
     Given a map with the standalone 3D module and no dependency import map
     When I add and remove independent 3D layers
     Then 3D groups retain their geographic origins and share resources only on the same map
 
   Scenario: Dependency loading errors are reported to the caller
     Given a map with the standalone 3D module and no dependency import map
-    Then an unavailable WebGL context rejects readiness and emits an error without leaving a canvas
+    Then an unavailable WebGL context emits an error without leaving a canvas
 
   Scenario: Native geometry and model decoding preserve holes and accessor layouts
     Given a map with the standalone 3D module and no dependency import map
@@ -39,3 +63,60 @@ Feature: Reusable 3D layers
     Then the building volumes preserve courtyards and elevated floors
     When I move and toggle the Paris building volumes
     Then 3D neighbourhoods stay bounded, release distant volumes, and recover from failures
+
+  Scenario Outline: Model failures are reported without attaching broken geometry
+    Given a map with the standalone 3D module and no dependency import map
+    When I load a configured 3D model with "<failure>"
+    Then 3D initialization emits "<message>" as an error
+    And the failed model has no attached geometry
+
+    Examples:
+      | failure            | message                            |
+      | HTTP error         | Unable to load model: HTTP 404     |
+      | unsupported glTF   | Layer3D supports static triangle glTF models without required extensions |
+      | truncated GLB      | Truncated GLB data                 |
+
+  @eiffel @3d-example
+  Scenario Outline: The example filters invalid building volumes and estimates valid heights
+    Given the Eiffel Tower example page is open
+    Then building style for <storeys> storeys, <floors> floors and ground <ground> is "<result>"
+
+    Examples:
+      | storeys | floors | ground | result |
+      | 4       | 5      | 1      | 15/0   |
+      | 4       | 2      | 0      | 15/9   |
+      | 0       | 1      | 1      | 3/0    |
+      | -1      | 1      | 1      | skip   |
+      | 4       | 0      | 0      | skip   |
+      | 4       | 6      | 0      | skip   |
+      | 4       | 2      | 2      | skip   |
+
+  @eiffel @3d-example
+  Scenario Outline: Changing the background preserves the 3D scene
+    Given the Eiffel Tower example page is open
+    When I select the "<background>" background in the 3D example
+    Then only the "<background>" background is active and the 3D scene is unchanged
+
+    Examples:
+      | background     |
+      | Empty          |
+      | Plan IGN       |
+      | Orthophoto IGN |
+
+  @eiffel @3d-example
+  Scenario: The layer control owns the shared canvas and model attribution
+    Given the Eiffel Tower example page is open
+    When I disable and restore the 3D overlays through the layer control
+    Then the 3D canvas and model attribution follow the enabled overlays
+
+  @eiffel @3d-example
+  Scenario: Hovering and clicking the Eiffel Tower shows information and zooms without pinning
+    Given the Eiffel Tower example page is open
+    When I hover and click the Eiffel Tower in the 3D example
+    Then the tower information is shown and the click zooms without pinning the tooltip
+
+  @eiffel
+  Scenario: The real Eiffel Tower model follows the map camera
+    Given the Eiffel Tower example page is open
+    When I visit and inspect the Eiffel Tower 3D model
+    Then the tower is rendered at its geographic position through camera changes
