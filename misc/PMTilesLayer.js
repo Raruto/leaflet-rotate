@@ -41,32 +41,13 @@ L.PMTilesLayer = L.TileLayer.extend({
   getHeader() {
     return this._header ||= this._read(0, 127).then(data => {
       const view = new DataView(data);
-      if (new TextDecoder().decode(data.slice(0, 7)) !== 'PMTiles' || view.getUint8(7) !== 3) {
-        throw new Error('Expected a PMTiles v3 archive');
-      }
       const header = {};
-      const fields = ['rootDirectoryOffset', 'rootDirectoryLength', 'jsonMetadataOffset', 'jsonMetadataLength',
-        'leafDirectoryOffset', 'leafDirectoryLength', 'tileDataOffset', 'tileDataLength',
-        'numAddressedTiles', 'numTileEntries', 'numTileContents'];
-      fields.forEach((name, i) => {
-        const value = Number(view.getBigUint64(8 + i * 8, true));
-        if (!Number.isSafeInteger(value)) throw new Error('PMTiles offset/count exceeds safe integer range');
-        header[name] = value;
-      });
-      ['clustered', 'internalCompression', 'tileCompression', 'tileType', 'minZoom', 'maxZoom']
-        .forEach((name, i) => { header[name] = view.getUint8(96 + i); });
-      ['minLon', 'minLat', 'maxLon', 'maxLat'].forEach((name, i) => {
-        header[name] = view.getInt32(102 + i * 4, true) / 1e7;
-      });
+      ['rootDirectoryOffset', 'rootDirectoryLength', 'jsonMetadataOffset', 'jsonMetadataLength', 'leafDirectoryOffset', 'leafDirectoryLength', 'tileDataOffset', 'tileDataLength', 'numAddressedTiles', 'numTileEntries', 'numTileContents'].forEach((name, i) => { header[name] = Number(view.getBigUint64(8 + i * 8, true)); });
+      ['clustered', 'internalCompression', 'tileCompression', 'tileType', 'minZoom', 'maxZoom'].forEach((name, i) => { header[name] = view.getUint8(96 + i); });
+      ['minLon', 'minLat', 'maxLon', 'maxLat'].forEach((name, i) => { header[name] = view.getInt32(102 + i * 4, true) / 1e7; });
       header.centerZoom = view.getUint8(118);
-      header.centerLon = view.getInt32(119, true) / 1e7;
-      header.centerLat = view.getInt32(123, true) / 1e7;
-      if (header.minZoom > header.maxZoom || header.maxZoom > 26 ||
-        header.rootDirectoryOffset < 127 || !header.rootDirectoryLength ||
-        header.minLon > header.maxLon || header.minLat > header.maxLat) throw new Error('Invalid PMTiles header');
-      for (const compression of [header.internalCompression, header.tileCompression]) {
-        if (![1, 2].includes(compression)) throw new Error(`Unsupported PMTiles compression: ${compression}`);
-      }
+      header.centerLon  = view.getInt32(119, true) / 1e7;
+      header.centerLat  = view.getInt32(123, true) / 1e7;
       return header;
     });
   },
@@ -191,10 +172,12 @@ L.PMTilesLayer = L.TileLayer.extend({
   onAdd(map) {
     if (this.header) {
       L.TileLayer.prototype.onAdd.call(this, map);
+      this._setTerrain3D(map._terrain3D);
     } else {
       this.ready = this.ready.then(layer => {
         if (this._map === map && map.hasLayer(this) && !this._container) {
           L.TileLayer.prototype.onAdd.call(this, map);
+          this._setTerrain3D(map._terrain3D);
         }
         return layer;
       });
@@ -202,6 +185,7 @@ L.PMTilesLayer = L.TileLayer.extend({
   },
 
   onRemove(map) {
+    this._setTerrain3D(null);
     if (this._container) L.TileLayer.prototype.onRemove.call(this, map);
   },
 
@@ -236,6 +220,7 @@ L.PMTilesLayer = L.TileLayer.extend({
       });
       if (tile.request.signal.aborted) return;
       tile.done = true;
+      this._registerTerrainTile(coords, tile);
       done(null, tile);
     }).catch(error => {
       if (tile.request.signal.aborted) return;
@@ -253,6 +238,25 @@ L.PMTilesLayer = L.TileLayer.extend({
     L.TileLayer.prototype._abortLoading.call(this);
   },
 
+  _setTerrain3D(terrain) {
+    if (this._terrain3D === terrain) return;
+    for (const { el } of Object.values(this._tiles || {})) this._terrain3D?.removeRasterTile(el);
+    this._terrain3D = terrain || null;
+    if (this._terrain3D) {
+      for (const { coords, el } of Object.values(this._tiles || {})) {
+        if (el.done) this._registerTerrainTile(coords, el);
+      }
+    }
+  },
+
+  _registerTerrainTile(coords, tile) {
+    if (!this._terrain3D) return;
+    const terrain = this._terrain3D;
+    terrain.addRasterTile(this, coords, tile).catch(error => {
+      if (this._terrain3D === terrain && tile.isConnected) this.fire('tileerror', { tile, coords, error });
+    });
+  },
+
   _releaseURL(tile) {
     if (tile.objectURL) {
       URL.revokeObjectURL(tile.objectURL);
@@ -261,6 +265,7 @@ L.PMTilesLayer = L.TileLayer.extend({
   },
 
   _releaseTile({ tile }) {
+    this._terrain3D?.removeRasterTile(tile);
     tile.request.abort();
     this._releaseURL(tile);
   },

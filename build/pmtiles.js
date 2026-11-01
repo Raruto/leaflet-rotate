@@ -1,18 +1,18 @@
 // Builds the offline PMTiles archives used by examples/leaflet-rotate-3d-layer.html.
-// Usage: npm run pmtiles -- [--bbox=west,south,east,north] [--minzoom=11] [--maxzoom=17] [--only=buildings,orthophotos,plan-ign]
+// Usage: npm run pmtiles -- [--bbox=west,south,east,north] [--minzoom=11] [--maxzoom=17] [--only=buildings,orthophotos,plan-ign,terrain]
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, inflateSync } from 'node:zlib';
 
 const { values: args } = parseArgs({
   options: {
     bbox: { type: 'string', default: '2.15,48.75,2.55,48.95' },
     minzoom: { type: 'string', default: '11' },
     maxzoom: { type: 'string', default: '17' },
-    only: { type: 'string', default: 'buildings,orthophotos,plan-ign' },
+    only: { type: 'string', default: 'buildings,orthophotos,plan-ign,terrain' },
   },
 });
 const rasterBbox = args.bbox.split(',').map(Number);
@@ -25,6 +25,8 @@ const parisBbox = [2.2424, 48.8162, 2.416, 48.9022];
 const outDir = new URL('../examples/data/', import.meta.url);
 const ignUrl = (layer, format) => (z, x, y) => `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}&STYLE=normal&FORMAT=${format}&TILEMATRIXSET=PM_0_19&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}`;
 const ignAttribution = 'IGN — Licence Ouverte Etalab 2.0';
+const terrainZoom = 14;
+const terrainSourceTiles = new Map();
 
 const archives = {
   buildings: {
@@ -69,6 +71,17 @@ const archives = {
     attribution: ignAttribution,
     tile: (z, x, y) => download(ignUrl('GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2', 'image/png')(z, x, y)),
   },
+  terrain: {
+    tileType: 0,
+    tileCompression: 2,
+    bbox: parisBbox,
+    minZoom: terrainZoom,
+    maxZoom: terrainZoom,
+    concurrency: 2,
+    attribution: ignAttribution,
+    metadata: { format: 'float32-le', source: 'IGN RGE ALTI', tileSize: 256 },
+    tile: buildTerrainTile,
+  },
 };
 
 function lngToX(lng, z) {
@@ -100,6 +113,93 @@ function tilesIn([west, south, east, north], minZoom, maxZoom) {
     }
   }
   return tiles;
+}
+
+async function getTerrainSourceTile(x, y) {
+  const key = `${x}/${y}`;
+  if (!terrainSourceTiles.has(key)) {
+    const url = new URL('https://data.geopf.fr/wmts');
+    for (const [name, value] of Object.entries({
+      SERVICE: 'WMTS',
+      REQUEST: 'GetTile',
+      VERSION: '1.0.0',
+      LAYER: 'ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES',
+      STYLE: 'normal',
+      FORMAT: 'image/x-bil;bits=32',
+      TILEMATRIXSET: 'WGS84G_6_14',
+      TILEMATRIX: terrainZoom,
+      TILEROW: y,
+      TILECOL: x,
+    })) url.searchParams.set(name, value);
+    terrainSourceTiles.set(key, download(url).then(data => {
+      if (data.length !== 256 * 256 * 4) data = inflateSync(data);
+      if (data.length !== 256 * 256 * 4) throw new Error(`Invalid IGN elevation tile ${key}`);
+      return data;
+    }).catch(error => {
+      terrainSourceTiles.delete(key);
+      throw error;
+    }));
+  }
+  return terrainSourceTiles.get(key);
+}
+
+async function buildTerrainTile(z, x, y) {
+  const toLatLng = (pixelX, pixelY) => {
+    const scale = 256 * 2 ** z;
+    const lng = pixelX / scale * 360 - 180;
+    const mercatorY = Math.PI * (1 - 2 * pixelY / scale);
+    return [lng, Math.atan(Math.sinh(mercatorY)) * 180 / Math.PI];
+  };
+  const sourceX = lng => Math.floor((lng + 180) / 360 * 2 ** (terrainZoom + 1));
+  const sourceY = lat => Math.floor((90 - lat) / 180 * 2 ** terrainZoom);
+  const corners = [
+    toLatLng(x * 256, y * 256),
+    toLatLng((x + 1) * 256, (y + 1) * 256),
+  ];
+  const minX = Math.max(0, Math.min(...corners.map(([lng]) => sourceX(lng))) - 1);
+  const maxX = Math.min(2 ** (terrainZoom + 1) - 1, Math.max(...corners.map(([lng]) => sourceX(lng))) + 1);
+  const minY = Math.max(0, Math.min(...corners.map(([, lat]) => sourceY(lat))) - 1);
+  const maxY = Math.min(2 ** terrainZoom - 1, Math.max(...corners.map(([, lat]) => sourceY(lat))) + 1);
+  const sources = new Map();
+  await Promise.all(Array.from({ length: maxX - minX + 1 }, (_, column) =>
+    Array.from({ length: maxY - minY + 1 }, (_, row) => {
+      const sx = minX + column, sy = minY + row;
+      return getTerrainSourceTile(sx, sy).then(data =>
+        sources.set(`${sx}/${sy}`, new DataView(data.buffer, data.byteOffset, data.byteLength)));
+    })
+  ).flat());
+
+  const sample = (lng, lat) => {
+    const px = (lng + 180) / 360 * 2 ** (terrainZoom + 1) * 256 - 0.5;
+    const py = (90 - lat) / 180 * 2 ** terrainZoom * 256 - 0.5;
+    const x0 = Math.floor(px), y0 = Math.floor(py);
+    const fx = px - x0, fy = py - y0;
+    const at = (ix, iy) => {
+      const sx = Math.floor(ix / 256), sy = Math.floor(iy / 256);
+      const data = sources.get(`${sx}/${sy}`);
+      if (!data) return -9999;
+      return data.getFloat32(((iy - sy * 256) * 256 + ix - sx * 256) * 4, true);
+    };
+    const values = [at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1)];
+    if (values.some(value => !Number.isFinite(value) || value <= -1000)) return -9999;
+    const north = values[0] * (1 - fx) + values[1] * fx;
+    const south = values[2] * (1 - fx) + values[3] * fx;
+    return north * (1 - fy) + south * fy;
+  };
+
+  const output = Buffer.allocUnsafe(256 * 256 * 4);
+  const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+  let validSamples = 0;
+  for (let row = 0; row < 256; row++) {
+    for (let column = 0; column < 256; column++) {
+      const [lng, lat] = toLatLng(x * 256 + column + 0.5, y * 256 + row + 0.5);
+      const elevation = sample(lng, lat);
+      if (elevation > -1000) validSamples++;
+      view.setFloat32((row * 256 + column) * 4, elevation, true);
+    }
+  }
+  if (!validSamples) throw new Error(`No IGN elevation data in ${z}/${x}/${y}`);
+  return gzipSync(output);
 }
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -231,7 +331,9 @@ async function build(name, archive) {
     throw new Error(`${name}: tile coverage or data length verification failed; archive not published`);
   }
   const { root, leaves } = buildDirectories(entries);
-  const metadata = gzipSync(JSON.stringify({ name: `paris-${name}`, attribution: archive.attribution }));
+  const metadata = gzipSync(JSON.stringify({
+    name: `paris-${name}`, attribution: archive.attribution, ...archive.metadata,
+  }));
   const header = Buffer.alloc(127);
   const u64 = (offset, value) => header.writeBigUInt64LE(BigInt(value), offset);
   const e7 = (offset, value) => header.writeInt32LE(Math.round(value * 1e7), offset);

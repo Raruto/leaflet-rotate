@@ -53,6 +53,7 @@ export * from './layer/vector/Renderer';
 export * from './map/Map';
 export * from './map/handler/CompassBearing';
 export * from './map/handler/ContainerMutation';
+export * from './map/handler/Drag';
 export * from './map/handler/TouchGestures';
 export * from './map/handler/TouchRotate';
 export * from './map/handler/TouchPitch';

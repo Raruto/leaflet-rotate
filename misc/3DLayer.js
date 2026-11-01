@@ -33,7 +33,6 @@
  * @property {string} [source] PMTiles URL containing Polygon/MultiPolygon GeoJSON.
  * @property {function(Object): (ExtrusionStyle|null)} [featureStyle] Source styling; null skips.
  * @property {function(PickedFeature): (Node|string)} [tooltipContent] No HTML string evaluation.
- * @property {boolean} [zoomOnClick=false] Center the map on the nearest clicked object without changing zoom.
  * @property {string} [attribution] Standard Leaflet attribution HTML.
  * @property {string} [ariaLabel='3D scene'] Shared canvas accessible name.
  *
@@ -82,15 +81,21 @@ L.Layer3D = L.Layer.extend({
     });
     if (!response.ok) throw new Error(`Unable to read PMTiles: HTTP ${response.status}`);
     const etag = response.headers.get('ETag');
-    if (this._etag && etag !== this._etag) throw new Error('PMTiles archive changed; recreate the layer');
-    if (etag) this._etag = etag;
+    if (this._etag && etag !== this._etag) {
+      throw new Error('PMTiles archive changed; recreate the layer');
+    }
+    if (etag) {
+      this._etag = etag;
+    }
     let data = await response.arrayBuffer();
-    if (response.status === 200) data = data.slice(offset, offset + length);
-    else if (response.status !== 206 ||
-      !response.headers.get('Content-Range')?.startsWith(`bytes ${offset}-${offset + length - 1}/`)) {
+    if (response.status === 200) {
+      data = data.slice(offset, offset + length);
+    } else if (response.status !== 206 || !response.headers.get('Content-Range')?.startsWith(`bytes ${offset}-${offset + length - 1}/`)) {
       throw new Error('Invalid PMTiles range response');
     }
-    if (data.byteLength !== length) throw new Error('Truncated PMTiles range');
+    if (data.byteLength !== length) {
+      throw new Error('Truncated PMTiles range');
+    }
     return data;
   },
 
@@ -104,32 +109,13 @@ L.Layer3D = L.Layer.extend({
   getHeader() {
     return this._header ||= this._read(0, 127).then(data => {
       const view = new DataView(data);
-      if (new TextDecoder().decode(data.slice(0, 7)) !== 'PMTiles' || view.getUint8(7) !== 3) {
-        throw new Error('Expected a PMTiles v3 archive');
-      }
       const header = {};
-      const fields = ['rootDirectoryOffset', 'rootDirectoryLength', 'jsonMetadataOffset', 'jsonMetadataLength',
-        'leafDirectoryOffset', 'leafDirectoryLength', 'tileDataOffset', 'tileDataLength',
-        'numAddressedTiles', 'numTileEntries', 'numTileContents'];
-      fields.forEach((name, i) => {
-        const value = Number(view.getBigUint64(8 + i * 8, true));
-        if (!Number.isSafeInteger(value)) throw new Error('PMTiles offset/count exceeds safe integer range');
-        header[name] = value;
-      });
-      ['clustered', 'internalCompression', 'tileCompression', 'tileType', 'minZoom', 'maxZoom']
-        .forEach((name, i) => { header[name] = view.getUint8(96 + i); });
-      ['minLon', 'minLat', 'maxLon', 'maxLat'].forEach((name, i) => {
-        header[name] = view.getInt32(102 + i * 4, true) / 1e7;
-      });
+      ['rootDirectoryOffset', 'rootDirectoryLength', 'jsonMetadataOffset', 'jsonMetadataLength', 'leafDirectoryOffset', 'leafDirectoryLength', 'tileDataOffset', 'tileDataLength', 'numAddressedTiles', 'numTileEntries', 'numTileContents'].forEach((name, i) => { header[name] = Number(view.getBigUint64(8 + i * 8, true)); });
+      ['clustered', 'internalCompression', 'tileCompression', 'tileType', 'minZoom', 'maxZoom'].forEach((name, i) => { header[name] = view.getUint8(96 + i); });
+      ['minLon', 'minLat', 'maxLon', 'maxLat'].forEach((name, i) => { header[name] = view.getInt32(102 + i * 4, true) / 1e7; });
       header.centerZoom = view.getUint8(118);
-      header.centerLon = view.getInt32(119, true) / 1e7;
-      header.centerLat = view.getInt32(123, true) / 1e7;
-      if (header.minZoom > header.maxZoom || header.maxZoom > 26 ||
-        header.rootDirectoryOffset < 127 || !header.rootDirectoryLength ||
-        header.minLon > header.maxLon || header.minLat > header.maxLat) throw new Error('Invalid PMTiles header');
-      for (const compression of [header.internalCompression, header.tileCompression]) {
-        if (![1, 2].includes(compression)) throw new Error(`Unsupported PMTiles compression: ${compression}`);
-      }
+      header.centerLon  = view.getInt32(119, true) / 1e7;
+      header.centerLat  = view.getInt32(123, true) / 1e7;
       return header;
     });
   },
@@ -194,7 +180,8 @@ L.Layer3D = L.Layer.extend({
     const n = 2 ** z;
     // Same cumulative Hilbert ordering used by build/pmtiles.js.
     for (let s = n / 2; s >= 1; s /= 2) {
-      const rx = (x & s) ? 1 : 0, ry = (y & s) ? 1 : 0;
+      const rx = (x & s) ? 1 : 0,
+            ry = (y & s) ? 1 : 0;
       tileId += s * s * ((3 * rx) ^ ry);
       if (!ry) {
         if (rx) { x = n - 1 - x; y = n - 1 - y; }
@@ -241,8 +228,6 @@ L.Layer3D = L.Layer.extend({
   options: {
     // Accessible description of the canvas.
     ariaLabel: '3D scene',
-    // Pick across the shared scene so overlapping layers do not each zoom.
-    zoomOnClick: false,
   },
 
   /**
@@ -273,57 +258,75 @@ L.Layer3D = L.Layer.extend({
           position:    [0, 0, 0],
           rotation:    [0, 0, 0],
           scale:       [1, 1, 1],
-          worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+          worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
           children:    [],
           visible:     true,
         };
-        this.raycaster = { origin: [0, 0, 0], direction: [0, 0, 0] };
+        this.raycaster = {
+          origin:    [0, 0, 0],
+          direction: [0, 0, 0]
+        };
         if (this.options.source) {
           this.group = this.root;
           this.header = await this.getHeader();
-          const { minZoom, minLon, minLat, maxLon, maxLat } = this.header;
-          if (!Number.isInteger(minZoom) || minZoom < 0 || minZoom > 30 ||
-            ![minLon, minLat, maxLon, maxLat].every(Number.isFinite) ||
-            minLon > maxLon || minLat > maxLat) {
-            throw new Error('Expected a GeoJSON PMTiles archive with a valid native zoom and bounds');
-          }
         }
         if (this._map) this._attach(this._map);
         if (this.options.model) {
           await this._added.promise;
-          const url = new URL(this.options.model, document.baseURI).href;
+          const url      = new URL(this.options.model, document.baseURI).href;
           const response = await fetch(url);
-          if (!response.ok) throw new Error(`Unable to load model: HTTP ${response.status}`);
+          if (!response.ok) {
+            throw new Error(`Unable to load model: HTTP ${response.status}`);
+          }
           const data = await response.arrayBuffer();
-          const view = new DataView(data), decoder = new TextDecoder();
+          const view = new DataView(data),
+             decoder = new TextDecoder();
           let description;
           if (view.getUint32(0, true) === 0x46546c67) {
             // Decode GLB v2 chunks; unknown types are skipped.
-            if (view.getUint32(4, true) !== 2 || view.getUint32(8, true) !== data.byteLength) throw new Error('Invalid GLB header');
+            if (view.getUint32(4, true) !== 2 || view.getUint32(8, true) !== data.byteLength) {
+              throw new Error('Invalid GLB header');
+            }
             let binary;
             for (let offset = 12; offset < data.byteLength;) {
-              if (offset + 8 > data.byteLength) throw new Error('Truncated GLB chunk');
+              if (offset + 8 > data.byteLength) {
+                throw new Error('Truncated GLB chunk');
+              }
               const length = view.getUint32(offset, true), type = view.getUint32(offset + 4, true);
               offset += 8;
-              if (offset + length > data.byteLength) throw new Error('Truncated GLB data');
+              if (offset + length > data.byteLength) {
+                throw new Error('Truncated GLB data');
+              }
               const chunk = data.slice(offset, offset + length);
-              if (type === 0x4e4f534a) description = JSON.parse(decoder.decode(chunk));
-              if (type === 0x004e4942) binary = chunk;
+              if (type === 0x4e4f534a) {
+                description = JSON.parse(decoder.decode(chunk));
+              }
+              if (type === 0x004e4942) {
+                binary = chunk;
+              }
               offset += length;
             }
-            if (!description) throw new Error('Missing GLB JSON');
-            if (binary) description.buffers[0].binary = binary;
-          } else description = JSON.parse(decoder.decode(data));
-          if (description.skins?.length || description.animations?.length ||
-            description.extensionsRequired?.length || description.meshes?.some(mesh =>
-              mesh.primitives.some(primitive => primitive.targets || (primitive.mode !== undefined && primitive.mode !== 4)))) {
+            if (!description) {
+              throw new Error('Missing GLB JSON');
+            }
+            if (binary) {
+              description.buffers[0].binary = binary;
+            }
+          } else {
+            description = JSON.parse(decoder.decode(data));
+          }
+          if (description.skins?.length || description.animations?.length || description.extensionsRequired?.length || description.meshes?.some(mesh => mesh.primitives.some(primitive => primitive.targets || (primitive.mode !== undefined && primitive.mode !== 4)))) {
             throw new Error('Layer3D supports static triangle glTF models without required extensions');
           }
           const directory = new URL('.', url).href;
           await Promise.all((description.buffers || []).map(async buffer => {
-            if (buffer.binary) return;
+            if (buffer.binary) {
+              return;
+            }
             const response = await fetch(new URL(buffer.uri, directory).href);
-            if (!response.ok) throw new Error(`Unable to load model buffer: HTTP ${response.status}`);
+            if (!response.ok) {
+              throw new Error(`Unable to load model buffer: HTTP ${response.status}`);
+            }
             buffer.binary = await response.arrayBuffer();
           }));
           await this._added.promise;
@@ -451,21 +454,23 @@ L.Layer3D = L.Layer.extend({
                 position:    [0, 0, 0],
                 rotation:    [0, 0, 0],
                 scale:       [1, 1, 1],
-                worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+                worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
                 children:    [],
                 visible:     true,
               };
               group.name = spec.name;
-              if (spec.matrix) group.matrix = this._copyMatrix(Array.from(new DOMMatrix().toFloat64Array()), spec.matrix);
-              else {
+              if (spec.matrix) {
+                group.matrix = Array.from(spec.matrix);
+              } else {
                 // glTF stores quaternions [x,y,z,w]; convert directly to a scaled column-major matrix.
-                const [x, y, z, w] = spec.rotation || [0, 0, 0, 1], [sx, sy, sz] = spec.scale || [1, 1, 1];
-                group.matrix = this._copyMatrix(Array.from(new DOMMatrix().toFloat64Array()), [
+                const [x, y, z, w] = spec.rotation || [0, 0, 0, 1],
+                      [sx, sy, sz] = spec.scale || [1, 1, 1];
+                group.matrix = [
                   (1 - 2 * (y * y + z * z)) * sx, 2 * (x * y + z * w) * sx, 2 * (x * z - y * w) * sx, 0,
                   2 * (x * y - z * w) * sy, (1 - 2 * (x * x + z * z)) * sy, 2 * (y * z + x * w) * sy, 0,
                   2 * (x * z + y * w) * sz, 2 * (y * z - x * w) * sz, (1 - 2 * (x * x + y * y)) * sz, 0,
                   ...(spec.translation || [0, 0, 0]), 1,
-                ]);
+                ];
               }
               if (spec.mesh !== undefined) {
                 for (const primitive of description.meshes[spec.mesh].primitives) {
@@ -500,8 +505,7 @@ L.Layer3D = L.Layer.extend({
                     attributes.normal = { size: 3, data: normals };
                   }
                   const style = materials[primitive.material] || { color: [1, 1, 1], metallic: 1 };
-                  if ([style.baseTexture, style.metalTexture, style.emissiveTexture, style.occlusionTexture].some(Boolean) &&
-                    !attributes.uv) throw new Error('Textured model mesh requires UV coordinates');
+                  if ([style.baseTexture, style.metalTexture, style.emissiveTexture, style.occlusionTexture].some(Boolean) && !attributes.uv) throw new Error('Textured model mesh requires UV coordinates');
                   const program = this._createProgram(style);
                   resources.push(program);
                   const geometry = this._createGeometry(this.renderer.gl, attributes);
@@ -510,7 +514,7 @@ L.Layer3D = L.Layer.extend({
                     position:    [0, 0, 0],
                     rotation:    [0, 0, 0],
                     scale:       [1, 1, 1],
-                    worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+                    worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
                     children:    [],
                     visible:     true,
                     gl: this.renderer.gl,
@@ -534,8 +538,9 @@ L.Layer3D = L.Layer.extend({
             } catch (error) {
               // Parsing can fail after earlier primitives allocated buffers/programs.
               for (const resource of resources) {
-                if (resource.attributes) this._removeGeometry(resource);
-                else this._removeProgram(resource);
+                if (resource.attributes) {
+                  for (const attribute of Object.values(resource.attributes)) resource.gl.deleteBuffer(attribute.buffer);
+                } else this._removeProgram(resource);
               }
               throw error;
             }
@@ -544,17 +549,23 @@ L.Layer3D = L.Layer.extend({
             position:    [0, 0, 0],
             rotation:    [0, 0, 0],
             scale:       [1, 1, 1],
-            worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+            worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
             children:    [],
             visible:     true,
+            id:          url,
+            extras:      description.extras || {},
           };
-          model.id = url;
-          model.extras = description.extras || {};
           if (!nodes.length) throw new Error('Expected a glTF model with a non-empty scene');
           for (const node of nodes) this.setParent(node, model);
           this.model = model;
-          if (this.options.rotation) this._setVector(this.model.rotation, ...this.options.rotation);
-          if (this.options.scale) this._setVector(this.model.scale, ...this.options.scale);
+          if (this.options.rotation) {
+            const [x, y = x, z = x] = this.options.rotation;
+            this.model.rotation[0] = x; this.model.rotation[1] = y; this.model.rotation[2] = z;
+          }
+          if (this.options.scale) {
+            const [x, y = x, z = x] = this.options.scale;
+            this.model.scale[0] = x; this.model.scale[1] = y; this.model.scale[2] = z;
+          }
           this.setParent(this.model, this.root);
         }
         if (this._shared) this.update();
@@ -572,7 +583,7 @@ L.Layer3D = L.Layer.extend({
       const center = map.getCenter();
       this.location = new L.LatLng(center.lat, center.lng);
     }
-    if (this.options.source || this.options.tooltipContent || this.options.zoomOnClick) {
+    if (this.options.source || this.options.tooltipContent || this.options.model) {
       this.container = map.getContainer();
       if (this.options.tooltipContent) {
         this._featureTooltip = L.DomUtil.create('div', 'leaflet-3d-tooltip', this.container);
@@ -593,11 +604,12 @@ L.Layer3D = L.Layer.extend({
   /** Reconcile source coverage when the visible ground footprint changes. */
   getEvents() {
     return this.options.source ? {
-      moveend: this._updateArea,
-      zoomend: this._updateArea,
-      rotate: this._updateArea,
-      pitch: this._updateArea,
-      resize: this._updateArea,
+      moveend:       this._updateArea,
+      zoomend:       this._updateArea,
+      rotate:        this._updateArea,
+      pitch:         this._updateArea,
+      resize:        this._updateArea,
+      terrainchange: this._onTerrainChange,
     } : {};
   },
 
@@ -607,8 +619,8 @@ L.Layer3D = L.Layer.extend({
     if (this.container) {
       this._onPointerLeave();
       L.DomEvent.off(this.container, {
-        mousemove: this._onPointerMove,
-        click: this._onClick,
+        mousemove:  this._onPointerMove,
+        click:      this._onClick,
         mouseleave: this._onPointerLeave,
       }, this);
       this.container = null;
@@ -667,7 +679,6 @@ L.Layer3D = L.Layer.extend({
     if (!shared) {
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true });
-      if (!gl) throw new Error('Layer3D requires WebGL 2');
       shared = this;
       this._shared = this;
       this._layers = new Set();
@@ -676,7 +687,7 @@ L.Layer3D = L.Layer.extend({
         position:    [0, 0, 0],
         rotation:    [0, 0, 0],
         scale:       [1, 1, 1],
-        worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+        worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
         children:    [],
         visible:     true,
       };
@@ -685,13 +696,13 @@ L.Layer3D = L.Layer.extend({
         position:             [0, 0, 0],
         up:                   [0, 1, 0],
         target:               [0, 0, 0],
-        viewMatrix:           Array.from(new DOMMatrix().toFloat64Array()),
-        projectionMatrix:     Array.from(new DOMMatrix().toFloat64Array()),
-        projectionViewMatrix: Array.from(new DOMMatrix().toFloat64Array()),
-        fov: 45,
-        aspect: 1,
-        near: 0.1,
-        far: 10000,
+        viewMatrix:           [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        projectionMatrix:     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        projectionViewMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        fov:                  45,
+        aspect:               1,
+        near:                 0.1,
+        far:                  10000,
       };
       this.renderer = { gl, dpr: Math.min(window.devicePixelRatio, 2) };
       gl.clearColor(0, 0, 0, 0);
@@ -708,13 +719,16 @@ L.Layer3D = L.Layer.extend({
       shared._render();
       L.Layer3D._renderers.set(map, shared);
     }
-    const crs = map.options.crs;
-    const origin = crs.project(shared._sceneOrigin);
-    const point = crs.project(this.location);
+    const origin = map.options.crs.project(shared._sceneOrigin);
+    const point  = map.options.crs.project(this.location);
     const metres = Math.cos(shared._sceneOrigin.lat * Math.PI / 180);
-    this._setVector(this.root.position, (point.x - origin.x) * metres, 0, -(point.y - origin.y) * metres);
+    this._terrainBaseY ??= this.root.position[1];
+    this.root.position[0] = (point.x - origin.x) * metres;
+    this.root.position[1] = this._terrainBaseY;
+    this.root.position[2] = -(point.y - origin.y) * metres;
+    this._setTerrainHeight();
     // Each group's metres are measured at its own latitude, not the shared camera origin.
-    this._setVector(this.root.scale, metres / Math.cos(this.location.lat * Math.PI / 180));
+    this.root.scale.fill(metres / Math.cos(this.location.lat * Math.PI / 180));
     this._shared = shared;
     this.renderer = shared.renderer;
     this.scene = shared.scene;
@@ -734,10 +748,19 @@ L.Layer3D = L.Layer.extend({
           attributes[name] = { data: data.slice(0, count * size), size, normalized };
         }
         object.geometry = this._createGeometry(shared.renderer.gl, attributes);
-        this._removeGeometry(geometry);
+        for (const attribute of Object.values(geometry.attributes)) geometry.gl.deleteBuffer(attribute.buffer);
         this._removeProgram(object.program);
         object.program = this._createProgram(material);
         object.gl = shared.renderer.gl;
+      }
+      if (object.texture && object.texture.gl !== shared.renderer.gl) {
+        object.texture = {
+          ...object.texture,
+          gl: shared.renderer.gl,
+          texture: shared.renderer.gl.createTexture(),
+          uploaded: null,
+          needsUpdate: true,
+        };
       }
     });
     shared.update();
@@ -753,6 +776,12 @@ L.Layer3D = L.Layer.extend({
   add(object) {
     this.setParent(object, this.root);
     return this.update();
+  },
+
+  _setTerrainHeight() {
+    if (!this.root || !this.location) return;
+    this._terrainBaseY ??= this.root.position[1];
+    this.root.position[1] = this._terrainBaseY + (this._map?._terrain3D?._getElevation(this.location) ?? 0);
   },
 
   /**
@@ -779,8 +808,7 @@ L.Layer3D = L.Layer.extend({
    */
   _createProgram(material = {}) {
     for (const name of ['baseTexture', 'metalTexture', 'emissiveTexture', 'occlusionTexture']) {
-      const texture = material[name];
-      if (texture && texture.gl !== this.renderer.gl) {
+      if (material[name] && material[name].gl !== this.renderer.gl) {
         material[name] = {
           gl:             this.renderer.gl,
           texture:        this.renderer.gl.createTexture(),
@@ -789,13 +817,13 @@ L.Layer3D = L.Layer.extend({
           wrapT:          this.renderer.gl.CLAMP_TO_EDGE,
           minFilter:      this.renderer.gl.LINEAR_MIPMAP_LINEAR,
           magFilter:      this.renderer.gl.LINEAR,
-          image:          texture.image,
+          image:          material[name].image,
           flipY:          false,
-          wrapS:          texture.wrapS,
-          wrapT:          texture.wrapT,
-          minFilter:      texture.minFilter,
-          magFilter:      texture.magFilter,
-          internalFormat: texture.internalFormat,
+          wrapS:          material[name].wrapS,
+          wrapT:          material[name].wrapT,
+          minFilter:      material[name].minFilter,
+          magFilter:      material[name].magFilter,
+          internalFormat: material[name].internalFormat,
         };
       }
     }
@@ -846,6 +874,11 @@ L.Layer3D = L.Layer.extend({
         return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055, step(vec3(0.0031308), c));
       }
       void main() {
+        ${material.unlit ? `
+          vec4 rasterTexel = texture2D(baseTexture, vUv);
+          gl_FragColor = vec4(toSRGB(toLinear(rasterTexel.rgb)),
+            ${material.alphaMode === 'BLEND' ? 'opacity * rasterTexel.a' : '1.0'});
+          return;` : ''}
         vec3 normal = normalize(vNormal) * (gl_FrontFacing ? 1.0 : -1.0);
         vec4 texel = ${material.baseTexture ? 'texture2D(baseTexture, vUv)' : 'vec4(1.0)'};
         float alpha = opacity * texel.a;
@@ -888,9 +921,9 @@ L.Layer3D = L.Layer.extend({
     const gl = this.renderer.gl;
     const program = {
       gl,
-      cullFace: material.doubleSided ? null : this.renderer.gl.BACK,
+      cullFace:    material.doubleSided ? null : this.renderer.gl.BACK,
       transparent: material.alphaMode === 'BLEND',
-      depthWrite: material.alphaMode !== 'BLEND',
+      depthWrite:  material.alphaMode !== 'BLEND',
       uniforms: {
         baseColor:         { value: material.color || [1, 1, 1] },
         lightDirection:    { value: [0, 0, 0] }, skyDirection: { value: [0, 0, 0] },
@@ -1104,47 +1137,80 @@ L.Layer3D = L.Layer.extend({
     this._updateCamera(this.camera);
     // Unproject the mouse (-1..1) into a world-space ray from the camera.
     const ray = this.raycaster;
-    const inverseCamera = this._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), this.camera.projectionViewMatrix);
-    this._setVector(ray.origin, ...this.camera.position);
-    const end = this._transformPoint([
+    const inverseCamera = new DOMMatrix(this.camera.projectionViewMatrix).inverse();
+    const inverseCameraValues = inverseCamera.toFloat64Array();
+    if (![...inverseCameraValues].every(Number.isFinite)) throw new Error('Singular 3D transform');
+    ray.origin[0] = this.camera.position[0];
+    ray.origin[1] = this.camera.position[1];
+    ray.origin[2] = this.camera.position[2];
+    const unprojected = new DOMPoint(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1, 0,
-    ], inverseCamera);
-    this._normalizeVector(this._setVector(ray.direction, ...end.map((v, i) => v - ray.origin[i])));
+      -((event.clientY - rect.top) / rect.height) * 2 + 1, 0, 1
+    ).matrixTransform(inverseCamera);
+    const end = [unprojected.x / unprojected.w, unprojected.y / unprojected.w, unprojected.z / unprojected.w];
+    ray.direction[0] = end[0] - ray.origin[0];
+    ray.direction[1] = end[1] - ray.origin[1];
+    ray.direction[2] = end[2] - ray.origin[2];
+    const rayLength = Math.hypot(...ray.direction) || 1;
+    ray.direction[0] /= rayLength; ray.direction[1] /= rayLength; ray.direction[2] /= rayLength;
     const meshes = [];
     for (const object of objects) {
       if (recursive) this.traverse(object, mesh => { if (mesh.geometry && mesh.visible) meshes.push(mesh); });
       else if (object.geometry && object.visible) meshes.push(object);
     }
     const hits = [];
-    const a = [0, 0, 0], b = [0, 0, 0], c = [0, 0, 0];
-    const sub = (a, b) => a.map((v, i) => v - b[i]);
+    const a = [0, 0, 0],
+          b = [0, 0, 0],
+          c = [0, 0, 0];
+    const sub   = (a, b) => a.map((v, i) => v - b[i]);
     const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-    const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
+    const dot   = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
     for (const mesh of meshes) {
       // Test in mesh-local space; compare distances only after returning to shared world space.
-      const inverse = this._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), mesh.worldMatrix);
-      const origin = this._transformPoint([...this.raycaster.origin], inverse);
-      const direction = this._transformDirection([...this.raycaster.direction], inverse);
+      const inverse       = new DOMMatrix(mesh.worldMatrix).inverse();
+      const inverseValues = inverse.toFloat64Array();
+      if (![...inverseValues].every(Number.isFinite)) {
+        throw new Error('Singular 3D transform');
+      }
+      const localOrigin    = new DOMPoint(...this.raycaster.origin, 1).matrixTransform(inverse);
+      const origin         = [
+        localOrigin.x / localOrigin.w,
+        localOrigin.y / localOrigin.w,
+        localOrigin.z / localOrigin.w
+      ];
+      const localDirection  = new DOMPoint(...this.raycaster.direction, 0).matrixTransform(inverse);
+      const direction       = [
+        localDirection.x,
+        localDirection.y,
+        localDirection.z
+      ];
+      const directionLength = Math.hypot(...direction) || 1;
+      direction[0] /= directionLength; direction[1] /= directionLength; direction[2] /= directionLength;
       // AABB slab test reuses the same local ray as the triangle test.
-      if (!mesh.geometry.bounds) this._computeBounds(mesh.geometry);
-      const { min, max } = mesh.geometry.bounds;
+      if (!mesh.geometry.bounds) {
+        this._computeBounds(mesh.geometry);
+      }
       let near = 0, far = Infinity;
       for (let i = 0; i < 3; i++) {
         if (Math.abs(direction[i]) < 1e-12) {
-          if (origin[i] < min[i] || origin[i] > max[i]) { far = -Infinity; break; }
+          if (origin[i] < mesh.geometry.bounds.min[i] || origin[i] > mesh.geometry.bounds.max[i]) { far = -Infinity; break; }
         } else {
-          const a = (min[i] - origin[i]) / direction[i], b = (max[i] - origin[i]) / direction[i];
+          const a = (mesh.geometry.bounds.min[i] - origin[i]) / direction[i], b = (mesh.geometry.bounds.max[i] - origin[i]) / direction[i];
           near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
         }
       }
-      if (far < near) continue;
+      if (far < near) {
+        continue;
+      }
       const { position, index } = mesh.geometry.attributes;
       let closest = Infinity, faceIndex;
       for (let i = 0; i < (index?.count || position.count); i += 3) {
-        this._readVector(a, position.data, (index ? index.data[i] : i) * position.size);
-        this._readVector(b, position.data, (index ? index.data[i + 1] : i + 1) * position.size);
-        this._readVector(c, position.data, (index ? index.data[i + 2] : i + 2) * position.size);
+        const ai = (index ? index.data[i] : i) * position.size;
+        const bi = (index ? index.data[i + 1] : i + 1) * position.size;
+        const ci = (index ? index.data[i + 2] : i + 2) * position.size;
+        a[0] = position.data[ai]; a[1] = position.data[ai + 1]; a[2] = position.data[ai + 2];
+        b[0] = position.data[bi]; b[1] = position.data[bi + 1]; b[2] = position.data[bi + 2];
+        c[0] = position.data[ci]; c[1] = position.data[ci + 1]; c[2] = position.data[ci + 2];
         // Moller-Trumbore: barycentric triangle coordinates and local ray distance.
         const e = sub(b, a), f = sub(c, a), p = cross(direction, f), det = dot(e, p);
         if (mesh.program.cullFace !== null ? det < 1e-9 : Math.abs(det) < 1e-9) continue;
@@ -1156,10 +1222,30 @@ L.Layer3D = L.Layer.extend({
         if (distance > 0 && distance < closest) { closest = distance; faceIndex = i / 3; }
       }
       if (faceIndex === undefined) continue;
-      const point = this._transformPoint(direction.map((v, i) => v * closest + origin[i]), mesh.worldMatrix);
-      hits.push({ object: mesh, point, faceIndex, distance: this._vectorDistance(point, this.raycaster.origin) });
+      const point = new DOMPoint(
+        direction[0] * closest + origin[0], direction[1] * closest + origin[1],
+        direction[2] * closest + origin[2], 1
+      ).matrixTransform(new DOMMatrix(mesh.worldMatrix));
+      const worldPoint = [point.x / point.w, point.y / point.w, point.z / point.w];
+      hits.push({
+        object: mesh,
+        point: worldPoint,
+        faceIndex,
+        distance: Math.hypot(
+          worldPoint[0] - this.raycaster.origin[0],
+          worldPoint[1] - this.raycaster.origin[1],
+          worldPoint[2] - this.raycaster.origin[2]
+        )
+      });
     }
     return hits.sort((a, b) => a.distance - b.distance);
+  },
+
+  _onTerrainChange() {
+    if (!this._map) return;
+    for (const area of this._areas.values()) this._releaseArea(area);
+    this._areas.clear();
+    this._updateArea();
   },
 
   /** Cover the visible ground bounds and one bordering block, clipped to the archive. */
@@ -1217,6 +1303,7 @@ L.Layer3D = L.Layer.extend({
           const crs = map.options.crs;
           const origin = crs.project(this.location);
           const metres = Math.cos(this.location.lat * Math.PI / 180);
+          const groundOffset = point => point.ground || 0;
           const addTriangle = (a, ah, b, bh, c, ch, nx, ny, nz, color) => {
             const ux = b.x - a.x, uy = bh - ah, uz = a.y - b.y;
             const vx = c.x - a.x, vy = ch - ah, vz = a.y - c.y;
@@ -1225,7 +1312,9 @@ L.Layer3D = L.Layer.extend({
               const point = b, height = bh;
               b = c; bh = ch; c = point; ch = height;
             }
-            positions.push(a.x, ah, -a.y, b.x, bh, -b.y, c.x, ch, -c.y);
+            positions.push(a.x, ah + groundOffset(a), -a.y,
+              b.x, bh + groundOffset(b), -b.y,
+              c.x, ch + groundOffset(c), -c.y);
             normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
             colors.push(color.r, color.g, color.b, color.r, color.g, color.b, color.r, color.g, color.b);
           };
@@ -1265,7 +1354,13 @@ L.Layer3D = L.Layer.extend({
                 return ring.slice(0, -1).map(([lng, lat]) => {
                   if (!Number.isFinite(lng) || !Number.isFinite(lat)) throw new Error('Invalid GeoJSON coordinates');
                   const point = crs.project(new L.LatLng(lat, lng));
-                  return { x: (point.x - origin.x) * metres, y: (point.y - origin.y) * metres };
+                  const elevation = this._map._terrain3D?._getElevation([lat, lng]);
+                  return {
+                    x: (point.x - origin.x) * metres,
+                    y: (point.y - origin.y) * metres,
+                    ground: Number.isFinite(elevation) && Number.isFinite(this.root.position[1])
+                      ? elevation - this.root.position[1] : 0,
+                  };
                 });
               });
               const points = paths.flat();
@@ -1302,7 +1397,7 @@ L.Layer3D = L.Layer.extend({
               position:    [0, 0, 0],
               rotation:    [0, 0, 0],
               scale:       [1, 1, 1],
-              worldMatrix: Array.from(new DOMMatrix().toFloat64Array()),
+              worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
               children:    [],
               visible:     true,
               gl:          this.renderer.gl,
@@ -1347,7 +1442,8 @@ L.Layer3D = L.Layer.extend({
         this._showFeature(null);
       }
       this.remove(area.mesh);
-      this._removeGeometry(area.mesh.geometry);
+      const geometry = area.mesh.geometry;
+      for (const attribute of Object.values(geometry.attributes)) geometry.gl.deleteBuffer(attribute.buffer);
       this._removeProgram(area.mesh.program);
     }
   },
@@ -1447,42 +1543,12 @@ L.Layer3D = L.Layer.extend({
     this.fire('featurehover', { feature: this.hoveredFeature, originalEvent: event });
   },
 
-  /** Emit click without pinning; optional centering is owned by the nearest shared-scene surface. */
+  /** Emit click without moving the map or pinning the tooltip. */
   _onClick(event) {
     const feature = this._findFeature(event);
     this.hoveredFeature = feature;
     this._setHighlight(feature);
     this._showFeature(feature, event);
-    if (this.options.zoomOnClick && feature &&
-      this.raycast(event, this.scene.children, true)[0]?.object === feature.mesh) {
-      const map = this._map;
-      const crs = map.options.crs;
-      const origin = crs.project(this._shared._sceneOrigin);
-      const metres = Math.cos(this._shared._sceneOrigin.lat * Math.PI / 180);
-      const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-      this._updateWorldMatrix(this.scene);
-      this.traverse(feature.model || feature.mesh, mesh => {
-        if (!mesh.visible) return true;
-        if (!mesh.geometry) return;
-        const attribute = mesh.geometry.attributes.position;
-        const point = [0, 0, 0];
-        for (let i = feature.model ? 0 : feature.vertexStart;
-          i < (feature.model ? attribute.count : feature.vertexEnd); i++) {
-          this._transformPoint(this._readVector(point, attribute.data, i * attribute.size), mesh.worldMatrix);
-          for (let axis = 0; axis < 3; axis++) {
-            min[axis] = Math.min(min[axis], point[axis]);
-            max[axis] = Math.max(max[axis], point[axis]);
-          }
-        }
-      });
-      if (!min.every(Number.isFinite) || !max.every(Number.isFinite)) {
-        this.fire('error', { error: new Error('Cannot frame a 3D object without finite geometry') });
-        return;
-      }
-      const x = (min[0] + max[0]) / 2, z = (min[2] + max[2]) / 2;
-      const center = crs.unproject(new L.Point(origin.x + x / metres, origin.y - z / metres));
-      map.panTo(center);
-    }
     this.fire('featureclick', { feature, originalEvent: event });
   },
 
@@ -1567,7 +1633,10 @@ L.Layer3D = L.Layer.extend({
       for (const animation of map.getContainer().getAnimations({ subtree: true })) {
         if (!(animation instanceof CSSTransition) || animation.transitionProperty !== 'transform' ||
           !animation.effect.target.classList.contains('leaflet-zoom-animated') ||
-          this._zoomTransitions.has(animation)) continue;
+          this._zoomTransitions.has(animation)
+        ) {
+            continue;
+        }
         const time = animation.currentTime || 0;
         animation.pause();
         this._zoomTransitions.set(animation, { start: now, time });
@@ -1578,11 +1647,13 @@ L.Layer3D = L.Layer.extend({
       }
     }
     if (!this._size || !this._size.equals(size)) {
-      const { gl, dpr } = this.renderer;
-      this.renderer.width = size.x; this.renderer.height = size.y;
-      gl.canvas.width = Math.round(size.x * dpr); gl.canvas.height = Math.round(size.y * dpr);
-      gl.canvas.style.width = `${size.x}px`; gl.canvas.style.height = `${size.y}px`;
-      this._size = size;
+      this.renderer.width                  = size.x;
+      this.renderer.height                 = size.y;
+      this.renderer.gl.canvas.width        = Math.round(size.x * this.renderer.dpr);
+      this.renderer.gl.canvas.height       = Math.round(size.y * this.renderer.dpr);
+      this.renderer.gl.canvas.style.width  = `${size.x}px`;
+      this.renderer.gl.canvas.style.height = `${size.y}px`;
+      this._size                           = size;
     }
 
     // Match the map's CSS camera: a perspective distance of 1.5 viewport heights.
@@ -1601,8 +1672,12 @@ L.Layer3D = L.Layer.extend({
       pixelsPerMeter *= map.getZoomScale(level.zoom, map.getZoom()) * transform.a;
     }
     const distance = size.y * 1.5 / pixelsPerMeter;
-    const center = map.containerPointToLayerPoint(size.divideBy(2));
-    const target = [(center.x - origin.x) / pixelsPerMeter, 0, (center.y - origin.y) / pixelsPerMeter];
+    const center   = map.containerPointToLayerPoint(size.divideBy(2));
+    const target   = [
+      (center.x - origin.x) / pixelsPerMeter,
+      map._terrain3D?._getElevation(map.getCenter()) ?? 0,
+      (center.y - origin.y) / pixelsPerMeter
+    ];
     const pitch = map.getPitch() * Math.PI / 180;
     const bearing = map.getBearing() * Math.PI / 180;
     const camera = this.camera;
@@ -1610,23 +1685,36 @@ L.Layer3D = L.Layer.extend({
     camera.aspect = size.x / size.y;
     camera.near = Math.max(0.1, distance / 10000);
     camera.far = Math.max(10000, distance * 10);
-    this._setVector(camera.position, target[0] + Math.sin(bearing) * Math.sin(pitch) * distance, Math.cos(pitch) * distance, target[2] + Math.cos(bearing) * Math.sin(pitch) * distance);
-    this._setVector(camera.up, -Math.sin(bearing) * Math.cos(pitch), Math.sin(pitch), -Math.cos(bearing) * Math.cos(pitch));
-    this._setVector(camera.target, ...target);
+    camera.position[0] = target[0] + Math.sin(bearing) * Math.sin(pitch) * distance;
+    camera.position[1] = target[1] + Math.cos(pitch) * distance;
+    camera.position[2] = target[2] + Math.cos(bearing) * Math.sin(pitch) * distance;
+    camera.up[0] = -Math.sin(bearing) * Math.cos(pitch);
+    camera.up[1] = Math.sin(pitch);
+    camera.up[2] = -Math.cos(bearing) * Math.cos(pitch);
+    camera.target[0] = target[0]; camera.target[1] = target[1]; camera.target[2] = target[2];
     // Refresh the camera view, projection and combined projection-view matrices.
     this._updateCamera(camera);
-    const light = this._transformDirection(this._normalizeVector([-300, 500, 300]), camera.viewMatrix);
-    const sky = this._transformDirection([0, 1, 0], camera.viewMatrix);
+    const lightPoint = new DOMPoint(-300, 500, 300, 0).matrixTransform(new DOMMatrix(camera.viewMatrix));
+    const lightLength = Math.hypot(lightPoint.x, lightPoint.y, lightPoint.z) || 1;
+    const light = [lightPoint.x / lightLength, lightPoint.y / lightLength, lightPoint.z / lightLength];
+    const skyPoint = new DOMPoint(0, 1, 0, 0).matrixTransform(new DOMMatrix(camera.viewMatrix));
+    const skyLength = Math.hypot(skyPoint.x, skyPoint.y, skyPoint.z) || 1;
+    const sky = [skyPoint.x / skyLength, skyPoint.y / skyLength, skyPoint.z / skyLength];
     this._updateWorldMatrix(this.scene);
-    const position = [0, 0, 0];
     this.traverse(this.scene, mesh => {
-      if (mesh.program?.uniforms.lightDirection) this._setVector(mesh.program.uniforms.lightDirection.value, ...light);
-      if (mesh.program?.uniforms.skyDirection) this._setVector(mesh.program.uniforms.skyDirection.value, ...sky);
+      if (mesh.program?.uniforms.lightDirection) {
+        const value = mesh.program.uniforms.lightDirection.value;
+        value[0] = light[0]; value[1] = light[1]; value[2] = light[2];
+      }
+      if (mesh.program?.uniforms.skyDirection) {
+        const value = mesh.program.uniforms.skyDirection.value;
+        value[0] = sky[0]; value[1] = sky[1]; value[2] = sky[2];
+      }
       if (mesh.program?.transparent) {
         if (!mesh.geometry.bounds) this._computeBounds(mesh.geometry);
-        this._transformPoint(this._setVector(position, ...mesh.geometry.bounds.center), mesh.worldMatrix);
-        this._transformPoint(position, camera.projectionViewMatrix);
-        mesh._sortDepth = position[2];
+        const worldPosition = new DOMPoint(...mesh.geometry.bounds.center, 1).matrixTransform(new DOMMatrix(mesh.worldMatrix));
+        const screenPosition = worldPosition.matrixTransform(new DOMMatrix(camera.projectionViewMatrix));
+        mesh._sortDepth = screenPosition.z / screenPosition.w;
       }
     });
     const renderer = this.renderer;
@@ -1642,9 +1730,14 @@ L.Layer3D = L.Layer.extend({
     renderer.gl.viewport(0, 0, renderer.gl.canvas.width, renderer.gl.canvas.height);
     renderer.gl.depthMask(true); renderer.gl.clear(renderer.gl.COLOR_BUFFER_BIT | renderer.gl.DEPTH_BUFFER_BIT);
     for (const mesh of meshes) {
-      const modelView = this._multiplyMatrix(Array.from(new DOMMatrix().toFloat64Array()), camera.viewMatrix, mesh.worldMatrix);
+      const modelView = Array.from(new DOMMatrix(camera.viewMatrix).multiply(new DOMMatrix(mesh.worldMatrix)).toFloat64Array());
+      if (mesh.texture) {
+        mesh.program.uniforms.baseTexture.value = mesh.texture;
+        mesh.program.uniforms.opacity.value = mesh.opacity;
+      }
       // The inverse-transpose upper 3x3 preserves normals under nonuniform scaling.
-      const inverse = this._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), modelView);
+      const inverse = Array.from(new DOMMatrix(modelView).inverse().toFloat64Array());
+      if (![...inverse].every(Number.isFinite)) throw new Error('Singular 3D transform');
       Object.assign(mesh.program.uniforms, {
         modelViewMatrix: { value: modelView }, projectionMatrix: { value: camera.projectionMatrix },
         normalMatrix: { value: [inverse[0], inverse[4], inverse[8], inverse[1], inverse[5], inverse[9], inverse[2], inverse[6], inverse[10]] },
@@ -1669,46 +1762,6 @@ L.Layer3D = L.Layer.extend({
     if (map._animatingZoom) {
       this._frame = requestAnimationFrame(() => this._render());
     }
-  },
-
-  /** Mutate a plain [x,y,z] array; one scalar sets all components. */
-  _setVector(vector, x, y = x, z = x) { vector[0] = x; vector[1] = y; vector[2] = z; return vector; },
-
-  _readVector(vector, v, offset = 0) { return this._setVector(vector, v[offset], v[offset + 1], v[offset + 2]); },
-
-  _normalizeVector(vector) {
-    const length = Math.hypot(...vector) || 1;
-    return this._setVector(vector, vector[0] / length, vector[1] / length, vector[2] / length);
-  },
-
-  _vectorDistance(vector, v) { return Math.hypot(vector[0] - v[0], vector[1] - v[1], vector[2] - v[2]); },
-
-  /** Transform a point (w=1), including perspective division, in place. */
-  _transformPoint(point, m) {
-    const [x, y, z] = point;
-    const w = m[3] * x + m[7] * y + m[11] * z + m[15];
-    return this._setVector(point,
-      (m[0] * x + m[4] * y + m[8] * z + m[12]) / w,
-      (m[1] * x + m[5] * y + m[9] * z + m[13]) / w,
-      (m[2] * x + m[6] * y + m[10] * z + m[14]) / w);
-  },
-
-  /** Transform a direction (w=0), ignoring translation, and normalize it in place. */
-  _transformDirection(direction, m) {
-    const [x, y, z] = direction;
-    return this._normalizeVector(this._setVector(direction, m[0] * x + m[4] * y + m[8] * z, m[1] * x + m[5] * y + m[9] * z, m[2] * x + m[6] * y + m[10] * z));
-  },
-
-  _copyMatrix(matrix, v) { for (let i = 0; i < 16; i++) matrix[i] = v[i]; return matrix; },
-
-  _multiplyMatrix(matrix, a, b) {
-    return this._copyMatrix(matrix, new DOMMatrix(a).multiply(new DOMMatrix(b)).toFloat64Array());
-  },
-
-  _invertMatrix(matrix, m = matrix) {
-    const inverse = new DOMMatrix(m).inverse().toFloat64Array();
-    if (![...inverse].every(Number.isFinite)) throw new Error('Singular 3D transform');
-    return this._copyMatrix(matrix, inverse);
   },
 
   /** Reparent/detach scene data without drawing or disposing GPU resources. */
@@ -1737,22 +1790,32 @@ L.Layer3D = L.Layer.extend({
       matrix.rotateAxisAngleSelf(0, 0, 1, node.rotation[2] * degrees);
       local = matrix.scale(...node.scale).toFloat64Array();
     }
-    if (node.parent) this._multiplyMatrix(node.worldMatrix, node.parent.worldMatrix, local);
-    else this._copyMatrix(node.worldMatrix, local);
+    const world = node.parent
+      ? new DOMMatrix(node.parent.worldMatrix).multiply(new DOMMatrix(local)).toFloat64Array()
+      : local;
+    for (let i = 0; i < 16; i++) node.worldMatrix[i] = world[i];
     for (const child of node.children) this._updateWorldMatrix(child);
   },
 
   /** Orthonormal view basis plus perspective matrices, refreshed before projecting/drawing. */
   _updateCamera(camera) {
-    const z = this._normalizeVector(camera.position.map((v, i) => v - camera.target[i]));
+    const z       = camera.position.map((v, i) => v - camera.target[i]);
+    const zLength = Math.hypot(...z) || 1;
+    for (let i = 0; i < 3; i++) z[i] /= zLength;
     const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-    const x = this._normalizeVector(cross(camera.up, z)), y = cross(z, x);
-    this._invertMatrix(camera.viewMatrix, [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0,
-    z[0], z[1], z[2], 0, ...camera.position, 1]);
+    const x = cross(camera.up, z), xLength = Math.hypot(...x) || 1;
+    for (let i = 0; i < 3; i++) x[i] /= xLength;
+    const y = cross(z, x);
+    const view = new DOMMatrix([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0,
+      z[0], z[1], z[2], 0, ...camera.position, 1]).inverse().toFloat64Array();
+    if (![...view].every(Number.isFinite)) throw new Error('Singular 3D transform');
+    for (let i = 0; i < 16; i++) camera.viewMatrix[i] = view[i];
     const f = 1 / Math.tan(camera.fov * Math.PI / 360);
     const n = camera.near, r = camera.far;
-    this._copyMatrix(camera.projectionMatrix, [f / camera.aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (r + n) / (n - r), -1, 0, 0, 2 * r * n / (n - r), 0]);
-    this._multiplyMatrix(camera.projectionViewMatrix, camera.projectionMatrix, camera.viewMatrix);
+    const projection = [f / camera.aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (r + n) / (n - r), -1, 0, 0, 2 * r * n / (n - r), 0];
+    for (let i = 0; i < 16; i++) camera.projectionMatrix[i] = projection[i];
+    const projectionView = new DOMMatrix(camera.projectionMatrix).multiply(new DOMMatrix(camera.viewMatrix)).toFloat64Array();
+    for (let i = 0; i < 16; i++) camera.projectionViewMatrix[i] = projectionView[i];
   },
 
   /** Apply depth/culling/blend state and upload uniforms retained by the shader linker. */
@@ -1833,7 +1896,9 @@ L.Layer3D = L.Layer.extend({
 
   /** Cache local AABB and center for ray picking and transparent mesh sorting. */
   _computeBounds(geometry) {
-    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity], data = geometry.attributes.position.data;
+    const min = [Infinity, Infinity, Infinity],
+          max = [-Infinity, -Infinity, -Infinity],
+          data = geometry.attributes.position.data;
     for (let i = 0; i < data.length; i++) {
       min[i % 3] = Math.min(min[i % 3], data[i]);
       max[i % 3] = Math.max(max[i % 3], data[i]);
@@ -1863,8 +1928,188 @@ L.Layer3D = L.Layer.extend({
     for (const location of used) gl.disableVertexAttribArray(location);
   },
 
-  _removeGeometry(geometry) { for (const attribute of Object.values(geometry.attributes)) geometry.gl.deleteBuffer(attribute.buffer); },
-
 });
 
 L.Layer3D._nextId = 0;
+
+/** Renders IGN Float32 DEM tiles and PMTiles raster basemaps in the shared WebGL scene. */
+L.TerrainLayer = L.Layer3D.extend({
+  initialize(options = {}) {
+    const terrainSource = options.source;
+    const layerOptions = { ...options };
+    delete layerOptions.source;
+    L.Layer3D.prototype.initialize.call(this, layerOptions);
+    this.terrainSource = terrainSource;
+    this._terrainTiles = new Map();
+    this._rasterTiles = new Map();
+  },
+
+  onAdd(map) {
+    if (map._terrain3D && map._terrain3D !== this) throw new Error('Only one TerrainLayer can be active per map');
+    map._terrain3D = this;
+    L.Layer3D.prototype.onAdd.call(this, map);
+    this._terrainPromise = this.root
+      ? this._loadTerrain()
+      : new Promise(resolve => this.once('ready', () => this._loadTerrain().then(resolve), this));
+    map.eachLayer(layer => layer._setTerrain3D?.(this));
+    map.fire('terrainchange');
+  },
+
+  onRemove(map) {
+    this._terrainController?.abort();
+    this._terrainLoading = false;
+    map.eachLayer(layer => layer._setTerrain3D?.(null));
+    for (const tile of this._rasterTiles.keys()) this.removeRasterTile(tile);
+    if (map._terrain3D === this) delete map._terrain3D;
+    for (const layer of Object.values(map._layers)) layer._setTerrainHeight?.();
+    map.fire('terrainchange');
+    this._terrainTiles.clear();
+    this._terrainOriginElevation = 0;
+    this._terrainPromise = null;
+    if (this._rasterProgram) this._removeProgram(this._rasterProgram);
+    this._rasterProgram = null;
+    L.Layer3D.prototype.onRemove.call(this, map);
+  },
+
+  async _loadTerrain() {
+    if (this._terrainLoading || !this._map) return;
+    this._terrainLoading = true;
+    const controller = this._terrainController = new AbortController();
+    try {
+      if (!this.terrainSource || !L.PMTilesLayer) throw new Error('TerrainLayer requires a PMTiles elevation archive');
+      const archive = this._terrainArchive = new L.PMTilesLayer(this.terrainSource);
+      await archive.ready;
+      const header = archive.header;
+      if (header.tileType !== 0 || header.minZoom !== header.maxZoom) {
+        throw new Error('Expected a single-zoom Float32 PMTiles terrain archive');
+      }
+      this._terrainZoom = header.maxZoom;
+      const map = this._map;
+      const northwest = map.project([header.maxLat, header.minLon], this._terrainZoom).divideBy(256).floor();
+      const southeast = map.project([header.minLat, header.maxLon], this._terrainZoom).divideBy(256).floor();
+      const tiles = [];
+      for (let x = northwest.x; x <= southeast.x; x++) {
+        for (let y = northwest.y; y <= southeast.y; y++) tiles.push({ z: this._terrainZoom, x, y });
+      }
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(4, tiles.length) }, async () => {
+        while (next < tiles.length) {
+          controller.signal.throwIfAborted();
+          const coords = tiles[next++];
+          const result = await archive.getZxy(coords.z, coords.x, coords.y, controller.signal);
+          if (!result || result.data.byteLength !== 256 * 256 * 4) {
+            throw new Error(`Missing or invalid Float32 terrain tile ${coords.z}/${coords.x}/${coords.y}`);
+          }
+          this._terrainTiles.set(`${coords.x}/${coords.y}`, new Float32Array(result.data));
+        }
+      }));
+      if (controller.signal.aborted || this._map !== map) return;
+      this._terrainOriginElevation = this._getElevation(this.location) ?? 0;
+      for (const layer of Object.values(map._layers)) layer._setTerrainHeight?.();
+      map.fire('terrainchange');
+      this.update();
+      this.fire('terrainready');
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) this.fire('error', { error });
+      return false;
+    } finally {
+      this._terrainLoading = false;
+    }
+  },
+
+  _getElevation(location) {
+    if (!this._map || !this._terrainTiles.size) return null;
+    const point = this._map.project(location, this._terrainZoom);
+    const x = point.x - 0.5, y = point.y - 0.5;
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const fx = x - x0, fy = y - y0;
+    const sample = (px, py) => {
+      const tileX = Math.floor(px / 256), tileY = Math.floor(py / 256);
+      const tile = this._terrainTiles.get(`${tileX}/${tileY}`);
+      if (!tile) return null;
+      const elevation = tile[(py - tileY * 256) * 256 + px - tileX * 256];
+      return Number.isFinite(elevation) && elevation > -1000 ? elevation : null;
+    };
+    const values = [sample(x0, y0), sample(x0 + 1, y0), sample(x0, y0 + 1), sample(x0 + 1, y0 + 1)];
+    const valid = values.map((value, i) => Number.isFinite(value) ? i : -1).filter(i => i >= 0);
+    if (!valid.length) return null;
+    if (valid.length < 4) return values[valid[0]];
+    return (values[0] * (1 - fx) + values[1] * fx) * (1 - fy) +
+      (values[2] * (1 - fx) + values[3] * fx) * fy;
+  },
+
+  async addRasterTile(layer, coords, tile) {
+    const ready = await this._terrainPromise;
+    if (!ready || !this._map || this._map._terrain3D !== this || layer._terrain3D !== this ||
+      tile.request.signal.aborted || !tile.isConnected || this._rasterTiles.has(tile)) return;
+    const divisions = 64, positions = [], normals = [], uvs = [], indices = [];
+    const map = this._map, crs = map.options.crs;
+    const origin = crs.project(this.location), metres = Math.cos(this.location.lat * Math.PI / 180);
+    for (let row = 0; row <= divisions; row++) {
+      for (let column = 0; column <= divisions; column++) {
+        const latlng = map.unproject(new L.Point(
+          (coords.x + column / divisions) * 256,
+          (coords.y + row / divisions) * 256), coords.z);
+        const point = crs.project(latlng);
+        positions.push((point.x - origin.x) * metres,
+          (this._getElevation(latlng) ?? this._terrainOriginElevation) - this._terrainOriginElevation,
+          -(point.y - origin.y) * metres);
+        normals.push(0, 1, 0);
+        uvs.push(column / divisions, row / divisions);
+        if (row < divisions && column < divisions) {
+          const a = row * (divisions + 1) + column;
+          const b = a + 1, c = a + divisions + 1, d = c + 1;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+    }
+    const gl = this.renderer.gl;
+    const texture = {
+      gl, texture: gl.createTexture(), image: tile, internalFormat: gl.RGBA,
+      wrapS: gl.CLAMP_TO_EDGE, wrapT: gl.CLAMP_TO_EDGE,
+      minFilter: gl.LINEAR, magFilter: gl.LINEAR, flipY: false, needsUpdate: true,
+    };
+    if (!this._rasterProgram || this._rasterProgram.gl !== gl) {
+      this._rasterProgram = this._createProgram({
+        baseTexture: texture, unlit: true, alphaMode: 'BLEND',
+      });
+    }
+    const mesh = {
+      position:    [0, 0, 0],
+      rotation:    [0, 0, 0],
+      scale:       [1, 1, 1],
+      worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      children:    [],
+      visible:     true,
+      gl,
+      geometry: this._createGeometry(gl, {
+        position: { size: 3, data: new Float32Array(positions) },
+        normal:   { size: 3, data: new Float32Array(normals) },
+        uv:       { size: 2, data: new Float32Array(uvs) },
+        index:    { data: new Uint16Array(indices) },
+      }),
+      program:      this._rasterProgram,
+      texture,
+      opacity:      layer.options.opacity ?? 1,
+      id:           L.Layer3D._nextId++,
+      renderOrder: -1,
+    };
+    this.add(mesh);
+    this._rasterTiles.set(tile, mesh);
+    tile._terrainVisibility = tile.style.visibility;
+    tile.style.visibility = 'hidden';
+  },
+
+  removeRasterTile(tile) {
+    tile._terrainRequest?.abort();
+    const mesh = this._rasterTiles.get(tile);
+    if (!mesh) return;
+    this.remove(mesh);
+    for (const attribute of Object.values(mesh.geometry.attributes)) mesh.geometry.gl.deleteBuffer(attribute.buffer);
+    mesh.gl.deleteTexture(mesh.texture.texture);
+    this._rasterTiles.delete(tile);
+    tile.style.visibility = tile._terrainVisibility;
+    delete tile._terrainVisibility;
+  },
+});

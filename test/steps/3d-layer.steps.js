@@ -4,6 +4,182 @@ import { After, AfterAll, Before, Given, Then, When } from '@cucumber/cucumber';
 
 const coveredFunctions = new Map();
 
+Then('terrain enabled {string} raster loading preserves imagery, elevations and removal', { timeout: 30000 }, async function (order) {
+  const result = await this.page.evaluate(async order => {
+    const map = test3d.map;
+    const zoom = 14, center = map.project(map.getCenter(), zoom);
+    const coords = center.divideBy(256).floor();
+    const nw = map.unproject(coords.subtract([1, 1]).multiplyBy(256), zoom);
+    const se = map.unproject(coords.add([2, 2]).multiplyBy(256), zoom);
+    const header = {
+      minZoom: zoom, maxZoom: zoom, tileType: 0,
+      minLon: nw.lng, maxLat: nw.lat, maxLon: se.lng - 1e-7, minLat: se.lat + 1e-7,
+    };
+    const height = point => 40 + (point.x - center.x) * 0.04 + (point.y - center.y) * 0.02;
+    const corners = [[-10, -10], [10, -10], [10, 10], [-10, 10], [-10, -10]]
+      .map(offset => map.unproject(center.add(offset), zoom)).map(p => [p.lng, p.lat]);
+    const feature = { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [corners] } };
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 128, 256, 128);
+    const image = await (await fetch(canvas.toDataURL())).arrayBuffer();
+    const getHeader = L.PMTilesLayer.prototype.getHeader;
+    const getZxy = L.PMTilesLayer.prototype.getZxy;
+    const buildingHeader = L.Layer3D.prototype.getHeader;
+    const buildingTile = L.Layer3D.prototype.getZxy;
+    let release;
+    let pending = new Promise(resolve => { release = resolve; });
+    L.PMTilesLayer.prototype.getHeader = function () {
+      return this.url.endsWith('/fixture-terrain.pmtiles') ? Promise.resolve(header) : getHeader.call(this);
+    };
+    L.PMTilesLayer.prototype.getZxy = async function (z, x, y, signal) {
+      if (!this.url.endsWith('/fixture-terrain.pmtiles')) return getZxy.call(this, z, x, y, signal);
+      await pending;
+      signal.throwIfAborted();
+      const values = new Float32Array(256 * 256);
+      for (let row = 0; row < 256; row++) {
+        for (let column = 0; column < 256; column++) {
+          values[row * 256 + column] = height(new L.Point(x * 256 + column + 0.5, y * 256 + row + 0.5));
+        }
+      }
+      return { data: values.buffer };
+    };
+    L.Layer3D.prototype.getHeader = async () => header;
+    L.Layer3D.prototype.getZxy = async () => ({
+      data: new TextEncoder().encode(JSON.stringify({ type: 'FeatureCollection', features: [feature] })),
+    });
+    const wait = async condition => {
+      const deadline = performance.now() + 6000;
+      while (!condition()) {
+        if (performance.now() > deadline) throw new Error('Terrain fixture did not settle');
+        await new Promise(requestAnimationFrame);
+      }
+    };
+    const terrain = new L.TerrainLayer({ source: 'fixture-terrain.pmtiles' });
+    const raster = new L.PMTilesLayer('fixture-raster.pmtiles', {
+      archive: { getHeader: async () => ({ ...header, tileType: 2 }), getZxy: async () => ({ data: image }) },
+    });
+    const buildings = new L.Layer3D({ source: 'fixture-buildings.pmtiles', featureStyle: () => ({ top: 15 }) }).addTo(map);
+    const modelLocation = map.unproject(center.add([20, 20]), zoom);
+    const model = new L.Layer3D({ center: [modelLocation.lat, modelLocation.lng] }).addTo(map);
+    const errors = [];
+    terrain.on('error', ({ error }) => errors.push(error.message));
+    raster.on('tileerror', ({ error }) => errors.push(error.message));
+    buildings.on('error', ({ error }) => errors.push(error.message));
+    try {
+      await Promise.all([nativeChecks.ready(buildings), nativeChecks.ready(model)]);
+      if (order === 'before') terrain.addTo(map);
+      raster.addTo(map);
+      await raster.ready;
+      await wait(() => Object.values(raster._tiles).length > 0 && Object.values(raster._tiles).every(t => t.el.done));
+      if (order === 'after') terrain.addTo(map);
+      const initiallyFlat = Object.values(raster._tiles).every(t => t.el.style.visibility !== 'hidden');
+      release();
+      await terrain._terrainPromise;
+      const settled = () => terrain._rasterTiles.size === Object.values(raster._tiles).length &&
+        buildings._inflight === 0 && [...buildings._areas.values()].every(area => area.done);
+      await wait(settled);
+      let elevationError = 0, deformation = 0, buildingError = 0, uvError = 0;
+      for (const [tile, mesh] of terrain._rasterTiles) {
+        const tileCoords = Object.values(raster._tiles).find(t => t.el === tile).coords;
+        const positions = mesh.geometry.attributes.position.data;
+        const uv = mesh.geometry.attributes.uv.data;
+        for (let row = 0; row <= 64; row++) {
+          for (let column = 0; column <= 64; column++) {
+            const i = row * 65 + column;
+            const expected = height(new L.Point((tileCoords.x + column / 64) * 256, (tileCoords.y + row / 64) * 256));
+            elevationError = Math.max(elevationError, Math.abs(positions[i * 3 + 1] + terrain.root.position[1] - expected));
+            uvError = Math.max(uvError, Math.abs(uv[i * 2 + 1] - row / 64));
+          }
+        }
+        deformation = Math.max(deformation, Math.abs(positions[1] - positions[positions.length - 2]));
+      }
+      for (const area of buildings._areas.values()) {
+        if (!area.mesh) continue;
+        const positions = area.mesh.geometry.attributes.position.data;
+        const crsOrigin = map.options.crs.project(buildings.location);
+        const metres = Math.cos(buildings.location.lat * Math.PI / 180);
+        for (let i = 0; i < positions.length; i += 3) {
+          const latlng = map.options.crs.unproject(new L.Point(
+            crsOrigin.x + positions[i] / metres, crsOrigin.y - positions[i + 2] / metres));
+          const ground = height(map.project(latlng, zoom));
+          const aboveGround = positions[i + 1] + buildings.root.position[1] - ground;
+          buildingError = Math.max(buildingError, Math.min(Math.abs(aboveGround), Math.abs(aboveGround - 15)));
+        }
+      }
+      const modelError = Math.abs(model.root.position[1] - height(map.project(model.location, zoom)));
+      map.setView(map.unproject(coords.add([0.5, 0.5]).multiplyBy(256), zoom), zoom, { animate: false });
+      map.setPitch(0); map.setBearing(0);
+      await wait(settled);
+      buildings._shared._render();
+      const tile = Object.values(raster._tiles).find(t => t.coords.x === coords.x && t.coords.y === coords.y);
+      const mesh = terrain._rasterTiles.get(tile.el);
+      const pixels = [16, 48].map(row => {
+        const i = (row * 65 + 32) * 3;
+        const position = mesh.geometry.attributes.position.data;
+        const projected = new DOMPoint(position[i], position[i + 1], position[i + 2], 1)
+          .matrixTransform(new DOMMatrix(mesh.worldMatrix))
+          .matrixTransform(new DOMMatrix(buildings.camera.projectionViewMatrix));
+        const gl = buildings.renderer.gl;
+        const pixel = new Uint8Array(4);
+        gl.readPixels(Math.floor((projected.x / projected.w + 1) / 2 * gl.canvas.width),
+          Math.floor((projected.y / projected.w + 1) / 2 * gl.canvas.height),
+          1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        return [...pixel];
+      });
+      let cameraError = 0, projectionError = 0;
+      for (const pitch of [0, 45, 83, 85]) {
+        map.setPitch(pitch);
+        map.setBearing(pitch * 2);
+        map.panBy([12, 8], { animate: false });
+        buildings._shared._render();
+        const camera = buildings.camera;
+        const distance = Math.hypot(...camera.position.map((v, i) => v - camera.target[i]));
+        cameraError = Math.max(cameraError, Math.abs(
+          camera.position[1] - camera.target[1] - Math.cos(pitch * Math.PI / 180) * distance));
+        const projected = new DOMPoint(...camera.target, 1).matrixTransform(new DOMMatrix(camera.projectionViewMatrix));
+        projectionError = Math.max(projectionError, Math.abs(projected.x / projected.w), Math.abs(projected.y / projected.w));
+      }
+      await wait(settled);
+      const hidden = Object.values(raster._tiles).every(t => t.el.style.visibility === 'hidden');
+      terrain.remove();
+      const restored = !map._terrain3D && terrain._rasterTiles.size === 0 &&
+        Object.values(raster._tiles).every(t => t.el.style.visibility !== 'hidden') && model.root.position[1] === 0;
+      // Remove while elevation requests are pending; their callbacks must not hide restored tiles.
+      pending = new Promise(resolve => { release = resolve; });
+      terrain.addTo(map);
+      const cancelledLoad = terrain._terrainPromise;
+      terrain.remove();
+      release();
+      await cancelledLoad;
+      await new Promise(requestAnimationFrame);
+      const cancelled = terrain._rasterTiles.size === 0 &&
+        Object.values(raster._tiles).every(t => t.el.style.visibility !== 'hidden');
+      terrain.addTo(map);
+      await terrain._terrainPromise;
+      await wait(settled);
+      return { initiallyFlat, hidden, restored, cancelled, reattached: terrain._rasterTiles.size > 0,
+        elevationError, deformation, buildingError, modelError, uvError, cameraError, projectionError, pixels, errors };
+    } finally {
+      release();
+      raster.remove(); terrain.remove(); buildings.remove(); model.remove();
+      L.PMTilesLayer.prototype.getHeader = getHeader;
+      L.PMTilesLayer.prototype.getZxy = getZxy;
+      L.Layer3D.prototype.getHeader = buildingHeader;
+      L.Layer3D.prototype.getZxy = buildingTile;
+    }
+  }, order);
+  for (const name of ['initiallyFlat', 'hidden', 'restored', 'cancelled', 'reattached']) assert.equal(result[name], true, name);
+  assert.ok(result.deformation > 10, 'Raster vertices must have measurable elevation differences');
+  assert.deepEqual(result.pixels, [[255, 0, 0, 255], [0, 0, 255, 255]], 'Rendered imagery must retain north/south orientation');
+  for (const name of ['elevationError', 'buildingError', 'modelError', 'uvError', 'cameraError', 'projectionError']) {
+    assert.ok(result[name] < 0.001, `${name}: ${result[name]}`);
+  }
+  assert.deepEqual(result.errors, []);
+});
+
 Then('cancelled building downloads recover without errors or stale meshes', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
@@ -226,7 +402,8 @@ Then('the Paris example keeps navigation inside the building archive', async fun
       }
       map.setZoom(1, { animate: false });
       await new Promise(resolve => setTimeout(resolve, 400));
-      checks.push({ valid: map.getZoom() === 15 && bounds.contains(map.getCenter()), pitch, center: map.getCenter(), zoom: map.getZoom() });
+      checks.push({ valid: map.getZoom() === map.options.minZoom && bounds.contains(map.getCenter()),
+        pitch, center: map.getCenter(), zoom: map.getZoom() });
     }
     return { checks, viscosity: map.options.maxBoundsViscosity };
   });
@@ -716,26 +893,34 @@ Then('layer-owned objects preserve values and visibility without engine classes'
     const layer = new L.Layer3D();
     await nativeChecks.ready(layer);
     layer.addTo(test3d.map);
-    const vector = [0, 0, 0];
-    layer._setVector(vector, 2, 3, 4);
-    const setters = vector.join() === '2,3,4';
-    const matrix = Array.from(new DOMMatrix().toFloat64Array());
-    const point = layer._transformPoint([...vector], matrix);
-    const identity = [...point].join() === '2,3,4';
-    let singular = false;
-    try { layer._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), new Array(16).fill(0)); } catch (error) {
-      singular = error.message === 'Singular 3D transform';
-    }
     const scene = nativeChecks.group();
     const mesh = nativeChecks.mesh(layer, {
       position: [0, 0, 0, 1, 0, 0, 0, 1, 0],
       normal: [0, 0, 1, 0, 0, 1, 0, 0, 1],
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0],
     });
+    mesh.worldMatrix = Array.from(new DOMMatrix().translate(0, 0, -1).toFloat64Array());
+    const rect = layer._map.getContainer().getBoundingClientRect();
+    layer.camera.position.splice(0, 3, 0.25, 0.25, 2);
+    layer.camera.target.splice(0, 3, 0.25, 0.25, -1);
+    layer.camera.up.splice(0, 3, 0, 1, 0);
+    layer.camera.aspect = rect.width / rect.height;
+    const center = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+    const hit = layer.raycast(center, [mesh], false)[0];
+    const worldCameraRay = hit?.object === mesh && hit.faceIndex === 0 &&
+      hit.point.every((value, index) => Math.abs(value - [0.25, 0.25, -1][index]) < 1e-8);
+    const matrix = mesh.worldMatrix;
+    mesh.worldMatrix = new Array(16).fill(0);
+    let singularTransform = false;
+    try { layer.raycast(center, [mesh], false); } catch (error) {
+      singularTransform = error.message === 'Singular 3D transform';
+    }
+    mesh.worldMatrix = matrix;
     const objects = [scene, layer.camera, layer.raycaster, layer.renderer, mesh, mesh.geometry, mesh.program];
     const noEngine = !('Native' in L.Layer3D) && !('Native' in layer) && !('loadModel' in layer) &&
       objects.every(object => object.constructor === Object) &&
-      Object.getPrototypeOf(vector) === Array.prototype && Object.getPrototypeOf(matrix) === Array.prototype &&
+      Object.getPrototypeOf(layer.camera.position) === Array.prototype &&
+      Object.getPrototypeOf(mesh.worldMatrix) === Array.prototype &&
       objects.every(object => Object.getPrototypeOf(object) === Object.prototype &&
         Object.values(object).every(value => typeof value !== 'function')) &&
       !Object.keys(L.Layer3D.prototype).some(name => /Methods|Prototype/.test(name));
@@ -757,7 +942,7 @@ Then('layer-owned objects preserve values and visibility without engine classes'
       node.program.blend = [layer.renderer.gl.SRC_ALPHA, layer.renderer.gl.ONE_MINUS_SRC_ALPHA,
         layer.renderer.gl.ONE, layer.renderer.gl.ONE_MINUS_SRC_ALPHA];
       // The shared renderer computes depth from geometry centers, not authored node origins.
-      layer._setVector(node.position, 0, 0, properties.id === 3 ? -100 : 0);
+      node.position[0] = 0; node.position[1] = 0; node.position[2] = properties.id === 3 ? -100 : 0;
       programs.push(node.program);
       layer.setParent(node, scene);
     }
@@ -777,13 +962,14 @@ Then('layer-owned objects preserve values and visibility without engine classes'
     const sorted = order.join() === '2,3,1';
     layer.traverse(scene, node => {
       if (node !== hiddenMesh && node.geometry?.attributes) {
-        layer._removeGeometry(node.geometry); layer._removeProgram(node.program);
+        for (const attribute of Object.values(node.geometry.attributes)) node.geometry.gl.deleteBuffer(attribute.buffer);
+        layer._removeProgram(node.program);
       }
     });
-    layer._removeGeometry(mesh.geometry);
+    for (const attribute of Object.values(mesh.geometry.attributes)) mesh.geometry.gl.deleteBuffer(attribute.buffer);
     layer._removeProgram(mesh.program);
     layer.remove();
-    return { setters, identity, singular, sorted, noEngine, independent };
+    return { worldCameraRay, singularTransform, sorted, noEngine, independent };
   });
   for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
 });
@@ -823,22 +1009,6 @@ Then('a source block with {string} reports {string} without attaching a mesh', a
 async function prepare3DChecks(page) {
   await page.evaluate(() => {
     window.nativeChecks = {
-      framed(layer, object, start, end) {
-        layer._shared._render();
-        let framed = true;
-        layer.traverse(object, mesh => {
-          if (!mesh.geometry) return;
-          const attribute = mesh.geometry.attributes.position;
-          for (let i = start ?? 0; i < (end ?? attribute.count); i++) {
-            const point = layer._readVector([0, 0, 0], attribute.data, i * attribute.size);
-            layer._transformPoint(point, mesh.worldMatrix);
-            layer._transformPoint(point, layer.camera.projectionViewMatrix);
-            if (Math.abs(point[0]) > 0.705 || Math.abs(point[1]) > 0.705 ||
-              point[2] < -1 || point[2] > 1) framed = false;
-          }
-        });
-        return framed;
-      },
       group() {
         return {
           position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
@@ -889,7 +1059,10 @@ async function prepare3DChecks(page) {
           if (!mesh.geometry) return;
           const position = mesh.geometry.attributes.position;
           for (let i = 0; i < position.count; i++) {
-            const point = backend._transformPoint(backend._readVector([0, 0, 0], position.data, i * position.size), mesh.worldMatrix);
+            const offset = i * position.size;
+            const transformed = new DOMPoint(position.data[offset], position.data[offset + 1], position.data[offset + 2], 1)
+              .matrixTransform(new DOMMatrix(mesh.worldMatrix));
+            const point = [transformed.x / transformed.w, transformed.y / transformed.w, transformed.z / transformed.w];
             for (let j = 0; j < 3; j++) { min[j] = Math.min(min[j], point[j]); max[j] = Math.max(max[j], point[j]); }
           }
 
@@ -984,8 +1157,14 @@ Then('native triangulation and glTF decoding preserve geometry without library r
       first !== second && first.geometry !== second.geometry;
     layer._updateWorldMatrix(first.parent);
     layer._updateWorldMatrix(second.parent);
-    const transformed = [...layer._transformPoint([2, 0, 0], first.worldMatrix)].join() === '3,2,3';
-    for (const mesh of [first, second]) { layer._removeGeometry(mesh.geometry); layer._removeProgram(mesh.program); }
+    const transformed = (() => {
+      const point = new DOMPoint(2, 0, 0, 1).matrixTransform(new DOMMatrix(first.worldMatrix));
+      return [point.x / point.w, point.y / point.w, point.z / point.w].join() === '3,2,3';
+    })();
+    for (const mesh of [first, second]) {
+      for (const attribute of Object.values(mesh.geometry.attributes)) mesh.geometry.gl.deleteBuffer(attribute.buffer);
+      layer._removeProgram(mesh.program);
+    }
     configured.remove();
     layer.remove();
     return { triangulated, invalidRejected, decoded, transformed };
@@ -995,14 +1174,14 @@ Then('native triangulation and glTF decoding preserve geometry without library r
   assert.deepEqual(this.threeRequests, []);
 });
 
-Then('3D click centers the picked object without changing zoom', { timeout: 60000 }, async function () {
+Then('3D click reports the picked object without changing the map view', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     map.options.zoomAnimation = false;
     map.options.maxZoom = 24;
     const origin = new L.Layer3D().addTo(map);
-    const far = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
-    const near = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
+    const far = new L.Layer3D({ center: [48.85835, 2.29465], tooltipContent: () => 'Far' }).addTo(map);
+    const near = new L.Layer3D({ center: [48.85835, 2.29465], tooltipContent: () => 'Near' }).addTo(map);
     await Promise.all([origin, far, near].map(nativeChecks.ready));
     for (const [layer, height] of [[far, 0], [near, 20]]) {
       layer.model = nativeChecks.group();
@@ -1019,45 +1198,34 @@ Then('3D click centers the picked object without changing zoom', { timeout: 6000
     const container = map.getContainer();
     const position = () => {
       near._shared._render();
-      const point = near._transformPoint([0, 20, 0], near.root.worldMatrix);
-      near._transformPoint(point, near.camera.projectionViewMatrix);
+      const world = new DOMPoint(0, 20, 0, 1).matrixTransform(new DOMMatrix(near.root.worldMatrix));
+      const point = world.matrixTransform(new DOMMatrix(near.camera.projectionViewMatrix));
+      const x = point.x / point.w, y = point.y / point.w;
       const rect = container.getBoundingClientRect();
-      return { clientX: rect.left + (point[0] + 1) * rect.width / 2,
-        clientY: rect.top + (1 - point[1]) * rect.height / 2 };
+      return { clientX: rect.left + (x + 1) * rect.width / 2,
+        clientY: rect.top + (1 - y) * rect.height / 2 };
     };
     let nearClicks = 0, farClicks = 0;
     near.on('featureclick', ({ feature }) => { if (feature) nearClicks++; });
     far.on('featureclick', ({ feature }) => { if (feature) farClicks++; });
     const click = position();
     const event = new MouseEvent('click', click);
-    const expected = near.location;
     const firstZoom = map.getZoom();
-    const moved = new Promise(resolve => map.once('moveend', resolve));
+    const firstCenter = map.getCenter();
+    let movements = 0;
+    const onMove = () => movements++;
+    map.on('movestart zoomstart', onMove);
     container.dispatchEvent(event);
-    await moved;
     await new Promise(requestAnimationFrame);
-    const centered = map.getZoom() === firstZoom &&
-      map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2;
-    const diagnostic = { zoom: map.getZoom(), center: map.getCenter(), expected,
-      error: map.getCenter().distanceTo(expected), nearClicks, farClicks };
+    const unchanged = map.getZoom() === firstZoom && map.getCenter().equals(firstCenter) && movements === 0;
+    const diagnostic = { zoom: map.getZoom(), center: map.getCenter(), nearClicks, farClicks };
     const sharedPicking = nearClicks === 1 && farClicks === 1;
     container.dispatchEvent(new MouseEvent('click', position()));
-    const repeatedClickStable = map.getZoom() === firstZoom &&
-      map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2;
+    const repeatedClickStable = map.getZoom() === firstZoom && map.getCenter().equals(firstCenter) && movements === 0;
+    const tooltipShown = !near._featureTooltip.hidden && near._featureTooltip.textContent === 'Near';
     const center = map.getCenter();
     container.dispatchEvent(new MouseEvent('click', { clientX: -1000, clientY: -1000 }));
     const emptyUnchanged = map.getZoom() === firstZoom && map.getCenter().equals(center);
-    near.options.zoomOnClick = false;
-    const reset = new Promise(resolve => map.once('moveend', resolve));
-    map.setZoom(firstZoom - 1, { animate: false });
-    await reset;
-    await new Promise(requestAnimationFrame);
-    const disabledCenter = map.getCenter();
-    container.dispatchEvent(new MouseEvent('click', position()));
-    const disabledAndOccluded = map.getZoom() === firstZoom - 1 && map.getCenter().equals(disabledCenter);
-    const noTooltip = !container.querySelector('.leaflet-3d-tooltip');
-    near.options.zoomOnClick = true;
-    far.options.zoomOnClick = false;
     let zoomStable = true;
     diagnostic.poses = [];
     const pickedMesh = near.model.children[0];
@@ -1067,19 +1235,21 @@ Then('3D click centers the picked object without changing zoom', { timeout: 6000
       map.setPitch(pitch);
       map.setBearing(bearing);
       map.setView(near.location, 22, { animate: false });
-      near._onClick(new MouseEvent('click', position()));
       const zoom = map.getZoom(), center = map.getCenter();
+      movements = 0;
+      near._onClick(new MouseEvent('click', position()));
       diagnostic.poses.push({ pitch, bearing, zoom, center });
       zoomStable &&= map.getPitch() === pitch && Math.abs(map.getBearing() - bearing) < 1e-8;
       near._onClick(new MouseEvent('click', position()));
       zoomStable &&= map.getZoom() === zoom &&
-        map.project(center).distanceTo(map.project(map.getCenter())) < 2;
+        map.getCenter().equals(center) && movements === 0;
     }
+    map.off('movestart zoomstart', onMove);
     near.remove();
     far.remove();
     origin.remove();
-    return { checks: { centered, sharedPicking, repeatedClickStable, emptyUnchanged, disabledAndOccluded,
-      noTooltip, zoomStable }, diagnostic };
+    return { checks: { unchanged, sharedPicking, repeatedClickStable, emptyUnchanged,
+      tooltipShown, zoomStable }, diagnostic };
   });
   for (const [name, value] of Object.entries(result.checks)) assert.equal(value, true, `${name}: ${JSON.stringify(result.diagnostic)}`);
 });
@@ -1142,7 +1312,7 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
     layer._showFeature(feature, position);
     layer.remove();
     const restoredCursor = container.style.cursor === 'crosshair';
-    layer._removeGeometry(mesh.geometry);
+    for (const attribute of Object.values(mesh.geometry.attributes)) mesh.geometry.gl.deleteBuffer(attribute.buffer);
     layer._removeProgram(mesh.program);
     container.style.cursor = '';
     return { created, displayed, clickNotPinned, hidden, leaveCleared, sharedCursor, removed, recreated, restoredCursor };
@@ -1274,9 +1444,9 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     layer._shared._render();
     layer._useProgram = useProgram;
     const depths = list.map(mesh => {
-      const point = layer._transformPoint([...mesh.geometry.bounds.center], mesh.worldMatrix);
-      layer._transformPoint(point, layer.camera.projectionViewMatrix);
-      return point[2];
+      const world = new DOMPoint(...mesh.geometry.bounds.center, 1).matrixTransform(new DOMMatrix(mesh.worldMatrix));
+      const point = world.matrixTransform(new DOMMatrix(layer.camera.projectionViewMatrix));
+      return point.z / point.w;
     });
     const transparentOrder = depths.length > 1 && depths.every((depth, i) =>
       !i || depths[i - 1] >= depth) && Math.max(...depths) > Math.min(...depths);
@@ -1297,13 +1467,13 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       color: [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1],
     }, layer._createProgram({ vertexColors: true, alphaMode: 'MASK' }));
     const probeCamera = structuredClone(layer.camera);
-    layer._setVector(probeCamera.position, 0, 0, 3);
-    layer._setVector(probeCamera.target, ...[0, 0, 0]);
+    probeCamera.position.splice(0, 3, 0, 0, 3);
+    probeCamera.target.splice(0, 3, 0, 0, 0);
     const sample = () => {
       layer._updateWorldMatrix(probe);
       layer._updateCamera(probeCamera);
-      const modelView = layer._multiplyMatrix(Array.from(new DOMMatrix().toFloat64Array()), probeCamera.viewMatrix, probe.worldMatrix);
-      const inverse = layer._invertMatrix(Array.from(new DOMMatrix().toFloat64Array()), modelView);
+      const modelView = new DOMMatrix(probeCamera.viewMatrix).multiply(new DOMMatrix(probe.worldMatrix)).toFloat64Array();
+      const inverse = new DOMMatrix(modelView).inverse().toFloat64Array();
       Object.assign(probe.program.uniforms, {
         modelViewMatrix: { value: modelView }, projectionMatrix: { value: probeCamera.projectionMatrix },
         normalMatrix: { value: [inverse[0], inverse[4], inverse[8], inverse[1], inverse[5], inverse[9],
@@ -1328,7 +1498,7 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
     const secondPixel = sample();
     const depthOrderIndependent = firstPixel.every((value, index) => value === secondPixel[index]) &&
       firstPixel[0] > firstPixel[2] && firstPixel[3] === 255;
-    layer._removeGeometry(probe.geometry);
+    for (const attribute of Object.values(probe.geometry.attributes)) probe.geometry.gl.deleteBuffer(attribute.buffer);
     layer._removeProgram(probe.program);
     const container = map.getContainer();
     const rect = container.getBoundingClientRect();
@@ -1337,11 +1507,14 @@ Then('a configured 3D model loads with its transforms and attribution', { timeou
       if (position || !object.geometry) return;
       const vertices = object.geometry.attributes.position;
       for (let i = 0; i < Math.min(vertices.count, 90); i++) {
-        const point = layer._transformPoint(layer._readVector([0, 0, 0], vertices.data, i * vertices.size), object.worldMatrix);
-        layer._transformPoint(point, layer.camera.projectionViewMatrix);
-        if (Math.abs(point[0]) >= 1 || Math.abs(point[1]) >= 1) continue;
-        const candidate = { clientX: Math.floor(rect.left + (point[0] + 1) * rect.width / 2),
-          clientY: Math.floor(rect.top + (1 - point[1]) * rect.height / 2) };
+        const offset = i * vertices.size;
+        const world = new DOMPoint(vertices.data[offset], vertices.data[offset + 1], vertices.data[offset + 2], 1)
+          .matrixTransform(new DOMMatrix(object.worldMatrix));
+        const point = world.matrixTransform(new DOMMatrix(layer.camera.projectionViewMatrix));
+        const x = point.x / point.w, y = point.y / point.w;
+        if (Math.abs(x) >= 1 || Math.abs(y) >= 1) continue;
+        const candidate = { clientX: Math.floor(rect.left + (x + 1) * rect.width / 2),
+          clientY: Math.floor(rect.top + (1 - y) * rect.height / 2) };
         if (layer._findFeature(candidate)?.model === layer.model) {
           position = candidate;
           break;
@@ -1450,9 +1623,10 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
       first.scene === second.scene && first.root !== second.root &&
       first.root.parent === second.root.parent && document.querySelectorAll('.leaflet-3d').length === 1;
     first._shared._render();
-    const world = backend._transformPoint([10, 0, 20], second.root.worldMatrix);
-    const screen = [...world];
-    backend._transformPoint(screen, second.camera.projectionViewMatrix);
+    const worldPoint = new DOMPoint(10, 0, 20, 1).matrixTransform(new DOMMatrix(second.root.worldMatrix));
+    const world = [worldPoint.x / worldPoint.w, worldPoint.y / worldPoint.w, worldPoint.z / worldPoint.w];
+    const screenPoint = new DOMPoint(...world, 1).matrixTransform(new DOMMatrix(second.camera.projectionViewMatrix));
+    const screen = [screenPoint.x / screenPoint.w, screenPoint.y / screenPoint.w, screenPoint.z / screenPoint.w];
     const crs = map.options.crs;
     const point = crs.project(second.location);
     const metres = Math.cos(second.location.lat * Math.PI / 180);
@@ -1703,7 +1877,8 @@ Then('the failed model has no attached geometry', function () {
 Then('building style for {int} storeys, {int} floors and ground {int} is {string}',
   async function (storeys, floors, ground, expected) {
     const result = await this.page.evaluate(({ storeys, floors, ground }) => {
-      const layer = layers._layers.find(entry => entry.layer.options.source).layer;
+      const layer = layers._layers.find(entry => entry.layer instanceof L.Layer3D &&
+        !(entry.layer instanceof L.TerrainLayer) && entry.layer.options.source).layer;
       const feature = { properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } };
       const style = layer.options.featureStyle(feature);
       return style === null ? null : {
@@ -1722,7 +1897,9 @@ Then('building style for {int} storeys, {int} floors and ground {int} is {string
 
 When('I select the {string} background in the 3D example', async function (background) {
   await this.page.evaluate(() => {
-    const overlays = layers._layers.filter(entry => entry.overlay).map(entry => entry.layer);
+    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer3D &&
+      !(entry.layer instanceof L.TerrainLayer))
+      .map(entry => entry.layer);
     window.exampleSceneBefore = {
       overlays, renderer: overlays[0].renderer, canvas: overlays[0].renderer.gl.canvas,
       model: overlays.find(layer => layer.model).model,
@@ -1739,7 +1916,9 @@ Then('only the {string} background is active and the 3D scene is unchanged', asy
   }, background);
   const result = await this.page.evaluate(() => {
     const before = window.exampleSceneBefore;
-    const overlays = layers._layers.filter(entry => entry.overlay).map(entry => entry.layer);
+    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer3D &&
+      !(entry.layer instanceof L.TerrainLayer))
+      .map(entry => entry.layer);
     const tower = overlays.find(layer => layer.model);
     return {
       enabled: overlays.length === 2 && overlays.every(layer => map.hasLayer(layer)),
@@ -1764,7 +1943,8 @@ When('I disable and restore the 3D overlays through the layer control', async fu
   await towerControl.uncheck();
   const towerDisabled = await this.page.evaluate(() => {
     const before = window.exampleOverlayBefore;
-    const buildings = layers._layers.find(entry => entry.layer.options.source).layer;
+    const buildings = layers._layers.find(entry => entry.layer instanceof L.Layer3D &&
+      !(entry.layer instanceof L.TerrainLayer) && entry.layer.options.source).layer;
     return !map.hasLayer(before.tower) && map.hasLayer(buildings) &&
       before.canvas.isConnected && buildings.renderer.gl.canvas === before.canvas &&
       !map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
@@ -1789,7 +1969,9 @@ When('I disable and restore the 3D overlays through the layer control', async fu
   });
   await buildingsControl.check();
   const bothRestored = await this.page.evaluate(() => {
-    const overlays = layers._layers.filter(entry => entry.overlay).map(entry => entry.layer);
+    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer3D &&
+      !(entry.layer instanceof L.TerrainLayer))
+      .map(entry => entry.layer);
     return overlays.every(layer => map.hasLayer(layer)) &&
       overlays[0].renderer === overlays[1].renderer &&
       document.querySelectorAll('.leaflet-3d').length === 1;
@@ -1817,12 +1999,13 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
           const offset = (index ? index.data[i + j] : i + j) * position.size;
           for (let axis = 0; axis < 3; axis++) point[axis] += position.data[offset + axis];
         }
-        tower._transformPoint(point.map(v => v / 3), mesh.worldMatrix);
-        tower._transformPoint(point, tower.camera.projectionViewMatrix);
-        if (Math.abs(point[0]) > 0.7 || Math.abs(point[1]) > 0.7) continue;
+        const world = new DOMPoint(...point.map(v => v / 3), 1).matrixTransform(new DOMMatrix(mesh.worldMatrix));
+        const projected = world.matrixTransform(new DOMMatrix(tower.camera.projectionViewMatrix));
+        const x = projected.x / projected.w, y = projected.y / projected.w;
+        if (Math.abs(x) > 0.7 || Math.abs(y) > 0.7) continue;
         const candidate = {
-          x: Math.round(rect.left + (point[0] + 1) * rect.width / 2),
-          y: Math.round(rect.top + (1 - point[1]) * rect.height / 2),
+          x: Math.round(rect.left + (x + 1) * rect.width / 2),
+          y: Math.round(rect.top + (1 - y) * rect.height / 2),
         };
         const event = { clientX: candidate.x, clientY: candidate.y };
         const hit = tower._findFeature(event);
@@ -1851,24 +2034,21 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
     return { text: tower._featureTooltip.textContent, role: tower._featureTooltip.getAttribute('role'),
       cursor: map.getContainer().style.cursor };
   });
-  await this.page.evaluate(() => {
-    window.exampleClickFinished = new Promise(resolve => {
-      const timer = setTimeout(resolve, 500);
-      map.once('moveend', () => { clearTimeout(timer); resolve(); });
-    });
+  const beforeClick = await this.page.evaluate(() => {
+    window.exampleClickMovements = 0;
+    map.on('movestart zoomstart', () => window.exampleClickMovements++);
+    return map.getCenter();
   });
   await this.page.mouse.click(target.x, target.y);
-  await this.page.evaluate(async () => {
-    await window.exampleClickFinished;
-    delete window.exampleClickFinished;
-    await new Promise(requestAnimationFrame);
-  });
+  await this.page.evaluate(() => new Promise(requestAnimationFrame));
   this.exampleTowerZoom = await this.page.evaluate(() => {
     const tower = layers._layers.find(entry => entry.layer.model).layer;
-    return { zoom: map.getZoom(), framed: nativeChecks.framed(tower, tower.model),
+    return { zoom: map.getZoom(), center: map.getCenter(), movements: window.exampleClickMovements,
+      clicked: tower.hoveredFeature?.model === tower.model,
       bearing: map.getBearing(), pitch: map.getPitch(),
       canvases: document.querySelectorAll('.leaflet-3d').length };
   });
+  this.exampleTowerCenter = beforeClick;
   this.exampleTowerTarget = target;
   await this.page.mouse.move(810, 610);
   await this.page.waitForFunction(() => {
@@ -1878,7 +2058,7 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
   });
 });
 
-Then('the tower information is shown and the click centers without pinning the tooltip', function () {
+Then('the tower information is shown without moving the map or pinning the tooltip', function () {
   const hover = this.exampleTowerHover;
   for (const text of ['Eiffel Tower', '330 m', '300 m structure', '1889', 'Gustave Eiffel', 'Champ de Mars']) {
     assert.ok(hover.text.includes(text), text);
@@ -1887,6 +2067,9 @@ Then('the tower information is shown and the click centers without pinning the t
   assert.equal(hover.cursor, 'pointer');
   const zoom = this.exampleTowerZoom, target = this.exampleTowerTarget;
   assert.equal(zoom.zoom, target.zoom, 'Clicking does not change the zoom');
+  assert.deepEqual(zoom.center, this.exampleTowerCenter, 'Clicking does not move the map');
+  assert.equal(zoom.movements, 0);
+  assert.equal(zoom.clicked, true);
   assert.equal(zoom.bearing, target.bearing);
   assert.equal(zoom.pitch, target.pitch);
   assert.equal(zoom.canvases, 1);
@@ -1934,9 +2117,9 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       const size = map.getSize();
       for (const [x, z] of [[-40, -40], [0, 0], [40, 40]]) {
         const expected = map.layerPointToContainerPoint(origin.add([x * scale, z * scale]));
-        const ndc = [x, 0, z];
-        backend._transformPoint(ndc, tower.camera.projectionViewMatrix);
-        const actual = new L.Point((ndc[0] + 1) * size.x / 2, (1 - ndc[1]) * size.y / 2);
+        const clip = new DOMPoint(x, 0, z, 1).matrixTransform(new DOMMatrix(tower.camera.projectionViewMatrix));
+        const ndcX = clip.x / clip.w, ndcY = clip.y / clip.w;
+        const actual = new L.Point((ndcX + 1) * size.x / 2, (1 - ndcY) * size.y / 2);
         errors.push(actual.distanceTo(expected));
       }
       const level = baseLayer._levels[baseLayer._tileZoom];
@@ -1949,16 +2132,17 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
       const borderX = parseFloat(style.borderLeftWidth);
       const borderY = parseFloat(style.borderTopWidth);
       for (const foot of feet) {
-        const world = backend._transformPoint([...foot.local], eiffel.model.worldMatrix);
+        const transformed = new DOMPoint(...foot.local, 1).matrixTransform(new DOMMatrix(eiffel.model.worldMatrix));
+        const world = [transformed.x / transformed.w, transformed.y / transformed.w, transformed.z / transformed.w];
         const geographic = map.unproject(map.project(tower.location).add([world[0] * scale, world[2] * scale]), zoom);
         footprintErrors.push(geographic.distanceTo(new L.LatLng(...foot.latlng)));
         const point = map.project(new L.LatLng(...foot.latlng), baseLayer._tileZoom).subtract(level.origin);
         probe.style.transform = `translate3d(${point.x}px,${point.y}px,0)`;
         const ground = probe.getBoundingClientRect();
         const expected = new L.Point(ground.x - rect.x - borderX, ground.y - rect.y - borderY);
-        const ndc = [...world];
-        backend._transformPoint(ndc, tower.camera.projectionViewMatrix);
-        const actual = new L.Point((ndc[0] + 1) * size.x / 2, (1 - ndc[1]) * size.y / 2);
+        const clip = new DOMPoint(...world, 1).matrixTransform(new DOMMatrix(tower.camera.projectionViewMatrix));
+        const ndcX = clip.x / clip.w, ndcY = clip.y / clip.w;
+        const actual = new L.Point((ndcX + 1) * size.x / 2, (1 - ndcY) * size.y / 2);
         tileErrors.push(actual.distanceTo(expected));
       }
       probe.remove();
@@ -1992,9 +2176,9 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
           ground.x - rect.x - parseFloat(style.borderLeftWidth),
           ground.y - rect.y - parseFloat(style.borderTopWidth)
         );
-        const ndc = [x, 0, z];
-        backend._transformPoint(ndc, tower.camera.projectionViewMatrix);
-        const actual = new L.Point((ndc[0] + 1) * size.x / 2, (1 - ndc[1]) * size.y / 2);
+        const clip = new DOMPoint(x, 0, z, 1).matrixTransform(new DOMMatrix(tower.camera.projectionViewMatrix));
+        const ndcX = clip.x / clip.w, ndcY = clip.y / clip.w;
+        const actual = new L.Point((ndcX + 1) * size.x / 2, (1 - ndcY) * size.y / 2);
         zoomErrors.push(actual.distanceTo(expected));
       }
       probe.remove();
@@ -2218,12 +2402,14 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     const range = buildings.group.children[0].extras.featureFaces[0];
     const origin = map.options.crs.project(tower.location);
     const point = map.options.crs.project(new L.LatLng(48.85855, 2.29555));
-    const world = [(point.x - origin.x) * Math.cos(tower.location.lat * Math.PI / 180), 15, -(point.y - origin.y) * Math.cos(tower.location.lat * Math.PI / 180)];
-    backend._transformPoint(world, tower.camera.projectionViewMatrix);
+    const world = new DOMPoint((point.x - origin.x) * Math.cos(tower.location.lat * Math.PI / 180),
+      15, -(point.y - origin.y) * Math.cos(tower.location.lat * Math.PI / 180), 1)
+      .matrixTransform(new DOMMatrix(tower.camera.projectionViewMatrix));
+    const x = world.x / world.w, y = world.y / world.w;
     const rect = map.getContainer().getBoundingClientRect();
     const position = {
-      clientX: rect.left + (world[0] + 1) * rect.width / 2,
-      clientY: rect.top + (1 - world[1]) * rect.height / 2
+      clientX: rect.left + (x + 1) * rect.width / 2,
+      clientY: rect.top + (1 - y) * rect.height / 2
     };
     const before = Array.from(
       buildings.group.children[0].geometry.attributes.color.data.slice(range.vertexStart * 3, range.vertexStart * 3 + 3)
@@ -2249,21 +2435,14 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     };
   }, interaction.vertexStart);
   this.hoverHighlight = highlightedColor.color.some((value, index) => value !== interaction.before[index]);
-  const zoomBeforeClick = await this.page.evaluate(() => {
-    window.buildingClickZoom = new Promise(resolve => map.once('moveend', resolve));
-    return map.getZoom();
-  });
+  const viewBeforeClick = await this.page.evaluate(() => ({
+    center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch()
+  }));
   await this.page.mouse.click(interaction.position.clientX, interaction.position.clientY);
-  await this.page.evaluate(async () => {
-    await window.buildingClickZoom;
-    delete window.buildingClickZoom;
-    await new Promise(requestAnimationFrame);
-  });
-  assert.equal(await this.page.evaluate(() => {
-    const buildings = layers._layers.find(entry => entry.layer.options.source).layer;
-    const feature = buildings.hoveredFeature;
-    return nativeChecks.framed(buildings, feature.mesh, feature.vertexStart, feature.vertexEnd);
-  }), true, 'Only the selected building must fit inside the viewport margins');
+  await this.page.evaluate(() => new Promise(requestAnimationFrame));
+  assert.deepEqual(await this.page.evaluate(() => ({
+    center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch()
+  })), viewBeforeClick, 'Clicking a building must not change the map view');
   await this.page.evaluate(() => {
     for (const type of ['mouseout', 'mouseleave']) {
       map.getContainer().dispatchEvent(new MouseEvent(type, { relatedTarget: document.body }));
@@ -2287,7 +2466,8 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
 
 When('I move and toggle the Paris building volumes', { timeout: 60000 }, async function () {
   const status = text => this.page.waitForFunction(text => {
-    const buildings = layers._layers.find(entry => entry.layer.options.source).layer;
+    const buildings = layers._layers.find(entry => entry.layer instanceof L.Layer3D &&
+      !(entry.layer instanceof L.TerrainLayer) && entry.layer.options.source).layer;
     if (buildings._inflight || !buildings._areas.size) return false;
     const areas = [...buildings._areas.values()];
     if (text === 'Unable to load') return areas.some(area => area.error);

@@ -84,6 +84,28 @@ When('I set the map pitch to 45 degrees', async function () {
       roundTripPoint = map.containerPointToLayerPoint(pitched),
       centerPoint = map.latLngToContainerPoint(map.getCenter()),
       size = map.getSize();
+    const css = new DOMMatrix(getComputedStyle(map._rotatePane).transform),
+      pivot = map._getPixelCenter(),
+      origin = map._rotatePane._leaflet_pos,
+      angle = Math.PI / 4,
+      bearing = map._bearing,
+      perspective = size.y * 1.5,
+      container = map.getContainer().getBoundingClientRect(),
+      panePos = map._getMapPanePos(),
+      projectionError = Math.max(...[[0, 0], [size.x, 0], [0, size.y], [size.x, size.y]].map(([x, y]) => {
+        const dx = x + origin.x - pivot.x,
+          dy = y + origin.y - pivot.y,
+          rotatedX = dx * Math.cos(bearing) - dy * Math.sin(bearing),
+          rotatedY = dx * Math.sin(bearing) + dy * Math.cos(bearing),
+          factor = perspective / (perspective - rotatedY * Math.sin(angle)),
+          probe = document.createElement('div');
+        probe.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:0;height:0`;
+        map._rotatePane.appendChild(probe);
+        const actual = probe.getBoundingClientRect();
+        probe.remove();
+        return Math.hypot(actual.x - container.left - map.getContainer().clientLeft - panePos.x - pivot.x - rotatedX * factor,
+          actual.y - container.top - map.getContainer().clientTop - panePos.y - pivot.y - rotatedY * Math.cos(angle) * factor);
+      }));
 
     return {
       pitch: map.getPitch(),
@@ -95,18 +117,20 @@ When('I set the map pitch to 45 degrees', async function () {
       roundTripPoint,
       centerPoint,
       size,
-      transform: map._rotatePane.style.transform,
+      projectionError,
+      groundDepth: [css.m13, css.m23, css.m43],
     };
   });
 });
 
 Then('map coordinates stay consistent with the pitched view', function () {
-  const { pitch, maxPitch, bearing, flat, pitched, layerPoint, roundTripPoint, centerPoint, size, transform } = this.pitchProjection;
+  const { pitch, maxPitch, bearing, flat, pitched, layerPoint, roundTripPoint, centerPoint, size,
+    projectionError, groundDepth } = this.pitchProjection;
   assert.equal(pitch, 45);
   assert.equal(maxPitch, 85);
   assert.ok(Math.abs(bearing - 30) < 1e-9);
-  assert.match(transform, /rotateX\(45deg\)/);
-  assert.ok(Math.abs(Number(transform.match(/perspective\(([\d.]+)px\)/)[1]) - size.y * 1.5) < 1);
+  assert.ok(projectionError < 0.01, `CSS pitch projection error: ${projectionError}px`);
+  assert.deepEqual(groundDepth, [0, 0, 0], 'Ground must not occlude upright overlays');
   assert.ok(Math.abs(flat.y - pitched.y) > 0.1);
   const details = JSON.stringify({ flat, pitched, layerPoint, roundTripPoint, centerPoint, size });
   assert.ok(Math.abs(roundTripPoint.x - layerPoint.x) < 1e-6, details);

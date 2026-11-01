@@ -1,5 +1,14 @@
 @3d-layer
 Feature: Reusable 3D layers
+  Scenario Outline: Terrain deforms raster tiles and keeps buildings and the camera at their ground elevation
+    Given a map with the standalone 3D module and no dependency import map
+    Then terrain enabled "<order>" raster loading preserves imagery, elevations and removal
+
+    Examples:
+      | order  |
+      | before |
+      | after  |
+
   Scenario: Cancelled building downloads release their slots and reload on return
     Given a map with the standalone 3D module and no dependency import map
     Then cancelled building downloads recover without errors or stale meshes
@@ -89,9 +98,9 @@ Feature: Reusable 3D layers
     Given a map with the standalone 3D module and no dependency import map
     Then a 3D layer creates and cleans up its own hover tooltip
 
-  Scenario: Clicking a 3D object centers only the nearest enabled layer without zooming
+  Scenario: Clicking a 3D object emits events without moving the map
     Given a map with the standalone 3D module and no dependency import map
-    Then 3D click centers the picked object without changing zoom
+    Then 3D click reports the picked object without changing the map view
 
   @paris-buildings
   Scenario: Building volumes render with holes, storey heights, and interaction
@@ -146,10 +155,10 @@ Feature: Reusable 3D layers
     Then the 3D canvas and model attribution follow the enabled overlays
 
   @eiffel @3d-example
-  Scenario: Hovering and clicking the Eiffel Tower shows information and centers without pinning
+  Scenario: Hovering and clicking the Eiffel Tower shows information without moving or pinning
     Given the Eiffel Tower example page is open
     When I hover and click the Eiffel Tower in the 3D example
-    Then the tower information is shown and the click centers without pinning the tooltip
+    Then the tower information is shown without moving the map or pinning the tooltip
 
   @eiffel
   Scenario: The real Eiffel Tower model follows the map camera
