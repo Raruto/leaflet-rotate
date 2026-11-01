@@ -995,11 +995,11 @@ Then('native triangulation and glTF decoding preserve geometry without library r
   assert.deepEqual(this.threeRequests, []);
 });
 
-Then('3D click zoom centers the picked object and respects the maximum zoom', { timeout: 60000 }, async function () {
+Then('3D click centers the picked object without changing zoom', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     map.options.zoomAnimation = false;
-    map.options.maxZoom = 18;
+    map.options.maxZoom = 24;
     const origin = new L.Layer3D().addTo(map);
     const far = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
     const near = new L.Layer3D({ center: [48.85835, 2.29465], zoomOnClick: true }).addTo(map);
@@ -1031,18 +1031,19 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     const click = position();
     const event = new MouseEvent('click', click);
     const expected = near.location;
+    const firstZoom = map.getZoom();
     const moved = new Promise(resolve => map.once('moveend', resolve));
     container.dispatchEvent(event);
     await moved;
     await new Promise(requestAnimationFrame);
-    const firstZoom = map.getZoom();
-    const zoomed = firstZoom <= 18 && map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2 &&
-      nativeChecks.framed(near, near.model);
-    const diagnostic = { zoom: map.getZoom(), center: map.getCenter(), expected, framed: nativeChecks.framed(near, near.model),
+    const centered = map.getZoom() === firstZoom &&
+      map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2;
+    const diagnostic = { zoom: map.getZoom(), center: map.getCenter(), expected,
       error: map.getCenter().distanceTo(expected), nearClicks, farClicks };
     const sharedPicking = nearClicks === 1 && farClicks === 1;
     container.dispatchEvent(new MouseEvent('click', position()));
-    const capped = map.getZoom() === firstZoom && map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2;
+    const repeatedClickStable = map.getZoom() === firstZoom &&
+      map.latLngToContainerPoint(expected).distanceTo(map.getSize().divideBy(2)) < 2;
     const center = map.getCenter();
     container.dispatchEvent(new MouseEvent('click', { clientX: -1000, clientY: -1000 }));
     const emptyUnchanged = map.getZoom() === firstZoom && map.getCenter().equals(center);
@@ -1051,13 +1052,13 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
     map.setZoom(firstZoom - 1, { animate: false });
     await reset;
     await new Promise(requestAnimationFrame);
+    const disabledCenter = map.getCenter();
     container.dispatchEvent(new MouseEvent('click', position()));
-    const disabledAndOccluded = map.getZoom() === firstZoom - 1;
+    const disabledAndOccluded = map.getZoom() === firstZoom - 1 && map.getCenter().equals(disabledCenter);
     const noTooltip = !container.querySelector('.leaflet-3d-tooltip');
     near.options.zoomOnClick = true;
     far.options.zoomOnClick = false;
-    map.options.maxZoom = 24;
-    let framingStable = true, zoomsOut = true;
+    let zoomStable = true;
     diagnostic.poses = [];
     const pickedMesh = near.model.children[0];
     near._findFeature = () => ({ model: near.model, mesh: pickedMesh });
@@ -1068,19 +1069,17 @@ Then('3D click zoom centers the picked object and respects the maximum zoom', { 
       map.setView(near.location, 22, { animate: false });
       near._onClick(new MouseEvent('click', position()));
       const zoom = map.getZoom(), center = map.getCenter();
-      diagnostic.poses.push({ pitch, bearing, zoom, framed: nativeChecks.framed(near, near.model) });
-      zoomsOut &&= zoom < 22;
-      framingStable &&= nativeChecks.framed(near, near.model) &&
-        map.getPitch() === pitch && Math.abs(map.getBearing() - bearing) < 1e-8;
+      diagnostic.poses.push({ pitch, bearing, zoom, center });
+      zoomStable &&= map.getPitch() === pitch && Math.abs(map.getBearing() - bearing) < 1e-8;
       near._onClick(new MouseEvent('click', position()));
-      framingStable &&= map.getZoom() === zoom &&
+      zoomStable &&= map.getZoom() === zoom &&
         map.project(center).distanceTo(map.project(map.getCenter())) < 2;
     }
     near.remove();
     far.remove();
     origin.remove();
-    return { checks: { zoomed, sharedPicking, capped, emptyUnchanged, disabledAndOccluded, noTooltip,
-      framingStable, zoomsOut }, diagnostic };
+    return { checks: { centered, sharedPicking, repeatedClickStable, emptyUnchanged, disabledAndOccluded,
+      noTooltip, zoomStable }, diagnostic };
   });
   for (const [name, value] of Object.entries(result.checks)) assert.equal(value, true, `${name}: ${JSON.stringify(result.diagnostic)}`);
 });
@@ -1853,7 +1852,10 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
       cursor: map.getContainer().style.cursor };
   });
   await this.page.evaluate(() => {
-    window.exampleClickFinished = new Promise(resolve => map.once('moveend', resolve));
+    window.exampleClickFinished = new Promise(resolve => {
+      const timer = setTimeout(resolve, 500);
+      map.once('moveend', () => { clearTimeout(timer); resolve(); });
+    });
   });
   await this.page.mouse.click(target.x, target.y);
   await this.page.evaluate(async () => {
@@ -1876,7 +1878,7 @@ When('I hover and click the Eiffel Tower in the 3D example', { timeout: 60000 },
   });
 });
 
-Then('the tower information is shown and the click zooms without pinning the tooltip', function () {
+Then('the tower information is shown and the click centers without pinning the tooltip', function () {
   const hover = this.exampleTowerHover;
   for (const text of ['Eiffel Tower', '330 m', '300 m structure', '1889', 'Gustave Eiffel', 'Champ de Mars']) {
     assert.ok(hover.text.includes(text), text);
@@ -1884,7 +1886,7 @@ Then('the tower information is shown and the click zooms without pinning the too
   assert.equal(hover.role, 'tooltip');
   assert.equal(hover.cursor, 'pointer');
   const zoom = this.exampleTowerZoom, target = this.exampleTowerTarget;
-  assert.equal(zoom.framed, true, 'The entire tower fits inside the viewport margins');
+  assert.equal(zoom.zoom, target.zoom, 'Clicking does not change the zoom');
   assert.equal(zoom.bearing, target.bearing);
   assert.equal(zoom.pitch, target.pitch);
   assert.equal(zoom.canvases, 1);

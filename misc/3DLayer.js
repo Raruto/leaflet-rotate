@@ -33,7 +33,7 @@
  * @property {string} [source] PMTiles URL containing Polygon/MultiPolygon GeoJSON.
  * @property {function(Object): (ExtrusionStyle|null)} [featureStyle] Source styling; null skips.
  * @property {function(PickedFeature): (Node|string)} [tooltipContent] No HTML string evaluation.
- * @property {boolean} [zoomOnClick=false] Frame the entire nearest clicked object.
+ * @property {boolean} [zoomOnClick=false] Center the map on the nearest clicked object without changing zoom.
  * @property {string} [attribution] Standard Leaflet attribution HTML.
  * @property {string} [ariaLabel='3D scene'] Shared canvas accessible name.
  *
@@ -1447,7 +1447,7 @@ L.Layer3D = L.Layer.extend({
     this.fire('featurehover', { feature: this.hoveredFeature, originalEvent: event });
   },
 
-  /** Emit click without pinning; optional zoom is owned by the nearest shared-scene surface. */
+  /** Emit click without pinning; optional centering is owned by the nearest shared-scene surface. */
   _onClick(event) {
     const feature = this._findFeature(event);
     this.hoveredFeature = feature;
@@ -1480,24 +1480,8 @@ L.Layer3D = L.Layer.extend({
         return;
       }
       const x = (min[0] + max[0]) / 2, z = (min[2] + max[2]) / 2;
-      const center = crs.unproject(new L.Point(
-        origin.x + x / metres, origin.y - z / metres));
-      const size = map.getSize(), perspective = size.y * 1.5;
-      const pitch = map.getPitch() * Math.PI / 180, bearing = map.getBearing() * Math.PI / 180;
-      let distance = 0.1;
-      // Fit all eight world bounds corners inside the central 70% of the pitched viewport.
-      for (const px of [min[0], max[0]]) for (const height of [min[1], max[1]]) for (const pz of [min[2], max[2]]) {
-        const right = Math.cos(bearing) * (px - x) - Math.sin(bearing) * (pz - z);
-        const ground = Math.sin(bearing) * (px - x) + Math.cos(bearing) * (pz - z);
-        const down = Math.cos(pitch) * ground - Math.sin(pitch) * height;
-        const toward = Math.sin(pitch) * ground + Math.cos(pitch) * height;
-        distance = Math.max(distance, toward + perspective *
-          Math.max(Math.abs(right) / (size.x * 0.35), Math.abs(down) / (size.y * 0.35)));
-      }
-      const zoom = Math.log2(perspective * 40075016.68557849 * metres / (distance * crs.scale(0)));
-      const snap = map.options.zoomSnap;
-      map.setView(center, Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(),
-        snap ? Math.floor(zoom / snap) * snap : zoom)));
+      const center = crs.unproject(new L.Point(origin.x + x / metres, origin.y - z / metres));
+      map.panTo(center);
     }
     this.fire('featureclick', { feature, originalEvent: event });
   },

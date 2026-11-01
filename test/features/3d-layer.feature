@@ -89,9 +89,9 @@ Feature: Reusable 3D layers
     Given a map with the standalone 3D module and no dependency import map
     Then a 3D layer creates and cleans up its own hover tooltip
 
-  Scenario: Clicking a 3D object zooms only the nearest enabled layer
+  Scenario: Clicking a 3D object centers only the nearest enabled layer without zooming
     Given a map with the standalone 3D module and no dependency import map
-    Then 3D click zoom centers the picked object and respects the maximum zoom
+    Then 3D click centers the picked object without changing zoom
 
   @paris-buildings
   Scenario: Building volumes render with holes, storey heights, and interaction
@@ -146,10 +146,10 @@ Feature: Reusable 3D layers
     Then the 3D canvas and model attribution follow the enabled overlays
 
   @eiffel @3d-example
-  Scenario: Hovering and clicking the Eiffel Tower shows information and zooms without pinning
+  Scenario: Hovering and clicking the Eiffel Tower shows information and centers without pinning
     Given the Eiffel Tower example page is open
     When I hover and click the Eiffel Tower in the 3D example
-    Then the tower information is shown and the click zooms without pinning the tooltip
+    Then the tower information is shown and the click centers without pinning the tooltip
 
   @eiffel
   Scenario: The real Eiffel Tower model follows the map camera

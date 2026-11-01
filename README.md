@@ -141,7 +141,7 @@ World coordinates are metres from each layer's `location`: x east, y up, z south
 | --- | --- |
 | `center` | Geographic origin as `[lat, lng]`; defaults to the map centre on first addition. |
 | `ariaLabel` | Accessible name of the canvas (default `'3D scene'`). |
-| `zoomOnClick` | Default `false`. Frames the entire clicked object using its world bounds, including height, with 15% viewport margins and the current pitch/bearing. Centers on the object's ground bounds; zoom may increase or decrease and respects map zoom limits/snapping. Repeated clicks on the same object keep the same framing. Works with models and individual polygon features, with or without tooltips; only the nearest surface triggers framing when layers overlap. |
+| `zoomOnClick` | Default `false`. Centers the map on the clicked object's ground bounds without changing zoom, pitch, or bearing. Works with models and individual polygon features, with or without tooltips; only the nearest surface triggers centering when layers overlap. |
 | `model` | Optional glTF/GLB URL, resolved relative to the page. Loaded and added automatically before the `ready` event. Supports indexed/interleaved attributes, sparse accessors, node matrices/quaternions and independent repeated mesh nodes. |
 | `rotation`, `scale` | Optional model `[x, y, z]` rotation in radians and scale factors. |
 | `attribution` | Standard Leaflet attribution, added/removed automatically with the layer. |
@@ -180,7 +180,7 @@ Polygon roofs use internal ear clipping with visibility-tested hole bridges and 
 
 `tooltipContent` also works with configured GLB/glTF models. The callback receives `{ id, properties, model, mesh }`: `id` is the model URL, `properties` is its glTF `extras`, `model` is the loaded root and `mesh` is the intersected mesh. Nested meshes are picked recursively. Model programs remain unchanged on hover; the tooltip, pointer cursor and hover/click events behave like polygon tooltips, without click-to-pin.
 
-Picked model and polygon features also expose `point`, the intersection in shared scene coordinates (metres from the shared renderer's origin). Enable `zoomOnClick: true` to zoom onto the clicked object, as in the Eiffel Tower example; this does not pin the tooltip.
+Picked model and polygon features also expose `point`, the intersection in shared scene coordinates (metres from the shared renderer's origin). Enable `zoomOnClick: true` to center the map on the clicked object, as in the Eiffel Tower example; this does not change zoom or pin the tooltip.
 
 Run the renderer/example BDD scenarios on both supported Leaflet versions with `node build/test.js --tags '@3d-layer'`. To also print Chromium/V8 coverage of named JavaScript functions in `misc/3DLayer.js`, set `COVERAGE_3D=1` before running the same command (PowerShell: `$env:COVERAGE_3D='1'`). Coverage is aggregated across scenarios; it measures function execution, not line/branch coverage or GLSL shader coverage. Unexecuted named functions are listed with source line numbers. Coverage collection is disabled by default.
 
