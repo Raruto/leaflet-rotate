@@ -141,7 +141,6 @@
 			touchRotate: true,
 			touchPitch: true,
 			zoomSnap: $('snap').checked ? 0 : 1,
-			preferCanvas: true,
 		});
 		window.layers = new L.Control.Layers({ 'Empty': new L.TileLayer(''), 'Streets': osm, 'Satellite': esri }, null, { collapsed: false }).addTo(lf);
 		window.markers = Object.keys(places).map((name, i) => new L.Marker(places[name], { draggable: true })
