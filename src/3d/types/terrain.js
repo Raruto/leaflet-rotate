@@ -1,7 +1,10 @@
 import './3d.js';
 import './pmtiles.js';
 
-/** Renders IGN Float32 DEM tiles and PMTiles raster basemaps in the shared WebGPU scene. */
+/**
+ * Renders IGN Float32 DEM tiles and PMTiles raster basemaps in the shared WebGPU scene.
+ * Source options: `url` (single-zoom Float32 PMTiles DEM); `bridges` (optional GeoJSON deck polygons with Z, see _addBridges).
+ */
 L.Layer.types.terrain = L.Layer.types['3d'].extend({
   initialize(options = {}) {
     const terrainSource = options.url;
@@ -45,6 +48,9 @@ L.Layer.types.terrain = L.Layer.types['3d'].extend({
       for (const attribute of Object.values(grid)) this._destroyTexture(attribute.buffer);
     }
     this._terrainGrids = null;
+    this._bridges = null;
+    this._disposeMesh(this._bridgeMesh);
+    this._bridgeMesh = null;
     L.Layer.types['3d'].prototype.onRemove.call(this, map);
   },
 
@@ -82,10 +88,13 @@ L.Layer.types.terrain = L.Layer.types['3d'].extend({
           this._terrainTiles.set(`${coords.x}/${coords.y}`, new Float32Array(result.data));
         }
       }));
+      const bridges = this.options.bridges && await fetch(this.options.bridges, { signal: controller.signal })
+        .then(response => { if (!response.ok) throw new Error(`Bridges: HTTP ${response.status}`); return response.json(); });
       if (controller.signal.aborted || this._map !== map) return;
       this._terrainReady = true;
       this._terrainOriginElevation = this._getElevation(this.location) ?? 0;
       for (const layer of Object.values(map._layers)) layer._setTerrainHeight?.();
+      if (bridges) this._addBridges(bridges);
       map.fire('terrainchange');
       this.update();
       this.fire('terrainready');
@@ -102,6 +111,16 @@ L.Layer.types.terrain = L.Layer.types['3d'].extend({
   _getElevation(location) {
     if (!this._map || !this._terrainReady) return null;
     const point = location instanceof L.Point ? location : this._map.project(location, this._terrainZoom);
+    // Bridges bucketed by 64 DEM pixels.
+    for (const bridge of this._bridges?.get(`${Math.floor(point.x / 64)}/${Math.floor(point.y / 64)}`) || []) {
+      if (point.x < bridge.min[0] || point.x > bridge.max[0] || point.y < bridge.min[1] || point.y > bridge.max[1]) continue;
+      for (const [a, b, c] of bridge.triangles) {
+        const d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+        const u = ((b[1] - c[1]) * (point.x - c[0]) + (c[0] - b[0]) * (point.y - c[1])) / d;
+        const v = ((c[1] - a[1]) * (point.x - c[0]) + (a[0] - c[0]) * (point.y - c[1])) / d;
+        if (u >= 0 && v >= 0 && u + v <= 1) return u * a[2] + v * b[2] + (1 - u - v) * c[2];
+      }
+    }
     const x = point.x - 0.5, y = point.y - 0.5;
     const x0 = Math.floor(x), y0 = Math.floor(y);
     const fx = x - x0, fy = y - y0;
@@ -118,6 +137,67 @@ L.Layer.types.terrain = L.Layer.types['3d'].extend({
     if (valid.length < 4) return values[valid[0]];
     return (values[0] * (1 - fx) + values[1] * fx) * (1 - fy) +
       (values[2] * (1 - fx) + values[3] * fx) * fy;
+  },
+
+  /**
+   * Bare-earth DEMs drop bridges: `_getElevation` returns the deck height inside these polygons (GeoJSON
+   * Polygon/MultiPolygon with Z, e.g. IGN BD TOPO), and one mesh draws the 1.2 m thick decks.
+   * ponytail: anything under a deck (quays, boats asking `_getElevation`) also gets the deck height.
+   */
+  _addBridges(geojson) {
+    const map = this._map, crs = map.options.crs, zoom = this._terrainZoom;
+    const origin = crs.project(this.location), metres = Math.cos(this.location.lat * Math.PI / 180);
+    const base = this.root.position[1], position = [], normal = [], color = [];
+    const local = ([lng, lat, z]) => {
+      const p = crs.project(new L.LatLng(lat, lng));
+      return [(p.x - origin.x) * metres, z - base, -(p.y - origin.y) * metres];
+    };
+    const push = (p, n) => { position.push(...p); normal.push(...n); color.push(0.6, 0.58, 0.54); };
+    this._bridges = new Map();
+    for (const { geometry } of geojson.features) {
+      const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.type === 'MultiPolygon' ? geometry.coordinates : [];
+      for (const polygon of polygons) {
+        const rings = polygon.map(ring => ring.slice(0, -1)).filter(ring => ring.length >= 3);
+        if (!rings.length) continue;
+        const pixels = rings.flat().map(([lng, lat, z]) => { const p = map.project([lat, lng], zoom); return [p.x, p.y, z]; });
+        const points = rings.flat().map(local);
+        let triangles;
+        try {
+          const starts = rings.map((ring, r) => rings.slice(0, r).reduce((sum, previous) => sum + previous.length, 0));
+          const [contour, ...holes] = rings.map((ring, r) => ring.map((c, i) => ({ x: pixels[starts[r] + i][0], y: pixels[starts[r] + i][1] })));
+          triangles = this._triangulate(contour, holes);
+        } catch { continue; }
+        const bridge = {
+          triangles: triangles.map(t => t.map(i => pixels[i])),
+          min: [Math.min(...pixels.map(p => p[0])), Math.min(...pixels.map(p => p[1]))],
+          max: [Math.max(...pixels.map(p => p[0])), Math.max(...pixels.map(p => p[1]))],
+        };
+        for (let x = Math.floor(bridge.min[0] / 64); x <= Math.floor(bridge.max[0] / 64); x++) {
+          for (let y = Math.floor(bridge.min[1] / 64); y <= Math.floor(bridge.max[1] / 64); y++) {
+            const key = `${x}/${y}`;
+            this._bridges.set(key, [...this._bridges.get(key) || [], bridge]);
+          }
+        }
+        const below = p => [p[0], p[1] - 1.2, p[2]];
+        for (let [a, b, c] of triangles) {
+          // Counter-clockwise seen from above, so double-sided shading keeps the top lit.
+          const [pa, pb, pc] = [points[a], points[b], points[c]];
+          if ((pb[2] - pa[2]) * (pc[0] - pa[0]) - (pb[0] - pa[0]) * (pc[2] - pa[2]) < 0) [b, c] = [c, b];
+          for (const i of [a, b, c]) push(points[i], [0, 1, 0]);
+          for (const i of [a, c, b]) push(below(points[i]), [0, -1, 0]);
+        }
+        let start = 0;
+        for (const ring of rings) {
+          for (let i = 0; i < ring.length; i++) {
+            const p = points[start + i], q = points[start + (i + 1) % ring.length];
+            const length = Math.hypot(q[0] - p[0], q[2] - p[2]) || 1, n = [(q[2] - p[2]) / length, 0, -(q[0] - p[0]) / length];
+            for (const corner of [p, q, below(q), p, below(q), below(p)]) push(corner, n);
+          }
+          start += ring.length;
+        }
+      }
+    }
+    if (position.length) this._bridgeMesh = this._createMesh({ position, normal, color });
   },
 
   async addRasterTile(layer, coords, tile) {

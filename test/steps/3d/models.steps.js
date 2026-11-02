@@ -113,7 +113,7 @@ Then('native triangulation and glTF decoding preserve geometry without library r
         const outer = reverse ? [...contour].reverse() : contour;
         const inner = reverse ? holes.map(hole => [...hole].reverse()) : holes;
         const points = [outer, ...inner].flat();
-        const triangles = layer.triangulate(outer, inner);
+        const triangles = layer._triangulate(outer, inner);
         const area = triangles.reduce((sum, [a, b, c]) => {
           const [p, q, r] = [points[a], points[b], points[c]];
           return sum + Math.abs((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)) / 2;
@@ -122,7 +122,7 @@ Then('native triangulation and glTF decoding preserve geometry without library r
       }
     }
     let invalidRejected = false;
-    try { layer.triangulate([{ x: 0, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }, { x: 2, y: 0 }]); }
+    try { layer._triangulate([{ x: 0, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }, { x: 2, y: 0 }]); }
     catch (error) { invalidRejected = error instanceof Error; }
     // Interleaved positions, normalized byte normals, and a sparse position override.
     const buffer = new ArrayBuffer(72);

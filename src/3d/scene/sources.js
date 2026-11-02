@@ -152,13 +152,13 @@ export default {
                 });
               });
               const points = paths.flat();
-              for (const [a, b, c] of this.triangulate(paths[0], paths.slice(1))) {
+              for (const [a, b, c] of this._triangulate(paths[0], paths.slice(1))) {
                 addTriangle(points[a], top, points[b], top, points[c], top, 0, 1, 0, baseColor);
                 if (bottom > 0) addTriangle(points[a], bottom, points[b], bottom, points[c], bottom, 0, -1, 0, baseColor);
               }
               paths.forEach((path, index) => {
                 // Interior walls face into the courtyard; exterior walls face away from the building.
-                const sign = this.isClockWise(path) === (index === 0) ? -1 : 1;
+                const sign = this._isClockWise(path) === (index === 0) ? -1 : 1;
                 for (let i = 0; i < path.length; i++) {
                   const a = path[i], b = path[(i + 1) % path.length];
                   const length = Math.hypot(b.x - a.x, b.y - a.y);

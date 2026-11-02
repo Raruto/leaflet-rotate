@@ -41,27 +41,14 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
   const status = L.DomUtil.create('small', 'traffic-status');
   status.style.cssText = 'display:block;max-width:200px;margin:0 0 4px 20px;color:#555;';
   const template = build(model(0)), stride = template.position.length, vertices = stride / 3;
-  let ready = false, frame, request, lanes = [], tripsKey, mesh, route, deck, litAt = -Infinity;
+  let ready = false, frame, request, lanes = [], tripsKey, mesh, route, litAt = -Infinity;
   // Vehicles move on the GPU: `trips` are rebased at most once per second, a compute pass places them every frame.
   let trips = [], rebasedAt = 0, nextCheck = -Infinity, elapsed = 0, gpu = null, lanesDirty = true, stale = false;
   const params = new ArrayBuffer(16), paramFloats = new Float32Array(params), paramInts = new Uint32Array(params);
 
   const createMesh = (data, featureFaces, material, usage = 0) => {
-    const { device } = layer.renderer, attributes = {};
-    for (const [name, values] of Object.entries(data)) {
-      const array = new Float32Array(values);
-      const buffer = device.createBuffer({ size: array.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | usage });
-      device.queue.writeBuffer(buffer, 0, array);
-      attributes[name] = { size: 3, data: array, count: array.length / 3, buffer };
-    }
-    const result = {
-      position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
-      worldMatrix: Array.from(new DOMMatrix().toFloat64Array()), children: [], visible: true, device,
-      geometry: { device, attributes, drawRange: { start: 0, count: attributes.position.count } },
-      program: layer._createProgram({ vertexColors: true, doubleSided: true, ...material }),
-      id: L.Layer.types['3d']._nextId++, renderOrder: 0, extras: { featureFaces },
-    };
-    layer.add(result);
+    const result = layer._createMesh(data, material, usage);
+    result.extras.featureFaces = featureFaces;
     return result;
   };
   const dispose = object => {
@@ -71,9 +58,7 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
       layer.hoveredFeature = null;
       layer._showFeature(null);
     }
-    layer.remove(object);
-    for (const attribute of Object.values(object.geometry.attributes)) attribute.buffer.destroy();
-    layer._removeProgram(object.program);
+    layer._disposeMesh(object);
   };
   const fail = error => {
     status.textContent = `Error: ${error.message}`;
@@ -105,7 +90,7 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
       lane.length = lane.lengths.at(-1);
     }
     ground();
-    dispose(route); dispose(deck); route = deck = null;
+    dispose(route); route = null;
     tripsKey = null;
   };
 
@@ -131,35 +116,6 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
     route = createMesh({ position, normal, color }, [], { emissive: [0.03, 0.25, 0.3], alphaMode: 'BLEND' });
     route.renderOrder = 1000;
   };
-  // Bare-earth DEMs drop bridge decks: where a lane runs 2 m or more above the terrain, draw a 10 m wide, 1.2 m thick deck.
-  const drawDeck = () => {
-    const terrain = layer._map._terrain3D, base = layer.root.position[1], position = [], normal = [], color = [];
-    deck = false;
-    if (!terrain?._terrainReady) return;
-    const quad = (corners, n) => {
-      for (const i of [0, 1, 2, 0, 2, 3]) { position.push(...corners[i]); normal.push(...n); color.push(0.6, 0.58, 0.54); }
-    };
-    for (const { points, lengths, latlngs } of lanes) for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1], b = points[i], length = lengths[i] - lengths[i - 1];
-      if (!length) continue;
-      const ux = (b[0] - a[0]) / length, uz = (b[1] - a[1]) / length, steps = Math.ceil(length / 4);
-      const at = t => [a[0] + (b[0] - a[0]) * t - uz * side, a[2] + (b[2] - a[2]) * t - 0.02, a[1] + (b[1] - a[1]) * t + ux * side];
-      for (let k = 0; k < steps; k++) {
-        const t = (k + 0.5) / steps, lat = latlngs[i - 1][0] + (latlngs[i][0] - latlngs[i - 1][0]) * t;
-        const elevation = terrain._getElevation([lat, latlngs[i - 1][1] + (latlngs[i][1] - latlngs[i - 1][1]) * t]);
-        if (!Number.isFinite(elevation) || a[2] + (b[2] - a[2]) * t - (elevation - base) < 2) continue;
-        const p = at(k / steps), q = at((k + 1) / steps), x = -uz * 5, z = ux * 5;
-        const [pl, pr, ql, qr] = [[p, -1], [p, 1], [q, -1], [q, 1]].map(([[px, py, pz], s]) => [px + x * s, py, pz + z * s]);
-        const below = c => [c[0], c[1] - 1.2, c[2]];
-        quad([pl, pr, qr, ql], [0, 1, 0]);
-        quad([below(pl), below(ql), below(qr), below(pr)], [0, -1, 0]);
-        quad([pr, below(pr), below(qr), qr], [-uz, 0, ux]);
-        quad([pl, ql, below(ql), below(pl)], [uz, 0, -ux]);
-      }
-    }
-    if (position.length) deck = createMesh({ position, normal, color }, []);
-  };
-
   // One batched mesh, `vertices` per vehicle; the compute pass writes its position/normal buffers (STORAGE).
   const rebuild = () => {
     dispose(mesh); mesh = null;
@@ -340,7 +296,6 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
       const key = trips.map(trip => trip.id).join();
       changed = key !== tripsKey || (outline && !route && lanes.length);
       if (outline && !route && lanes.length) drawRoute();
-      if (deck == null && lanes.length) { drawDeck(); changed ||= Boolean(deck); }
       if (key !== tripsKey) { rebuild(); tripsKey = key; }
       if (mesh) rebase();
       if (status.textContent !== text) status.textContent = text;
@@ -394,7 +349,7 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
   const terrain = () => {
     if (!lanes.length) return;
     ground();
-    dispose(route); dispose(deck); route = deck = null;
+    dispose(route); route = null;
     if (mesh) bounds();
     if (!frame) tick();
   };
@@ -410,7 +365,7 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
     request?.abort();
     cancelAnimationFrame(frame); frame = undefined;
     layer._map.off('simulationtimechange layerremove', update).off('terrainchange', terrain);
-    dispose(mesh); dispose(route); dispose(deck); mesh = route = deck = null;
+    dispose(mesh); dispose(route); mesh = route = null;
     destroyGpu();
     lanes = []; trips = []; tripsKey = loaded = null;
   });

@@ -304,9 +304,12 @@ export default {
         skyDirection: vec4<f32>,
         atmosphereTint: vec4<f32>,
       };
+      struct Solar {
+        matrix: mat4x4<f32>,
+        params: vec4<f32>,
+      };
       @group(0) @binding(0) var<uniform> u: Mesh;
       @group(0) @binding(1) var<uniform> frame: Frame;
-      struct Solar { matrix: mat4x4<f32>, params: vec4<f32> };
       @group(1) @binding(0) var<uniform> solar: Solar;
       @group(1) @binding(1) var shadowTexture: texture_depth_2d;
       @group(1) @binding(2) var shadowSampler: sampler_comparison;
@@ -318,18 +321,16 @@ export default {
         @location(2) viewPosition: vec3<f32>,
         @location(6) shadowPosition: vec4<f32>,
         @location(7) worldPosition: vec3<f32>,
-        ${sparkle ? '@location(8) localPosition: vec3<f32>,' : ''}
+        ${sparkle  ? '@location(8) localPosition: vec3<f32>,' : ''}
         ${textured ? '@location(3) uv: vec2<f32>,' : ''}
-        ${hasRoof ? '@location(4) roofUv: vec2<f32>, @location(5) roof: f32,' : ''}
+        ${hasRoof  ? '@location(4) roofUv: vec2<f32>, @location(5) roof: f32,' : ''}
       };
       const PI: f32 = 3.14159265;
       fn toLinear(c: vec3<f32>) -> vec3<f32> {
-        return select(c / 12.92, pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4)),
-          c >= vec3<f32>(0.04045));
+        return select(c / 12.92, pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4)), c >= vec3<f32>(0.04045));
       }
       fn toSRGB(c: vec3<f32>) -> vec3<f32> {
-        return select(c * 12.92, 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055),
-          c >= vec3<f32>(0.0031308));
+        return select(c * 12.92, 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055), c >= vec3<f32>(0.0031308));
       }
       fn sunVisibility(position: vec4<f32>) -> f32 {
         let p = position.xyz / position.w;
@@ -368,8 +369,7 @@ export default {
           }
         ` : ''}
         let sunlight = sunVisibility(input.shadowPosition);
-        let worldNormal = normalize(transpose(mat3x3<f32>(frame.viewMatrix[0].xyz,
-          frame.viewMatrix[1].xyz, frame.viewMatrix[2].xyz)) * normalize(input.normal)) * select(-1.0, 1.0, frontFacing);
+        let worldNormal = normalize(transpose(mat3x3<f32>(frame.viewMatrix[0].xyz, frame.viewMatrix[1].xyz, frame.viewMatrix[2].xyz)) * normalize(input.normal)) * select(-1.0, 1.0, frontFacing);
         let artificial = localLighting(input.worldPosition, worldNormal);
         ${material.unlit ? `
           let rasterTexel = textureSample(baseTexture, baseTextureSampler, input.uv);
@@ -442,12 +442,8 @@ export default {
     const vertexBuffers = [
       { arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] },
       { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] },
-      material.vertexColors
-        ? { arrayStride: 12, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x3' }] }
-        : null,
-      textured
-        ? { arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }] }
-        : null,
+      material.vertexColors ? { arrayStride: 12, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x3' }] } : null,
+      textured              ? { arrayStride: 8, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x2' }] }  : null,
     ];
     const bindGroupEntries = [{
       binding: 0,
@@ -515,6 +511,36 @@ export default {
 
   _removeProgram(program) {
     program.pipelineCache.clear();
+  },
+
+  /**
+   * Add a non-indexed, vertex-coloured mesh from flat vec3 arrays `{ position, normal, color }` in layer-local metres.
+   * `usage` adds GPUBufferUsage flags to the vertex buffers (e.g. STORAGE for compute passes).
+   */
+  _createMesh(data, material = {}, usage = 0) {
+    const { device } = this.renderer, attributes = {};
+    for (const [name, values] of Object.entries(data)) {
+      const array = new Float32Array(values);
+      const buffer = device.createBuffer({ size: Math.max(4, array.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | usage });
+      device.queue.writeBuffer(buffer, 0, array);
+      attributes[name] = { size: 3, data: array, count: array.length / 3, buffer };
+    }
+    const mesh = {
+      position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
+      worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], children: [], visible: true, device,
+      geometry: { device, attributes, drawRange: { start: 0, count: attributes.position.count } },
+      program: this._createProgram({ vertexColors: true, doubleSided: true, ...material }),
+      id: L.Layer.types['3d']._nextId++, renderOrder: 0, extras: {},
+    };
+    this.add(mesh);
+    return mesh;
+  },
+
+  _disposeMesh(mesh) {
+    if (!mesh) return;
+    this.remove(mesh);
+    for (const attribute of Object.values(mesh.geometry.attributes)) attribute.buffer.destroy();
+    this._removeProgram(mesh.program);
   },
 
   /** Cache local AABB and center for ray picking and transparent mesh sorting. */

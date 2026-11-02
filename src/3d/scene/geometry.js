@@ -36,10 +36,11 @@ export default {
    * @param {number} end Exclusive vertex index.
    * @param {Object} color sRGB {r,g,b}, typically from color().
    */
-  setVertexColor(mesh, start, end, color) {
-    const attribute = mesh.geometry.attributes.color;
-    for (let i = start; i < end; i++) attribute.data.set([color.r, color.g, color.b], i * 3);
-    attribute.needsUpdate = true;
+  _setVertexColor(mesh, start, end, color) {
+    for (let i = start; i < end; i++) {
+      mesh.geometry.attributes.color.data.set([color.r, color.g, color.b], i * 3);
+    }
+    mesh.geometry.attributes.color.needsUpdate = true;
     return this.update();
   },
 
@@ -53,7 +54,7 @@ export default {
    *
    * @returns {number[][]} Triangles as indices in `[...contour, ...holes.flat()]`.
    */
-  triangulate(contour, holes = []) {
+  _triangulate(contour, holes = []) {
     const points = [contour, ...holes].flat();
     if (points.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) throw new Error('Invalid polygon coordinates');
     // Translate near the origin to avoid cancellation with geographic coordinates.
@@ -78,7 +79,7 @@ export default {
     let offset = 0;
     const rings = [contour, ...holes].map((path, index) => {
       const ring = clean(vertices.slice(offset, offset += path.length));
-      if (this.isClockWise(ring) !== Boolean(index)) ring.reverse();
+      if (this._isClockWise(ring) !== Boolean(index)) ring.reverse();
       return ring;
     });
     const inside = (point, ring) => {
@@ -144,7 +145,7 @@ export default {
   /**
    * @returns {boolean} Whether the `{x, y}` points are in clockwise order.
    */
-  isClockWise(points) {
+  _isClockWise(points) {
     let area = 0;
     for (let i = 0; i < points.length; i++) {
       const a = points[i], b = points[(i + 1) % points.length];
@@ -158,7 +159,9 @@ export default {
     const { top, bottom = 0, trunkRadius, crownRadius, crownBottom, crownShape = 'round' } = style;
     if (![trunkRadius, crownRadius, crownBottom].every(Number.isFinite) ||
       trunkRadius <= 0 || crownRadius < trunkRadius || crownBottom <= bottom || crownBottom >= top ||
-      !['round', 'cone'].includes(crownShape)) throw new Error('Invalid tree dimensions or crown shape');
+      !['round', 'cone'].includes(crownShape)) {
+        throw new Error('Invalid tree dimensions or crown shape');
+      }
     const trunk = this.color(style.trunkColor ?? 0x72513a);
     const crown = this.color(style.color ?? 0x4f823b);
     const ring = radius => Array.from({ length: 8 }, (_, i) => ({

@@ -56,10 +56,12 @@
 					source: {
 						type: 'terrain',
 						url: 'data/paris-terrain.pmtiles',
+						// IGN BD TOPO bridge decks (WFS BDTOPO_V3:construction_surfacique, nature='Pont'), absent from the DEM.
+						bridges: '../misc/paris-bridges.geojson',
 						center: [48.8582601, 2.29449985],
 						ariaLabel: 'IGN terrain with 3D map layers',
 					},
-					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_RGE-ALTI">RGE ALTI</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>',
+					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_RGE-ALTI">RGE ALTI</a>, <a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-TOPO">BD TOPO</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>',
 				}).addTo(map),
 				// Offline archive built by `node build/pmtiles.js`.
 				'Buildings': new L.Layer({
@@ -227,6 +229,9 @@
 					type: 'sunlight'
 				} }).addTo(map),
 			}, { collapsed: false }).addTo(map);
+
+			// Walk button (top left): third-person walk from the map centre, W/S to run, A/D to turn, drag to look around, Esc to exit.
+			new L.Layer({ source: { type: 'walk' } }).addTo(map);
 		</script>
 	</body>
 </html>

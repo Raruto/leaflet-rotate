@@ -7,9 +7,10 @@
  * - types/: one module per `source.type`, the only files imported by this router:
  *   - 'pmtiles': raster PMTiles basemap (an L.TileLayer), draped on the terrain when present;
  *   - '3d': shared WebGPU scene with a GLB/glTF model, PMTiles GeoJSON features, or empty;
- *   - 'terrain': Float32 PMTiles DEM that deforms raster tiles, buildings and the camera;
+ *   - 'terrain': Float32 PMTiles DEM that deforms raster tiles, buildings and the camera, plus optional bridge decks;
  *   - 'sunlight': simulation clock control, sun/moon lighting and shadows;
- *   - 'traffic': vehicles moving along GeoJSON lanes (measured flow or timetable).
+ *   - 'traffic': vehicles moving along GeoJSON lanes (measured flow or timetable);
+ *   - 'walk': third-person pedestrian moved with the keyboard, the camera following behind.
  * - scene/: the parts (mixins) composing the '3d' type: GPU setup, models, PMTiles reader, geometry,
  *   lighting, sources, picking and rendering. Other 3D types extend '3d'.
  * - utils/: pure helpers without DOM or GPU (sun position, traffic scheduling, vehicle models), unit-tested in Node.

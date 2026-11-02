@@ -177,10 +177,14 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
       return pixels;
     };
     let covered = 0;
+    // DEM-only occlusion: the boat legitimately passes under bridge decks.
+    const bridges = map._terrain3D._bridges;
+    map._terrain3D._bridges = null;
     for (let distance = 0; distance < cruiseDistance; distance += 10) {
       const position = cruisePosition(distance / cruiseDistance);
       if (map._terrain3D._getElevation(position) > 27.18) covered += 10;
     }
+    map._terrain3D._bridges = bridges;
     const riverCoverage = covered / cruiseDistance;
     map.setPitch(0); map.setBearing(0); map.fitBounds(cruiseRoute, { animate: false });
     const overview = await capture();
