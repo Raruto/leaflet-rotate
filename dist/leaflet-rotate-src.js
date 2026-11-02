@@ -206,6 +206,45 @@ var leafletRotate = (() => {
     }
   });
 
+  // src/layer/Layer.js
+  var Pending = L.Layer.extend({
+    onAdd() {
+    },
+    onRemove() {
+    }
+  });
+  var loading = Promise.resolve();
+  L.Layer.types = {};
+  L.Layer.include({
+    initialize: /* @__PURE__ */ ((initialize) => function(options) {
+      if (Object.getPrototypeOf(this) !== L.Layer.prototype || !options?.source) {
+        return initialize?.apply(this, arguments);
+      }
+      const { source: { type = /\.pmtiles(?:[?#]|$)/i.test(options.source.url) ? "pmtiles" : "3d", ...source }, ...core } = options;
+      const settings = { ...source, ...core };
+      if (L.Layer.types[type]) {
+        const Type = L.Layer.types[type];
+        Object.setPrototypeOf(this, Type.prototype);
+        this.options = Object.create(Type.prototype.options);
+        return Type.prototype.initialize.call(this, settings);
+      }
+      Object.setPrototypeOf(this, Pending.prototype);
+      L.Util.setOptions(this, core);
+      loading = loading.catch(() => {
+      }).then(() => ((url) => import(url))(`./3d/types/${type}.js`));
+      const pending = this.ready = loading.then(() => {
+        const map = this._map;
+        map?.removeLayer(this);
+        const Type = L.Layer.types[type];
+        Object.setPrototypeOf(this, Type.prototype);
+        this.options = Object.create(Type.prototype.options);
+        Type.prototype.initialize.call(this, settings);
+        map?.addLayer(this);
+        return this.ready === pending ? this : this.ready;
+      });
+    })(L.Layer.prototype.initialize)
+  });
+
   // src/layer/Popup.js
   var popupProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Popup.prototype));
   L.Popup.include({

@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { Then } from '@cucumber/cucumber';
 
 Then('sky and terrain change from day to night and celestial bodies follow the camera', { timeout: 90000 }, async function () {
-  await this.page.waitForFunction(() => sunlightControl && map._sunlight);
+  await this.page.waitForFunction(() => sunlightOverlay.control && map._sunlight);
   const result = await this.page.evaluate(async () => {
     const owner = L.Layer.types['3d']._renderers.get(map), { device } = owner.renderer;
-    const input = sunlightControl.getContainer().querySelector('input[type=range]');
-    const date = sunlightControl.getContainer().querySelector('input[type=date]');
+    const input = sunlightOverlay.control.getContainer().querySelector('input[type=range]');
+    const date = sunlightOverlay.control.getContainer().querySelector('input[type=date]');
     date.value = '2026-06-21';
     const select = minute => {
       input.value = String(minute);
@@ -67,7 +67,7 @@ Then('sky and terrain change from day to night and celestial bodies follow the c
     const moonMoved = moon.style.left !== moonPosition[0] || moon.style.top !== moonPosition[1];
     map.setPitch(0);
     const hiddenAtZeroPitch = sun.hidden && moon.hidden;
-    const checkbox = sunlightControl.getContainer().querySelector('input[type=checkbox]');
+    const checkbox = sunlightOverlay.control.getContainer().querySelector('input[type=checkbox]');
     checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
     owner._render();
     const restored = Array.from(owner.renderer.uniformData.slice(56, 59));
@@ -88,28 +88,28 @@ Then('sky and terrain change from day to night and celestial bodies follow the c
 });
 
 Then('the solar control starts at current time and its slider controls the sunlight', { timeout: 30000 }, async function () {
-  await this.page.waitForFunction(() => sunlightControl && map._sunlight);
+  await this.page.waitForFunction(() => sunlightOverlay.control && map._sunlight);
   const initial = await this.page.evaluate(() => ({
-    current: Math.abs(sunlightControl.time.getTime() - Date.now()) < 65000 && sunlightControl.live,
-    date: sunlightControl.getContainer().querySelector('input[type=date]').value,
-    minute: Number(sunlightControl.getContainer().querySelector('input[type=range]').value),
-    time: sunlightControl.time.toISOString(),
-    topLeft: document.querySelector('.leaflet-top.leaflet-left').firstElementChild === sunlightControl.getContainer(),
+    current: Math.abs(sunlightOverlay.control.time.getTime() - Date.now()) < 65000 && sunlightOverlay.control.live,
+    date: sunlightOverlay.control.getContainer().querySelector('input[type=date]').value,
+    minute: Number(sunlightOverlay.control.getContainer().querySelector('input[type=range]').value),
+    time: sunlightOverlay.control.time.toISOString(),
+    topLeft: document.querySelector('.leaflet-top.leaflet-left').firstElementChild === sunlightOverlay.control.getContainer(),
     overlays: layers._layers.filter(e => e.overlay).map(e => e.name),
   }));
   assert.equal(initial.current, true);
   assert.equal(initial.date, initial.time.slice(0, 10));
   assert.equal(initial.minute, Number(initial.time.slice(11, 13)) * 60 + Number(initial.time.slice(14, 16)));
   assert.equal(initial.topLeft, true);
-  assert.deepEqual(initial.overlays, ['IGN Terrain (3D)', 'Paris buildings (3D)', 'Paris trees (3D)', 'Eiffel Tower (3D)', 'Streetlights', 'Sunlight & shadows', 'Seine tourist boats (scheduled)']);
+  assert.deepEqual(initial.overlays, ['Terrain (3D)', 'Buildings', 'Trees', 'Eiffel Tower', 'Streetlights', 'Shadows', 'Bateaux-Mouches']);
   await this.page.getByLabel('Solar date (UTC)').fill('2026-06-21');
   const slider = this.page.getByRole('slider', { name: 'Time of day (UTC)' });
   await slider.focus();
   await slider.press('Home');
   await slider.press('ArrowRight');
   const selected = await this.page.evaluate(() => ({
-    time: sunlightControl.time.toISOString(), live: sunlightControl.live,
-    output: sunlightControl.getContainer().querySelector('output').textContent,
+    time: sunlightOverlay.control.time.toISOString(), live: sunlightOverlay.control.live,
+    output: sunlightOverlay.control.getContainer().querySelector('output').textContent,
     altitude: map._sunlight.altitude,
   }));
   assert.equal(selected.time, '2026-06-21T00:01:00.000Z');
@@ -118,22 +118,22 @@ Then('the solar control starts at current time and its slider controls the sunli
   assert.ok(selected.altitude < 0);
   await this.page.getByRole('button', { name: 'Now', exact: true }).click();
   assert.equal(await this.page.evaluate(() =>
-    sunlightControl.live && Math.abs(sunlightControl.time.getTime() - Date.now()) < 5000), true);
-  await this.page.getByLabel('Sunlight & shadows', { exact: true }).uncheck();
+    sunlightOverlay.control.live && Math.abs(sunlightOverlay.control.time.getTime() - Date.now()) < 5000), true);
+  await this.page.getByLabel('Shadows', { exact: true }).uncheck();
   assert.equal(await this.page.evaluate(() => map._sunlight === undefined), true);
-  await this.page.getByLabel('Sunlight & shadows', { exact: true }).check();
+  await this.page.getByLabel('Shadows', { exact: true }).check();
   assert.equal(await this.page.evaluate(() => !!map._sunlight), true);
   await this.page.getByLabel('Solar date (UTC)').fill('');
   assert.match(await this.page.locator('.sunlight-status').textContent(), /Error/);
   assert.equal(await this.page.evaluate(() => map._sunlight === undefined), true);
   await this.page.getByRole('button', { name: 'Now', exact: true }).click();
-  assert.equal(await this.page.evaluate(() => !!map._sunlight && sunlightControl.live), true);
+  assert.equal(await this.page.evaluate(() => !!map._sunlight && sunlightOverlay.control.live), true);
   await this.page.evaluate(() => map.removeLayer(sunlightOverlay));
   assert.equal(await this.page.evaluate(() => !map._sunlight && !document.querySelector('.sunlight-control')), true);
 });
 
 Then('solar lighting and depth shadows follow the time slider', { timeout: 90000 }, async function () {
-  await this.page.waitForFunction(() => sunlightControl);
+  await this.page.waitForFunction(() => sunlightOverlay.control);
   const gpuErrors = [];
   this.page.on('console', message => { if (message.type() === 'error') gpuErrors.push(message.text()); });
   await this.page.getByLabel('Solar date (UTC)').fill('2026-06-21');

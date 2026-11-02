@@ -6,19 +6,19 @@ const coveredFunctions = new Map();
 
 Then('the offline Paris trees render and recover after toggling', { timeout: 60000 }, async function () {
   const loaded = () => this.page.waitForFunction(() => {
-    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const tree = layers._layers.find(entry => entry.name === 'Trees').layer;
     const error = [...tree._areas.values()].find(area => area.error);
     if (error) throw new Error(error.error);
     return tree._inflight === 0 && [...tree._areas.values()].some(area => area.buildings > 0);
   }, null, { timeout: 45000 });
   await loaded();
   const result = await this.page.evaluate(() => {
-    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const tree = layers._layers.find(entry => entry.name === 'Trees').layer;
     const features = tree.root.children.flatMap(mesh => mesh.extras.featureFaces);
     const result = {
       count: features.length, inventory: features.every(f => f.id === f.properties.idbase),
       vertices: tree.root.children.every(mesh => [...mesh.geometry.attributes.position.data].every(Number.isFinite)),
-      shared: tree.renderer === layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer.renderer,
+      shared: tree.renderer === layers._layers.find(entry => entry.name === 'Buildings').layer.renderer,
     };
     window.treeRendererBefore = tree.renderer;
     window.treeMeshesBefore = [...tree.root.children];
@@ -28,16 +28,16 @@ Then('the offline Paris trees render and recover after toggling', { timeout: 600
   assert.equal(result.inventory, true);
   assert.equal(result.vertices, true);
   assert.equal(result.shared, true);
-  const control = this.page.getByRole('checkbox', { name: 'Paris trees (3D)', exact: true });
+  const control = this.page.getByRole('checkbox', { name: 'Trees', exact: true });
   await control.uncheck();
   assert.equal(await this.page.evaluate(() => {
-    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const tree = layers._layers.find(entry => entry.name === 'Trees').layer;
     return !tree._map && tree._areas.size === 0 && window.treeRendererBefore.canvas.isConnected;
   }), true);
   await control.check();
   await loaded();
   assert.equal(await this.page.evaluate(() => {
-    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const tree = layers._layers.find(entry => entry.name === 'Trees').layer;
     return tree.renderer === window.treeRendererBefore &&
       tree.root.children.every(mesh => !window.treeMeshesBefore.includes(mesh));
   }), true);
@@ -46,7 +46,7 @@ Then('the offline Paris trees render and recover after toggling', { timeout: 600
 Then('tree points preserve dimensions, terrain elevation, picking and validation', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer({ type: '3d' }).addTo(map);
+    const layer = new L.Layer({ source: { type: '3d' } }).addTo(map);
     await nativeChecks.ready(layer);
     const center = map.getCenter(), zoom = 16;
     const tile = map.project(center, zoom).divideBy(256).floor();
@@ -123,7 +123,7 @@ Then('tree points preserve dimensions, terrain elevation, picking and validation
 
 Then('tree inventory attributes control dimensions, crowns and tooltip estimates', async function () {
   const result = await this.page.evaluate(() => {
-    const entry = layers._layers.find(entry => entry.name === 'Paris trees (3D)');
+    const entry = layers._layers.find(entry => entry.name === 'Trees');
     const tree = entry.layer;
     const properties = { typeemplacement: 'Arbre', hauteurenm: 20, circonferenceencm: 185,
       genre: 'Platanus', espece: 'x hispanica', libellefrancais: '<img src=x onerror=alert(1)>',
@@ -132,7 +132,7 @@ Then('tree inventory attributes control dimensions, crowns and tooltip estimates
     const tooltip = tree.options.tooltipContent({ properties });
     const missing = tree.options.tooltipContent({ properties: { ...properties, hauteurenm: 0, circonferenceencm: null } });
     return {
-      enabled: map.hasLayer(tree), source: tree.options.source,
+      enabled: map.hasLayer(tree), source: tree.options.url,
       measured: style({}), conifer: style({ genre: 'Picea' }), palm: style({ genre: 'Phoenix' }),
       estimates: ['Jeune (arbre)', 'Jeune (arbre)Adulte', 'Adulte', 'Mature', null].map(stage =>
         style({ hauteurenm: 0, circonferenceencm: 0, stadedeveloppement: stage })),
@@ -167,8 +167,8 @@ Then('roof imagery follows raster loading, background changes and renderer owner
     const boundary = map.project(map.getCenter(), zoom).divideBy(256).floor().multiplyBy(256);
     map.setView(map.unproject(boundary, zoom), zoom, { animate: false });
     map.setPitch(0); map.setBearing(0);
-    const owner = new L.Layer({ type: '3d' }).addTo(map);
-    const layer = new L.Layer({ type: '3d', roofTexture: true }).addTo(map);
+    const owner = new L.Layer({ source: { type: '3d' } }).addTo(map);
+    const layer = new L.Layer({ source: { type: '3d', roofTexture: true } }).addTo(map);
     await Promise.all([nativeChecks.ready(owner), nativeChecks.ready(layer)]);
     const ring = [[-60, -60], [60, -60], [60, 60], [-60, 60], [-60, -60]]
       .map(offset => map.unproject(boundary.add(offset), zoom)).map(p => [p.lng, p.lat]);
@@ -193,8 +193,8 @@ Then('roof imagery follows raster loading, background changes and renderer owner
         return { data: (x % 2 === 0) !== swapped ? red : blue };
       },
     });
-    const first = new L.Layer({ type: 'pmtiles', source: 'roof-first.pmtiles', archive: archive(false) });
-    const second = new L.Layer({ type: 'pmtiles', source: 'roof-second.pmtiles', archive: archive(true) });
+    const first = new L.Layer({ source: { type: 'pmtiles', url: 'roof-first.pmtiles', archive: archive(false) } });
+    const second = new L.Layer({ source: { type: 'pmtiles', url: 'roof-second.pmtiles', archive: archive(true) } });
     const sample = (offset, height) => {
       layer._shared._render();
       const crs = map.options.crs;
@@ -341,14 +341,13 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
         await new Promise(requestAnimationFrame);
       }
     };
-    const terrain = new L.Layer({ type: 'terrain', source: 'fixture-terrain.pmtiles' });
-    const raster = new L.Layer({ type: 'pmtiles', source: 'fixture-raster.pmtiles',
-      archive: { getHeader: async () => ({ ...header, tileType: 2 }), getZxy: async () => ({ data: image }) },
-    });
-    const buildings = new L.Layer({ type: '3d', source: 'fixture-buildings.pmtiles', roofTexture: true,
-      featureStyle: () => ({ top: 15 }) }).addTo(map);
+    const terrain = new L.Layer({ source: { type: 'terrain', url: 'fixture-terrain.pmtiles' } });
+    const raster = new L.Layer({ source: { type: 'pmtiles', url: 'fixture-raster.pmtiles',
+      archive: { getHeader: async () => ({ ...header, tileType: 2 }), getZxy: async () => ({ data: image }) } } });
+    const buildings = new L.Layer({ source: { type: '3d', url: 'fixture-buildings.pmtiles', roofTexture: true,
+      featureStyle: () => ({ top: 15 }) } }).addTo(map);
     const modelLocation = map.unproject(center.add([20, 20]), zoom);
-    const model = new L.Layer({ type: '3d', center: [modelLocation.lat, modelLocation.lng] }).addTo(map);
+    const model = new L.Layer({ source: { type: '3d', center: [modelLocation.lat, modelLocation.lng] } }).addTo(map);
     const errors = [];
     terrain.on('error', ({ error }) => errors.push(error.message));
     raster.on('tileerror', ({ error }) => errors.push(error.message));
@@ -496,7 +495,7 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
 Then('cancelled building downloads recover without errors or stale meshes', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer({ type: '3d', source: 'paris-buildings.pmtiles' }).addTo(map);
+    const layer = new L.Layer({ source: { type: '3d', url: 'paris-buildings.pmtiles' } }).addTo(map);
     await nativeChecks.ready(layer);
     const idle = async () => {
       const deadline = performance.now() + 3000;
@@ -728,7 +727,7 @@ Then('raster zoom transitions stay paused between WebGPU frames and resume on re
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     const tiles = new L.TileLayer('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=').addTo(map);
-    const first = new L.Layer({ type: '3d' }).addTo(map), second = new L.Layer({ type: '3d' }).addTo(map);
+    const first = new L.Layer({ source: { type: '3d' } }).addTo(map), second = new L.Layer({ source: { type: '3d' } }).addTo(map);
     await Promise.all([first, second].map(nativeChecks.ready));
     let samples = 0, frozen = true, transferred = false, resumed = false;
     const render = first._render;
@@ -858,7 +857,7 @@ Then('raster tiles remain aligned after panning before their first pitch change'
 Then('building blocks cover pitched views and retain overlapping areas', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer({ type: '3d', source: 'paris-buildings.pmtiles' }).addTo(map);
+    const layer = new L.Layer({ source: { type: '3d', url: 'paris-buildings.pmtiles' } }).addTo(map);
     await nativeChecks.ready(layer);
     const idle = async () => { while (layer._inflight) await new Promise(requestAnimationFrame); };
     await idle();
@@ -911,9 +910,12 @@ Then('building blocks cover pitched views and retain overlapping areas', async f
 });
 
 Then('the native PMTiles methods handle directories, compression and failures', async function () {
-  await this.context.unroute('**/misc/layer.js');
-  await this.page.evaluate(() => { delete L.Layer.types; });
-  await this.page.addScriptTag({ url: `${this.baseUrl}/misc/layer.js` });
+  await this.context.unroute('**/dist/3d/types/*.js');
+  // Fresh, unmocked modules: a query string bypasses the module cache.
+  await this.page.evaluate(async base => {
+    await import(`${base}/dist/3d/types/3d.js?native`);
+    await import(`${base}/dist/3d/types/pmtiles.js?native`);
+  }, this.baseUrl);
   const exposesReaderClass = await this.page.evaluate(() => 'PMTiles' in L);
   assert.equal(exposesReaderClass, false, 'PMTiles methods belong to their consuming layers');
   const directory = entries => {
@@ -985,7 +987,7 @@ Then('the native PMTiles methods handle directories, compression and failures', 
     });
   });
   const result = await this.page.evaluate(async () => {
-    const archive = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles' });
+    const archive = new L.Layer({ source: { type: 'pmtiles', url: 'fixture.pmtiles' } });
     await archive.ready;
     const header = archive.header;
     const read = async (x, y) => {
@@ -997,18 +999,18 @@ Then('the native PMTiles methods handle directories, compression and failures', 
     const cancelled = await archive.getZxy(1, 0, 0, abort.signal).then(() => false, error => error.name === 'AbortError');
     const errors = [];
     for (const query of ['version', 'compression', 'http', 'truncated', 'changed']) {
-      const reader = new L.Layer({ type: 'pmtiles', source: `fixture.pmtiles?${query}` });
+      const reader = new L.Layer({ source: { type: 'pmtiles', url: `fixture.pmtiles?${query}` } });
       errors.push(await reader.ready.then(() => reader.getZxy(1, 0, 0))
         .then(() => '', error => error.message));
     }
     const invalid = await archive.getZxy(1, 2, 0).then(() => false, error => error.message === 'Invalid PMTiles tile coordinates');
-    const full = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles?full' });
+    const full = new L.Layer({ source: { type: 'pmtiles', url: 'fixture.pmtiles?full' } });
     await full.ready;
     const fullTile = await full.getZxy(1, 1, 0);
-    const plain = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles?plain' });
+    const plain = new L.Layer({ source: { type: 'pmtiles', url: 'fixture.pmtiles?plain' } });
     await plain.ready;
     const plainTile = await plain.getZxy(1, 1, 0);
-    const badDirectory = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles?directory' });
+    const badDirectory = new L.Layer({ source: { type: 'pmtiles', url: 'fixture.pmtiles?directory' } });
     const directoryError = await badDirectory.ready.then(() => badDirectory.getZxy(1, 0, 0))
       .then(() => false, error => error instanceof Error);
     return { tiles, cancelled, invalid, zoom: [header.minZoom, header.maxZoom], errors,
@@ -1026,13 +1028,13 @@ Then('the native PMTiles methods handle directories, compression and failures', 
     'Unable to read PMTiles: HTTP 503', 'Truncated PMTiles range', 'PMTiles archive changed; recreate the layer']);
   assert.equal(requests.filter(request => request.start === 127).length, 5, 'One root request per reader');
   const real = await this.page.evaluate(async () => {
-    const buildings = new L.Layer({ type: '3d', source: '../examples/data/paris-buildings.pmtiles' });
+    const buildings = new L.Layer({ source: { type: '3d', url: '../examples/data/paris-buildings.pmtiles' } });
     await nativeChecks.ready(buildings);
     const header = buildings.header;
     const point = test3d.map.project(new L.LatLng(48.85826, 2.2945), header.minZoom).divideBy(256).floor();
     const tile = await buildings.getZxy(header.minZoom, point.x, point.y);
     const collection = JSON.parse(new TextDecoder().decode(tile.data));
-    const raster = new L.Layer({ type: 'pmtiles', source: '../examples/data/paris-orthophotos.pmtiles' });
+    const raster = new L.Layer({ source: { type: 'pmtiles', url: '../examples/data/paris-orthophotos.pmtiles' } });
     await raster.ready;
     const rasterHeader = raster.header;
     const rasterPoint = test3d.map.project(new L.LatLng(48.85826, 2.2945), rasterHeader.maxZoom).divideBy(256).floor();
@@ -1054,7 +1056,7 @@ Before({ tags: '@3d-layer' }, async function () {
 After({ tags: '@3d-layer' }, async function () {
   if (!process.env.COVERAGE_3D) return;
   const entries = await this.page.coverage.stopJSCoverage();
-  for (const entry of entries.filter(entry => entry.url.endsWith('/misc/layer.js'))) {
+  for (const entry of entries.filter(entry => entry.url.includes('/dist/3d/types/'))) {
     for (const fn of entry.functions) {
       const range = fn.ranges[0];
       if (!fn.functionName) continue;
@@ -1115,7 +1117,7 @@ Then('configured models preserve external assets and can be detached and reattac
   }));
   const result = await this.page.evaluate(async () => {
     const url = new URL('manual/model.gltf', document.baseURI).href;
-    const layer = new L.Layer({ type: '3d', source: url });
+    const layer = new L.Layer({ source: { type: '3d', url: url } });
     let ready = false;
     const loaded = nativeChecks.ready(layer).then(() => { ready = true; });
     await new Promise(requestAnimationFrame);
@@ -1154,7 +1156,7 @@ Then('configured models preserve external assets and can be detached and reattac
     contentType: 'application/json', body: JSON.stringify(description),
   }));
   const missingUV = await this.page.evaluate(async () => {
-    const layer = new L.Layer({ type: '3d', source: 'manual/no-uv.gltf' }).addTo(test3d.map);
+    const layer = new L.Layer({ source: { type: '3d', url: 'manual/no-uv.gltf' } }).addTo(test3d.map);
     let programs = 0;
     const createProgram = layer._createProgram;
     layer._createProgram = function (...args) { programs++; return createProgram.apply(this, args); };
@@ -1173,7 +1175,7 @@ Then('DOM tooltip content stays inside the map without interpreting text as HTML
     container.style.cursor = 'crosshair';
     const node = document.createElement('div');
     node.textContent = '<img src=x onerror=alert(1)>';
-    const layer = new L.Layer({ type: '3d', tooltipContent: () => node }).addTo(map);
+    const layer = new L.Layer({ source: { type: '3d', tooltipContent: () => node } }).addTo(map);
     await nativeChecks.ready(layer);
     const rect = container.getBoundingClientRect();
     const feature = { id: 'dom', model: {}, properties: {} };
@@ -1201,7 +1203,7 @@ Then('DOM tooltip content stays inside the map without interpreting text as HTML
 
 Then('layer-owned objects preserve values and visibility without engine classes', async function () {
   const result = await this.page.evaluate(async () => {
-    const layer = new L.Layer({ type: '3d' });
+    const layer = new L.Layer({ source: { type: '3d' } });
     await nativeChecks.ready(layer);
     layer.addTo(test3d.map);
     const scene = nativeChecks.group();
@@ -1287,7 +1289,7 @@ Then('layer-owned objects preserve values and visibility without engine classes'
 
 Then('a source block with {string} reports {string} without attaching a mesh', async function (invalid, message) {
   const result = await this.page.evaluate(async invalid => {
-    const layer = new L.Layer({ type: '3d' }).addTo(test3d.map);
+    const layer = new L.Layer({ source: { type: '3d' } }).addTo(test3d.map);
     await nativeChecks.ready(layer);
     layer.options.featureStyle = () => ({ top: 10 });
     const anchor = layer.location, west = anchor.lng, south = anchor.lat;
@@ -1406,7 +1408,7 @@ Then('native triangulation and glTF decoding preserve geometry without library r
     contentType: 'application/json', body: new URL(route.request().url()).searchParams.get('fixture'),
   }));
   const result = await this.page.evaluate(async () => {
-    const layer = new L.Layer({ type: '3d' }).addTo(test3d.map);
+    const layer = new L.Layer({ source: { type: '3d' } }).addTo(test3d.map);
     await nativeChecks.ready(layer);
     const square = (x, y, size) => [{ x, y }, { x: x + size, y },
       { x: x + size, y: y + size }, { x, y: y + size }];
@@ -1459,7 +1461,7 @@ Then('native triangulation and glTF decoding preserve geometry without library r
     }];
     const url = new URL('accessors.gltf', document.baseURI);
     url.searchParams.set('fixture', JSON.stringify(description));
-    const configured = new L.Layer({ type: '3d', source: url.href }).addTo(test3d.map);
+    const configured = new L.Layer({ source: { type: '3d', url: url.href } }).addTo(test3d.map);
     await nativeChecks.ready(configured);
     const model = configured.model;
     const [first, second] = model.children.map(node => node.children[0]);
@@ -1490,9 +1492,9 @@ Then('3D click reports the picked object without changing the map view', { timeo
     const map = test3d.map;
     map.options.zoomAnimation = false;
     map.options.maxZoom = 24;
-    const origin = new L.Layer({ type: '3d' }).addTo(map);
-    const far = new L.Layer({ type: '3d', center: [48.85835, 2.29465], tooltipContent: () => 'Far' }).addTo(map);
-    const near = new L.Layer({ type: '3d', center: [48.85835, 2.29465], tooltipContent: () => 'Near' }).addTo(map);
+    const origin = new L.Layer({ source: { type: '3d' } }).addTo(map);
+    const far = new L.Layer({ source: { type: '3d', center: [48.85835, 2.29465], tooltipContent: () => 'Far' } }).addTo(map);
+    const near = new L.Layer({ source: { type: '3d', center: [48.85835, 2.29465], tooltipContent: () => 'Near' } }).addTo(map);
     await Promise.all([origin, far, near].map(nativeChecks.ready));
     for (const [layer, height] of [[far, 0], [near, 20]]) {
       layer.model = nativeChecks.group();
@@ -1568,11 +1570,10 @@ Then('3D click reports the picked object without changing the map view', { timeo
 Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer({ type: '3d',
-      source: 'paris-buildings.pmtiles',
+    const layer = new L.Layer({ source: { type: '3d',
+      url: 'paris-buildings.pmtiles',
       featureStyle: () => ({ top: 10 }),
-      tooltipContent: feature => `Height: ${feature.properties.height} m`,
-    }).addTo(map);
+      tooltipContent: feature => `Height: ${feature.properties.height} m` } }).addTo(map);
     await nativeChecks.ready(layer);
     const container = map.getContainer();
     container.style.cursor = 'crosshair';
@@ -1604,11 +1605,10 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
     container.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: document.body }));
     container.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: document.body }));
     const leaveCleared = tooltip.hidden && container.style.cursor === 'crosshair' && !layer.highlightedFeature;
-    const other = new L.Layer({ type: '3d',
+    const other = new L.Layer({ source: { type: '3d',
       center: [map.getCenter().lat, map.getCenter().lng],
-      source: 'paris-buildings.pmtiles', featureStyle: () => ({ top: 10 }),
-      tooltipContent: () => 'Other feature',
-    }).addTo(map);
+      url: 'paris-buildings.pmtiles', featureStyle: () => ({ top: 10 }),
+      tooltipContent: () => 'Other feature' } }).addTo(map);
     await nativeChecks.ready(other);
     layer._showFeature(feature, position);
     other._showFeature(feature, position);
@@ -1635,8 +1635,8 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     const initial = map.getCenter();
-    const beforeReady = new L.Layer({ type: '3d', ariaLabel: 'Automatic origin' }).addTo(map);
-    const afterReady = new L.Layer({ type: '3d' });
+    const beforeReady = new L.Layer({ source: { type: '3d', ariaLabel: 'Automatic origin' } }).addTo(map);
+    const afterReady = new L.Layer({ source: { type: '3d' } });
     await Promise.all([beforeReady, afterReady].map(nativeChecks.ready));
     const deferred = afterReady.location == null && !afterReady.renderer;
     afterReady.addTo(map);
@@ -1653,7 +1653,7 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
     beforeReady.remove();
     afterReady.remove();
     const center = [48.858, 2.295];
-    const explicit = new L.Layer({ type: '3d', center });
+    const explicit = new L.Layer({ source: { type: '3d', center } });
     await nativeChecks.ready(explicit);
     center[0] = 0;
     const explicitPreserved = explicit.location.equals([48.858, 2.295]);
@@ -1665,14 +1665,13 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
 Then('a configured 3D model loads with its transforms and attribution', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer({ type: '3d',
+    const layer = new L.Layer({ source: { type: '3d',
       center: [48.8582601, 2.29449985],
-      source: '../misc/eiffel-tower.glb',
+      url: '../misc/eiffel-tower.glb',
       rotation: [0, 0.8, 0],
       scale: [1.02, 1, 1.01],
-      attribution: 'Test model attribution',
-      tooltipContent: feature => feature.model === layer.model ? 'Eiffel Tower' : 'Unexpected model',
-    }).addTo(map);
+      tooltipContent: feature => feature.model === layer.model ? 'Eiffel Tower' : 'Unexpected model' },
+      attribution: 'Test model attribution' }).addTo(map);
     await nativeChecks.ready(layer);
     const geometry = nativeChecks.bounds(layer.model, layer);
     const centered = layer.location.equals([48.8582601, 2.29449985]);
@@ -1896,11 +1895,10 @@ Given('a map with the standalone 3D module and no dependency import map', async 
       <script src="https://unpkg.com/leaflet@${process.env.LEAFLET_VERSION === '2' ? '2.0.0-alpha.1/dist/leaflet-global-src.js' : '1.9/dist/leaflet-src.js'}"></script>
       <script>globalThis.L = globalThis.leaflet || globalThis.L;</script>
       <script src="../dist/leaflet-rotate-src.js"></script>
-      <script src="../misc/layer.js"></script>
       <script>
-        window.test3d = { Layer3D: L.Layer.types['3d'], map: new L.Map('first', {
+        import('../dist/3d/types/terrain.js').then(() => window.test3d = { Layer3D: L.Layer.types['3d'], map: new L.Map('first', {
           center: [48.8582601, 2.29449985], zoom: 17, rotate: true, pitch: 45, bearing: 30
-        }) };
+        }) });
       </script>`,
   }));
   await this.page.goto(`${this.baseUrl}/test/standalone-3d.html`);
@@ -2044,7 +2042,7 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
         getHeader: () => new Promise(resolve => { resolveHeader = resolve; }),
         getZxy: async () => undefined,
       };
-      const layer = new L.Layer({ type: 'pmtiles', source: 'test.pmtiles', archive }).addTo(map);
+      const layer = new L.Layer({ source: { type: 'pmtiles', url: 'test.pmtiles', archive } }).addTo(map);
       const delayed = !layer._container;
       await Promise.resolve();
       resolveHeader({ maxZoom: 12 });
@@ -2053,19 +2051,16 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
       const tileZoom = layer._tileZoom;
       const initialized = Boolean(layer._container);
       layer.remove();
-      const override = await new L.Layer({ type: 'pmtiles', source: 'test.pmtiles',
-        archive: { getHeader: async () => ({ maxZoom: 12 }) }, maxNativeZoom: 10,
-      }).ready;
-      const failed = new L.Layer({ type: 'pmtiles', source: 'test.pmtiles',
-        archive: { getHeader: async () => { throw new Error('Missing archive'); } },
-      });
+      const override = await new L.Layer({ source: { type: 'pmtiles', url: 'test.pmtiles',
+        archive: { getHeader: async () => ({ maxZoom: 12 }) }, maxNativeZoom: 10 } }).ready;
+      const failed = new L.Layer({ source: { type: 'pmtiles', url: 'test.pmtiles',
+        archive: { getHeader: async () => { throw new Error('Missing archive'); } } } });
       let emitted;
       failed.on('error', event => { emitted = event.error; });
       const error = await failed.ready.then(() => null, error => error);
       const coords = { z: 12, x: 1, y: 2 };
-      const raster = await new L.Layer({ type: 'pmtiles', source: 'test.pmtiles',
-        archive: { getHeader: async () => ({ maxZoom: 12 }), getZxy: async () => undefined },
-      }).ready;
+      const raster = await new L.Layer({ source: { type: 'pmtiles', url: 'test.pmtiles',
+        archive: { getHeader: async () => ({ maxZoom: 12 }), getZxy: async () => undefined } } }).ready;
       const missingTile = await new Promise(resolve => {
         raster.createTile(coords, (error, tile) => resolve({ error, tile }));
       });
@@ -2120,8 +2115,9 @@ const openEiffelExample = async function () {
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
   await this.page.waitForFunction(() => window.map && typeof window.map.getPitch === 'function');
-  await this.page.waitForFunction(() => sunlightControl && cruiseBoats &&
+  await this.page.waitForFunction(() => sunlightOverlay.control && cruiseBoats &&
     layers._layers.some(entry => entry.name === 'Streetlights'));
+  await this.page.evaluate(() => Promise.all(layers._layers.map(({ layer }) => layer.ready)));
   await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
     !(layer instanceof L.Layer.types['3d']) || (layer.root && (!layer.modelUrl || layer.model) &&
       (!layer.url || layer.header))));
@@ -2156,7 +2152,7 @@ Given('the Eiffel Tower example page is open', { timeout: 60000 }, openEiffelExa
 
 // Real offline archives: terrain and orthophoto tiles exercise the GPU upload paths.
 Given('the Eiffel Tower example page is open with its offline archives', { timeout: 60000 }, async function () {
-  await this.context.unroute('**/misc/layer.js');
+  await this.context.unroute('**/dist/3d/types/*.js');
   await openEiffelExample.call(this);
 });
 
@@ -2177,7 +2173,7 @@ When('I load a configured 3D model with {string}', async function (failure) {
     status, body, contentType: 'application/octet-stream',
   }));
   this.invalid3d = await this.page.evaluate(async () => {
-    const layer = new L.Layer({ type: '3d', source: 'invalid-model.glb' }).addTo(test3d.map);
+    const layer = new L.Layer({ source: { type: '3d', url: 'invalid-model.glb' } }).addTo(test3d.map);
     let emitted;
     layer.on('error', event => { emitted = event.error; });
     const error = await nativeChecks.ready(layer).then(() => null, error => error);
@@ -2261,12 +2257,12 @@ Then('only the {string} background is active and the 3D scene is unchanged', asy
 });
 
 When('I disable and restore the 3D overlays through the layer control', async function () {
-  const towerControl = this.page.getByRole('checkbox', { name: 'Eiffel Tower (3D)', exact: true });
-  const buildingsControl = this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true });
-  const treesControl = this.page.getByRole('checkbox', { name: 'Paris trees (3D)', exact: true });
-  const terrainControl = this.page.getByRole('checkbox', { name: 'IGN Terrain (3D)', exact: true });
+  const towerControl = this.page.getByRole('checkbox', { name: 'Eiffel Tower', exact: true });
+  const buildingsControl = this.page.getByRole('checkbox', { name: 'Buildings', exact: true });
+  const treesControl = this.page.getByRole('checkbox', { name: 'Trees', exact: true });
+  const terrainControl = this.page.getByRole('checkbox', { name: 'Terrain (3D)', exact: true });
   const lightsControl = this.page.getByRole('checkbox', { name: 'Paris streetlights (night)', exact: true });
-  const boatsControl = this.page.getByRole('checkbox', { name: 'Seine tourist boats (scheduled)', exact: true });
+  const boatsControl = this.page.getByRole('checkbox', { name: 'Bateaux-Mouches', exact: true });
   await boatsControl.uncheck();
   await lightsControl.uncheck();
   await terrainControl.uncheck();
@@ -2286,7 +2282,7 @@ When('I disable and restore the 3D overlays through the layer control', async fu
   });
   await buildingsControl.uncheck();
   const treesRetained = await this.page.evaluate(() => {
-    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const tree = layers._layers.find(entry => entry.name === 'Trees').layer;
     return map.hasLayer(tree) && tree.renderer.canvas === window.exampleOverlayBefore.canvas &&
       tree.renderer.canvas.isConnected;
   });
@@ -3160,13 +3156,14 @@ Given('the Paris buildings example is open with sample volumes', { timeout: 6000
   await this.page.setViewportSize({ width: 800, height: 600 });
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
+  await this.page.evaluate(() => Promise.all(layers._layers.map(({ layer }) => layer.ready)));
   await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
     !(layer instanceof L.Layer.types['3d']) || (layer.root && (!layer.modelUrl || layer.model) &&
       (!layer.url || layer.header))));
   await this.page.evaluate(() => Promise.all(layers._layers
     .filter(({ layer }) => !(layer instanceof L.Layer.types['3d'])).map(({ layer }) => layer.ready)));
   await this.page.waitForFunction(() => {
-    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
+    const buildings = layers._layers.find(entry => entry.name === 'Buildings').layer;
     const error = buildings && [...buildings._areas.values()].find(area => area.error);
     if (error) throw new Error(error.error);
     return buildings && buildings._inflight === 0 && buildings._areas.size > 0 &&
@@ -3180,7 +3177,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     let tower, buildings;
     map.eachLayer(layer => {
       if (layer.model) tower = layer;
-      if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer;
+      if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer;
     });
     const backend = tower;
     const mesh = buildings.group.children[0];
@@ -3228,7 +3225,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
   assert.equal(result.skipped, 1);
 
   const genericStyle = await this.page.evaluate(async feature => {
-    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
+    const buildings = layers._layers.find(entry => entry.name === 'Buildings').layer;
     const coords = { z: buildings.header.minZoom };
     const point = map.project(new L.LatLng(48.8585, 2.2955), coords.z).divideBy(256).floor();
     Object.assign(coords, { x: point.x, y: point.y });
@@ -3259,7 +3256,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     let tower, buildings;
     map.eachLayer(layer => {
       if (layer.renderer && !layer.model) tower = layer;
-      if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer;
+      if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer;
     });
     const backend = tower;
     buildings.featureEvents = [];
@@ -3290,7 +3287,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     document.querySelector('.leaflet-3d-tooltip').textContent.includes('Estimated height: 15 m'));
   const highlightedColor = await this.page.evaluate(vertexStart => {
     let buildings;
-    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     return {
       highlight: buildings.group.children[0].highlight,
       highlighted: buildings.highlightedFeature?.vertexStart,
@@ -3314,14 +3311,14 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
   });
   this.clickCleared = await this.page.evaluate(() => {
       let buildings;
-      map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
+      map.eachLayer(layer => { if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
       return buildings._tooltip.hidden && !buildings.hoveredFeature && !buildings.highlightedFeature &&
         map.getContainer().style.cursor !== 'pointer';
     });
   assert.equal(this.hoverHighlight, true, JSON.stringify({ interaction, highlightedColor }));
   assert.equal(this.clickCleared, true);
   const events = await this.page.evaluate(() => {
-    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
+    const buildings = layers._layers.find(entry => entry.name === 'Buildings').layer;
     return buildings.featureEvents;
   });
   assert.ok(events.some(event => event.type === 'featurehover' && event.id));
@@ -3341,7 +3338,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   }, text);
   const meshes = () => this.page.evaluate(() => {
     let buildings;
-    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     return buildings.group.children.length;
   });
   const away = () => this.page.evaluate(() => map.setView([48.85657, 2.39], 16, { animate: false }));
@@ -3355,18 +3352,18 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   await status('2 Paris building volumes loaded');
   this.reloadedOnReturn = await meshes() === 1;
 
-  await this.page.getByRole('checkbox', { name: 'Eiffel Tower (3D)', exact: true }).uncheck();
+  await this.page.getByRole('checkbox', { name: 'Eiffel Tower', exact: true }).uncheck();
   this.independentBuildings = await this.page.evaluate(() => {
     let eiffel, buildings;
     map.eachLayer(layer => {
       if (layer.model) eiffel = layer;
-      if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer;
+      if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer;
     });
     return !eiffel && buildings.group.parent === buildings.scene &&
       buildings.renderer.canvas.isConnected && buildings.group.children.length === 1;
   });
 
-  await this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true }).uncheck();
+  await this.page.getByRole('checkbox', { name: 'Buildings', exact: true }).uncheck();
   await this.page.waitForTimeout(100);
   const requestsWhenDisabled = this.buildingRequests.length;
   await this.page.evaluate(() => map.panBy([10, 10], { animate: false }));
@@ -3374,10 +3371,10 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   this.noRequestsWhenDisabled = this.buildingRequests.length === requestsWhenDisabled;
 
   this.failBuildings = true;
-  await this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true }).check();
+  await this.page.getByRole('checkbox', { name: 'Buildings', exact: true }).check();
   await status('Unable to load');
   this.failureText = await this.page.evaluate(() => {
-    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
+    const buildings = layers._layers.find(entry => entry.name === 'Buildings').layer;
     return [...buildings._areas.values()].map(area => area.error).filter(Boolean).join('; ');
   });
   this.failBuildings = false;
@@ -3400,7 +3397,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   this.expandedForCameraChanges = this.buildingRequests.length > requestsBeforeCameraChanges;
   this.areaBudget = await this.page.evaluate(() => {
     let buildings;
-    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     const z = buildings.header.minZoom;
     const nw = map.project([buildings.header.maxLat, buildings.header.minLon], z).divideBy(256).floor();
     const se = map.project([buildings.header.minLat, buildings.header.maxLon], z).divideBy(256).floor();
@@ -3409,7 +3406,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   });
   this.cancelledConstruction = await this.page.evaluate(async feature => {
     let buildings;
-    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.url?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     const point = map.project(new L.LatLng(48.8585, 2.2955), buildings.header.minZoom).divideBy(256).floor();
     const area = { coords: { z: buildings.header.minZoom, x: point.x, y: point.y }, request: new AbortController() };
     const before = buildings.root.children.length;

@@ -49,8 +49,8 @@ Then('streetlights and the Eiffel Tower emit light only during simulated night',
     layer._lightGeometry({ x: 10, y: 20, ground: 3 }, { top: 8, lightRadius: 12, color: 0xffcc88 },
       (a, ah, b, bh, c, ch) => geometry.push([a, ah], [b, bh], [c, ch]));
     const emitterHeight = geometry.every(([point, height]) => Math.abs(point.ground + height - 11) <= 0.651);
-    const date = sunlightControl.getContainer().querySelector('input[type=date]');
-    const slider = sunlightControl.getContainer().querySelector('input[type=range]');
+    const date = sunlightOverlay.control.getContainer().querySelector('input[type=date]');
+    const slider = sunlightOverlay.control.getContainer().querySelector('input[type=range]');
     const select = minute => {
       date.value = '2026-06-21'; slider.value = String(minute);
       slider.dispatchEvent(new Event('input', { bubbles: true }));
@@ -86,7 +86,7 @@ Then('streetlights and the Eiffel Tower emit light only during simulated night',
     const unlit = await capture();
     layer.root.visible = true;
     const lampPixels = brighter(lit, unlit);
-    const tower = layers._layers.find(entry => entry.name === 'Eiffel Tower (3D)').layer;
+    const tower = layers._layers.find(entry => entry.name === 'Eiffel Tower').layer;
     const programs = new Set();
     tower.traverse(tower.root, mesh => { if (mesh.program) programs.add(mesh.program); });
     for (const program of programs) program.nightSparkle = false;
@@ -121,7 +121,7 @@ Then('streetlights and the Eiffel Tower emit light only during simulated night',
     layer.root.visible = true;
     const dayLampPixels = brighter(dayLit, dayWithoutLamps) + brighter(dayWithoutLamps, dayLit);
     select(0);
-    const checkbox = sunlightControl.getContainer().querySelector('input[type=checkbox]');
+    const checkbox = sunlightOverlay.control.getContainer().querySelector('input[type=checkbox]');
     checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
     owner._render();
     const disabledStrength = owner.renderer.uniformData[55];

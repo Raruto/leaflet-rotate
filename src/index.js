@@ -42,6 +42,7 @@ export * from './geo/LatLngBounds';
 
 // layer
 export * from './layer/DivOverlay';
+export * from './layer/Layer';
 export * from './layer/Popup';
 export * from './layer/Tooltip';
 export * from './layer/marker/Icon';

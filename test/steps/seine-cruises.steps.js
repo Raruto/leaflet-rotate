@@ -7,11 +7,12 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   await this.page.waitForFunction(() => cruiseBoats?.renderer);
   const result = await this.page.evaluate(async () => {
     const layer = cruiseBoats, owner = L.Layer.types['3d']._renderers.get(map);
+    const { cruiseDistance, cruisePosition, cruiseRoute } = L.Layer.types.cruises;
     const boatMeshes = () => layer.root.children.filter(mesh => mesh.extras.featureFaces.length);
     const gpuErrors = [];
     owner.renderer.device.addEventListener('uncapturederror', event => gpuErrors.push(event.error.message));
     const select = (day, minute) => {
-      const container = sunlightControl.getContainer();
+      const container = sunlightOverlay.control.getContainer();
       container.querySelector('input[type=date]').value = day;
       const slider = container.querySelector('input[type=range]');
       slider.value = String(minute); slider.dispatchEvent(new Event('input', { bubbles: true }));
@@ -39,7 +40,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     const tooltip = layer.options.tooltipContent({ properties: properties[0] }).textContent;
     const shared = layer.renderer === streetlights.renderer;
     const noDuplicateNodes = new Set(boatMeshes().map(mesh => mesh.id)).size === twoTrips;
-    const checkbox = sunlightControl.getContainer().querySelector('input[type=checkbox]');
+    const checkbox = sunlightOverlay.control.getContainer().querySelector('input[type=checkbox]');
     checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
     const independentOfLighting = boatMeshes().length === twoTrips;
     checkbox.checked = true; checkbox.dispatchEvent(new Event('change'));
@@ -53,12 +54,12 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     };
     let liveMoved;
     try {
-      sunlightControl.getContainer().querySelector('button').click();
+      sunlightOverlay.control.getContainer().querySelector('button').click();
       await new Promise(resolve => setTimeout(resolve, 350));
       const before = [...firstSummer.position];
       await new Promise(resolve => setTimeout(resolve, 600));
       liveMoved = firstSummer.position.some((value, i) => value !== before[i]);
-    } finally { window.Date = OriginalDate; sunlightControl.live = false; }
+    } finally { window.Date = OriginalDate; sunlightOverlay.control.live = false; }
     select('2026-11-02', 1290);
     const closed = boatMeshes().length === 0 && layer.root.children[0] === route;
     select('2026-11-02', 600);
@@ -66,7 +67,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     layer._setHighlight({ mesh: old, vertexStart: 0, vertexEnd: old.geometry.drawRange.count });
     select('2026-11-02', 660);
     const clearedHighlight = !layer.highlightedFeature;
-    const date = sunlightControl.getContainer().querySelector('input[type=date]');
+    const date = sunlightOverlay.control.getContainer().querySelector('input[type=date]');
     date.value = ''; date.dispatchEvent(new Event('change'));
     const invalidClears = boatMeshes().length === 0;
     select('2026-11-02', 600);
@@ -138,7 +139,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   assert.ok(result.routePixels > 50, `Visible route pixels: ${result.routePixels}`);
   assert.ok(result.overviewRoutePixels > 100, `Visible route in overview: ${result.overviewRoutePixels}`);
   assert.ok(result.riverCoverage < 0.01, `Less than 1% terrain occlusion (e.g. bridge decks): ${result.riverCoverage}`);
-  const control = this.page.getByRole('checkbox', { name: 'Seine tourist boats (scheduled)', exact: true });
+  const control = this.page.getByRole('checkbox', { name: 'Bateaux-Mouches', exact: true });
   await control.uncheck();
   assert.equal(await this.page.evaluate(() => !cruiseBoats._map && !cruiseBoats.root.children.length &&
     document.querySelector('.cruise-status').textContent.includes('off')), true);

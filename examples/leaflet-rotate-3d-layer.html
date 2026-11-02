@@ -7,7 +7,6 @@
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
 		<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>
 		<script src="../dist/leaflet-rotate-src.js"></script>
-		<script src="../misc/layer.js"></script>
 		<style>
 			html, body, #map {
 				width: 100%;
@@ -47,440 +46,6 @@
 	<body>
 		<div id="map"></div>
 		<script>
-			// Solar centre, without atmospheric refraction.
-			function solarPosition(date, lat, lng) {
-			  const time = new Date(date).getTime();
-			  if (!Number.isFinite(time) || !Number.isFinite(lat) || Math.abs(lat) > 90 ||
-			    !Number.isFinite(lng) || Math.abs(lng) > 180) throw new Error('Invalid solar date or location');
-			  const rad = Math.PI / 180, d = time / 86400000 - 10957.5;
-			  const mean = (357.5291 + 0.98560028 * d) * rad;
-			  const longitude = mean + (1.9148 * Math.sin(mean) + 0.02 * Math.sin(2 * mean) +
-			    0.0003 * Math.sin(3 * mean) + 102.9372 + 180) * rad;
-			  const obliquity = 23.4397 * rad;
-			  const declination = Math.asin(Math.sin(longitude) * Math.sin(obliquity));
-			  const ascension = Math.atan2(Math.sin(longitude) * Math.cos(obliquity), Math.cos(longitude));
-			  return horizontalPosition(d, lat, lng, ascension, declination);
-			}
-
-			function horizontalPosition(d, lat, lng, ascension, declination) {
-			  const rad = Math.PI / 180;
-			  const hourAngle = (280.16 + 360.9856235 * d + lng) * rad - ascension;
-			  const latitude = lat * rad;
-			  const altitude = Math.asin(Math.sin(latitude) * Math.sin(declination) +
-			    Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle));
-			  const southAzimuth = Math.atan2(Math.sin(hourAngle),
-			    Math.cos(hourAngle) * Math.sin(latitude) - Math.tan(declination) * Math.cos(latitude));
-			  const azimuth = (southAzimuth / rad + 180 + 360) % 360;
-			  return { altitude: altitude / rad, azimuth,
-			    direction: [Math.sin(azimuth * rad) * Math.cos(altitude), Math.sin(altitude),
-			      -Math.cos(azimuth * rad) * Math.cos(altitude)] };
-			}
-
-			// Low-precision geocentric lunar orbit; no parallax or atmospheric refraction.
-			function moonPosition(date, lat, lng) {
-			  solarPosition(date, lat, lng);
-			  const rad = Math.PI / 180, d = new Date(date).getTime() / 86400000 - 10957.5;
-			  const anomaly = (134.963 + 13.064993 * d) * rad;
-			  const longitude = (218.316 + 13.176396 * d + 6.289 * Math.sin(anomaly)) * rad;
-			  const latitude = 5.128 * Math.sin((93.272 + 13.229350 * d) * rad) * rad;
-			  const obliquity = 23.4397 * rad;
-			  const x = Math.cos(latitude) * Math.cos(longitude);
-			  const y = Math.cos(latitude) * Math.sin(longitude) * Math.cos(obliquity) - Math.sin(latitude) * Math.sin(obliquity);
-			  const z = Math.cos(latitude) * Math.sin(longitude) * Math.sin(obliquity) + Math.sin(latitude) * Math.cos(obliquity);
-			  return horizontalPosition(d, lat, lng, Math.atan2(y, x), Math.asin(z));
-			}
-
-			function atmosphere(altitude) {
-			  if (!Number.isFinite(altitude)) throw new Error('Invalid solar altitude');
-			  const stops = [
-			    [-18, [3, 7, 20], [17, 28, 54], [0.025, 0.04, 0.09]],
-			    [-6, [37, 53, 84], [182, 106, 86], [0.12, 0.10, 0.14]],
-			    [0, [101, 131, 171], [246, 170, 115], [0.38, 0.24, 0.18]],
-			    [10, [74, 147, 208], [197, 221, 237], [0.80, 0.75, 0.68]],
-			    [25, [53, 144, 213], [223, 238, 250], [1, 1, 1]],
-			  ];
-			  const upper = stops.findIndex(stop => stop[0] >= altitude);
-			  const b = stops[upper < 0 ? stops.length - 1 : upper], a = stops[Math.max(0, upper - 1)];
-			  const t = a === b || upper < 0 ? 1 : (altitude - a[0]) / (b[0] - a[0]);
-			  const mix = index => a[index].map((value, i) => value + (b[index][i] - value) * t);
-			  const rgb = values => `rgb(${values.map(Math.round).join(', ')})`;
-			  return { background: `linear-gradient(${rgb(mix(1))}, ${rgb(mix(2))})`, tint: mix(3) };
-			}
-
-			function installSunlight(map) {
-			  const L = globalThis.L;
-			  const control = new L.Control({ position: 'topleft' });
-			  control.live = true;
-			  let date, slider, output, enabled, status, timer;
-			  const originalSky = map.getContainer().style.getPropertyValue('--leaflet-sky-background');
-			  const sunDisc = L.DomUtil.create('div', 'sunlight-sun');
-			  const moonDisc = L.DomUtil.create('div', 'sunlight-moon');
-			  sunDisc.setAttribute('role', 'img'); sunDisc.setAttribute('aria-label', 'Sun');
-			  moonDisc.setAttribute('role', 'img'); moonDisc.setAttribute('aria-label', 'Moon');
-			  const updateSky = () => {
-			    const sun = map._sunlight, sky = map._pitchSky;
-			    if (sun) map.getContainer().style.setProperty('--leaflet-sky-background', sun.background);
-			    else if (originalSky) map.getContainer().style.setProperty('--leaflet-sky-background', originalSky);
-			    else map.getContainer().style.removeProperty('--leaflet-sky-background');
-			    const size = map.getSize(), pitch = map.getPitch() * Math.PI / 180, bearing = map.getBearing() * Math.PI / 180;
-			    for (const [disc, body] of [[sunDisc, sun], [moonDisc, sun?.moon]]) {
-			      disc.hidden = true;
-			      if (!sky || !body || body.altitude <= 0 || !sun) continue;
-			      if (disc.parentNode !== sky) sky.append(disc);
-			      const [x, y, z] = body.direction;
-			      const right = x * Math.cos(bearing) - z * Math.sin(bearing);
-			      const up = -x * Math.sin(bearing) * Math.cos(pitch) + y * Math.sin(pitch) - z * Math.cos(bearing) * Math.cos(pitch);
-			      const forward = -x * Math.sin(bearing) * Math.sin(pitch) - y * Math.cos(pitch) - z * Math.cos(bearing) * Math.sin(pitch);
-			      if (forward <= 0) continue;
-			      const left = size.x / 2 + size.y * 1.5 * right / forward;
-			      const top = size.y / 2 - size.y * 1.5 * up / forward;
-			      disc.hidden = left < 0 || left > size.x || top < 0 || top > sky.clientHeight || sky.style.display === 'none';
-			      disc.style.left = `${left}px`; disc.style.top = `${top}px`;
-			    }
-			  };
-			  const render = () => L.Layer.types['3d']._renderers.get(map)?.update();
-			  const update = () => {
-			    try {
-			      if (control.live) control.time = new Date();
-			      const time = control.time.toISOString();
-			      date.value = time.slice(0, 10);
-			      slider.value = String(control.time.getUTCHours() * 60 + control.time.getUTCMinutes());
-			      output.textContent = `${time.slice(11, 16)} UTC${control.live ? ' · now' : ''}`;
-			      if (!enabled.checked) {
-			        delete map._sunlight;
-			        status.textContent = 'Simulation off';
-			      } else {
-			        const center = map.getCenter();
-			        const sun = map._sunlight = solarPosition(control.time, center.lat, center.lng);
-			        Object.assign(sun, atmosphere(sun.altitude));
-			        sun.moon = moonPosition(control.time, center.lat, center.lng);
-			        status.textContent = sun.altitude <= 0 ? 'Night · no direct sunlight' :
-			          sun.altitude < 3 ? 'Low sun · shadows paused' : `Sun altitude ${sun.altitude.toFixed(1)}°`;
-			      }
-			      map.fire('simulationtimechange', { time: new Date(control.time), live: control.live });
-			      updateSky(); render();
-			    } catch (error) {
-			      delete map._sunlight;
-			      updateSky();
-			      render();
-			      status.textContent = `Error: ${error.message}`;
-			      console.error('Solar simulation', error);
-			    }
-			  };
-			  const selectTime = () => {
-			    control.live = false;
-			    if (!date.value || !date.validity.valid) {
-			      control.time = new Date(NaN);
-			      map.fire('simulationtimechange', { time: null, live: false });
-			      delete map._sunlight;
-			      updateSky();
-			      render();
-			      status.textContent = 'Error: choose a valid solar date';
-			      return;
-			    }
-			    control.time = new Date(`${date.value}T00:00:00Z`);
-			    control.time.setUTCMinutes(Number(slider.value));
-			    update();
-			  };
-			  control.onAdd = () => {
-			    const container = L.DomUtil.create('div', 'sunlight-control leaflet-bar');
-			    const heading = document.createElement('label');
-			    enabled = document.createElement('input');
-			    enabled.type = 'checkbox';
-			    enabled.checked = true;
-			    heading.append(enabled, document.createTextNode(' Sunlight & shadows'));
-			    date = document.createElement('input');
-			    date.type = 'date';
-			    date.setAttribute('aria-label', 'Solar date (UTC)');
-			    slider = document.createElement('input');
-			    slider.type = 'range';
-			    slider.min = '0'; slider.max = '1439'; slider.step = '1';
-			    slider.setAttribute('aria-label', 'Time of day (UTC)');
-			    output = document.createElement('output');
-			    output.setAttribute('aria-live', 'off');
-			    const now = document.createElement('button');
-			    now.type = 'button'; now.textContent = 'Now';
-			    now.onclick = () => { control.live = true; update(); };
-			    const timeRow = document.createElement('div');
-			    timeRow.className = 'sunlight-time';
-			    timeRow.append(output, now);
-			    status = document.createElement('div');
-			    status.className = 'sunlight-status';
-			    status.setAttribute('role', 'status');
-			    const note = document.createElement('small');
-			    note.textContent = 'Indicative · loaded geometry only. Streetlight illumination is estimated, not measured lux.';
-			    container.append(heading, date, slider, timeRow, status, note);
-			    slider.oninput = selectTime;
-			    date.onchange = selectTime;
-			    enabled.onchange = update;
-			    L.DomEvent.disableClickPropagation(container);
-			    L.DomEvent.disableScrollPropagation(container);
-			    update();
-			    timer = setInterval(() => { if (control.live) update(); }, 60000);
-			    map.on('moveend', update);
-			    map.on('move rotate pitch resize', updateSky);
-			    return container;
-			  };
-			  control.onRemove = () => {
-			    clearInterval(timer);
-			    map.fire('simulationtimechange', { time: null, live: false });
-			    map.off('moveend', update);
-			    map.off('move rotate pitch resize', updateSky);
-			    delete map._sunlight;
-			    updateSky();
-			    sunDisc.remove(); moonDisc.remove();
-			    render();
-			  };
-			  control.addTo(map);
-			  const container = control.getContainer();
-			  container.parentNode.insertBefore(container, container.parentNode.firstChild);
-			  return control;
-			}
-
-			// Approximate navigation line, not a surveyed channel or GPS track. Coordinates are [lat, lng].
-			const upstream = [
-			  [48.86353, 2.30491], [48.86357, 2.30714], [48.86361, 2.30998],
-			  [48.86367, 2.31351], [48.86380, 2.31663], [48.86297, 2.32096],
-			  [48.86211, 2.32394], [48.86123, 2.32681], [48.86027, 2.32945],
-			  [48.85944, 2.33250], [48.85879, 2.33540], [48.85845, 2.33764],
-			  [48.85817, 2.34005], [48.85776, 2.34209], [48.85727, 2.34441],
-			  [48.85663, 2.34684], [48.85593, 2.34921], [48.85485, 2.35176],
-			  [48.85399, 2.35380], [48.85320, 2.35613], [48.85224, 2.35892],
-			  [48.85103, 2.36054], [48.84936, 2.36056], [48.84972, 2.35852],
-			];
-			const leftBankReturn = [
-			  [48.85047, 2.35617], [48.85139, 2.35351], [48.85180, 2.35084],
-			  [48.85229, 2.34926], [48.85300, 2.34759], [48.85385, 2.34526],
-			  [48.85487, 2.34290], [48.85654, 2.34087], [48.85747, 2.33894],
-			  [48.85815, 2.33730],
-			];
-			const downstream = [
-			  [48.86349, 2.30143], [48.86284, 2.29846], [48.86185, 2.29576],
-			  [48.86036, 2.29281], [48.85877, 2.29052], [48.85708, 2.28871],
-			  [48.85601, 2.28786], [48.85575, 2.28735], [48.85575, 2.28699],
-			  [48.85595, 2.28695], [48.85617, 2.28734],
-			];
-			const cruiseRoute = [
-			  ...upstream, ...leftBankReturn,
-			  ...upstream.slice(0, 11).reverse().map(([lat, lng]) => [lat - 0.00020, lng]),
-			  ...downstream,
-			  ...downstream.slice(0, 6).reverse().map(([lat, lng]) => [lat + 0.00025, lng - 0.00025]),
-			  [48.86365, 2.30200], [48.86365, 2.30350], upstream[0],
-			];
-			const radians = Math.PI / 180;
-			const lengths = [0];
-			for (let i = 1; i < cruiseRoute.length; i++) {
-			  const a = cruiseRoute[i - 1], b = cruiseRoute[i];
-			  const latitude = (b[0] - a[0]) * radians / 2;
-			  const longitude = (b[1] - a[1]) * radians / 2;
-			  const haversine = Math.sin(latitude) ** 2 +
-			    Math.cos(a[0] * radians) * Math.cos(b[0] * radians) * Math.sin(longitude) ** 2;
-			  lengths.push(lengths[i - 1] + 6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(haversine))));
-			}
-			const cruiseDistance = lengths.at(-1);
-
-			function cruisePosition(progress) {
-			  if (!Number.isFinite(progress) || progress < 0 || progress > 1) throw new Error('Invalid cruise progress');
-			  const travelled = progress * cruiseDistance;
-			  const end = lengths.findIndex((length, i) => i > 0 && length >= travelled);
-			  const i = end < 0 ? lengths.length - 1 : end;
-			  const a = cruiseRoute[i - 1], b = cruiseRoute[i];
-			  const t = (travelled - lengths[i - 1]) / (lengths[i] - lengths[i - 1]);
-			  return {
-			    lat: a[0] + (b[0] - a[0]) * t, lng: a[1] + (b[1] - a[1]) * t,
-			    heading: Math.atan2((b[1] - a[1]) * Math.cos(a[0] * radians), b[0] - a[0]) / radians,
-			  };
-			}
-
-			function scheduledCruises(date) {
-			  const time = new Date(date);
-			  if (!Number.isFinite(time.getTime())) throw new Error('Invalid cruise date');
-			  const parisClock = new Intl.DateTimeFormat('en-GB', {
-			    timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit',
-			    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-			  });
-			  const parts = Object.fromEntries(parisClock.formatToParts(time).filter(p => p.type !== 'literal').map(p => [p.type, Number(p.value)]));
-			  const minute = parts.hour * 60 + parts.minute + (parts.second + time.getUTCMilliseconds() / 1000) / 60;
-			  const summer = parts.month >= 4 && parts.month <= 10;
-			  const departures = [];
-			  for (let departure = summer ? 600 : 615; departure <= 1290; departure += summer ? 30 : 45) departures.push(departure);
-			  const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
-			  if (parts.month === 10 && weekday === 6) departures.push(1320);
-			  return departures.filter(departure => minute >= departure && minute < departure + 60).map(departure => {
-			    const progress = (minute - departure) / 60;
-			    return {
-			      id: `${parts.year}-${parts.month}-${parts.day}-${departure}`,
-			      departure: `${String(Math.floor(departure / 60)).padStart(2, '0')}:${String(departure % 60).padStart(2, '0')}`,
-			      progress, ...cruisePosition(progress),
-			    };
-			  });
-			}
-
-			function installCruiseBoats(map, clock) {
-			  const L = globalThis.L;
-			  const status = L.DomUtil.create('small', 'cruise-status', clock.getContainer());
-			  status.style.display = 'block';
-			  status.title = 'Bateaux-Mouches sightseeing timetable, Europe/Paris. Approximate route and 60-minute duration; no holiday extras, cancellations, GPS or river-level changes.';
-			  const layer = new L.Layer({
-			    type: '3d', center: [48.85826, 2.29450],
-			    attribution: '<a href="https://www.bateaux-mouches.fr/fr/croisiere/informations">Cruise timetable: Bateaux-Mouches</a> · estimated positions',
-			    tooltipContent({ properties: p }) {
-			      const content = document.createElement('div');
-			      content.style.whiteSpace = 'pre-line';
-			      content.textContent = `Bateaux-Mouches · sightseeing cruise\nDeparture ${p.departure} Europe/Paris · approx. 60 min\nEstimated position, not live GPS.\nSchematic route/model; no holiday extras, cancellations or river-level changes.`;
-			      return content;
-			    },
-			  });
-			  let ready = false, timer, route, clockAvailable = true;
-			  const boats = new Map();
-			  const createMesh = (data, featureFaces = [], material = {}) => {
-			    const { device } = layer.renderer, attributes = {};
-			    for (const [name, values] of Object.entries(data)) {
-			      const array = new Float32Array(values);
-			      const buffer = device.createBuffer({ size: array.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
-			      device.queue.writeBuffer(buffer, 0, array);
-			      attributes[name] = { size: 3, data: array, count: array.length / 3, buffer };
-			    }
-			    const mesh = {
-			      position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
-			      worldMatrix: Array.from(new DOMMatrix().toFloat64Array()), children: [], visible: true, device,
-			      geometry: { device, attributes, drawRange: { start: 0, count: attributes.position.count } },
-			      program: layer._createProgram({ vertexColors: true, doubleSided: true, ...material }),
-			      id: L.Layer.types['3d']._nextId++, renderOrder: 0, extras: { featureFaces },
-			    };
-			    layer.add(mesh);
-			    return mesh;
-			  };
-			  const fail = error => {
-			    clearInterval(timer); timer = undefined;
-			    status.textContent = `Cruise error: ${error.message}`;
-			    status.setAttribute('role', 'alert');
-			    console.error('Seine cruises', error);
-			  };
-			  const update = event => {
-			    if (!ready || !layer._map || !layer.renderer) return;
-			    try {
-			      if (event?.type === 'simulationtimechange') clockAvailable = event.time !== null;
-			      const valid = clockAvailable && Number.isFinite(clock.time?.getTime());
-			      if (valid && clock.live && !timer) timer = setInterval(update, 250);
-			      else if (!valid || !clock.live) { clearInterval(timer); timer = undefined; }
-			      const trips = valid ? scheduledCruises(clock.live ? new Date() : clock.time) : [];
-			      let changed = false;
-			      const active = new Set(trips.map(trip => trip.id));
-			      for (const [id, mesh] of boats) if (!active.has(id)) { dispose(mesh); boats.delete(id); changed = true; }
-			      const crs = map.options.crs, origin = crs.project(layer.location);
-			      const metres = Math.cos(layer.location.lat * radians);
-			      if (!route) {
-			        const position = [], normal = [], color = [];
-			        for (let i = 1; i < cruiseRoute.length; i++) {
-			          const project = ([lat, lng]) => {
-			            const point = crs.project(new L.LatLng(lat, lng));
-			            return [(point.x - origin.x) * metres, -(point.y - origin.y) * metres];
-			          };
-			          const a = project(cruiseRoute[i - 1]), b = project(cruiseRoute[i]);
-			          const dx = b[0] - a[0], dz = b[1] - a[1], length = lengths[i] - lengths[i - 1];
-			          const width = Math.hypot(dx, dz), x = -dz / width * 2.5, z = dx / width * 2.5;
-			          for (let distance = Math.floor(lengths[i - 1] / 30) * 30; distance < lengths[i]; distance += 30) {
-			            const start = Math.max(0, (distance - lengths[i - 1]) / length);
-			            const end = Math.min(1, (distance + 18 - lengths[i - 1]) / length);
-			            if (end <= start) continue;
-			            const p = [a[0] + dx * start, a[1] + dz * start], q = [a[0] + dx * end, a[1] + dz * end];
-			            for (const point of [[p[0] - x, p[1] - z], [p[0] + x, p[1] + z], [q[0] + x, q[1] + z],
-			              [p[0] - x, p[1] - z], [q[0] + x, q[1] + z], [q[0] - x, q[1] - z]]) {
-			              position.push(point[0], 0, point[1]); normal.push(0, 1, 0); color.push(0.08, 0.7, 0.85);
-			            }
-			          }
-			        }
-			        route = createMesh({ position, normal, color }, [], { emissive: [0.03, 0.25, 0.3], alphaMode: 'BLEND', depthTest: false });
-			        route.renderOrder = 1000;
-			        changed = true;
-			      }
-			      // Illustrative NGF level, just above the archive's 26.35–27 m river surface.
-			      const waterSurface = 27.15;
-			      const surface = waterSurface - layer.root.position[1];
-			      changed ||= route.position[1] !== surface + 0.03 || !route.visible;
-			      route.position[1] = surface + 0.03;
-			      route.visible = true;
-			      for (const trip of trips) {
-			        let mesh = boats.get(trip.id);
-			        if (!mesh) {
-			          const position = [], normal = [], color = [];
-			          const triangle = (a, b, c, tint) => {
-			            const u = b.map((v, i) => v - a[i]), v = c.map((value, i) => value - a[i]);
-			            const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
-			            const length = Math.hypot(...n);
-			            for (const point of [a, b, c]) { position.push(...point); normal.push(...n.map(value => value / length)); color.push(...tint); }
-			          };
-			          const solid = (ring, bottom, top, tint) => {
-			            for (let i = 0; i < ring.length; i++) {
-			              const a = [ring[i][0], bottom, ring[i][1]], b = [ring[(i + 1) % ring.length][0], bottom, ring[(i + 1) % ring.length][1]];
-			              const c = [b[0], top, b[2]], d = [a[0], top, a[2]];
-			              triangle(a, b, c, tint); triangle(a, c, d, tint);
-			              triangle([0, top, 0], d, c, tint);
-			              triangle([0, bottom, 0], b, a, tint);
-			            }
-			          };
-			          solid([[-4.5, 16], [4.5, 16], [4.5, -12], [2, -18], [-2, -18], [-4.5, -12]], 0.1, 1.2, [0.83, 0.87, 0.89]);
-			          solid([[-3.4, 10], [3.4, 10], [3.4, -10], [-3.4, -10]], 1.2, 2.5, [0.16, 0.35, 0.43]);
-			          solid([[-3.7, 11], [3.7, 11], [3.7, -11], [-3.7, -11]], 2.5, 2.7, [0.93, 0.94, 0.90]);
-			          for (const x of [-3.6, 3.6]) solid([[x - 0.15, 13], [x + 0.15, 13], [x + 0.15, -12], [x - 0.15, -12]], 1.2, 1.8, [0.75, 0.15, 0.12]);
-			          const data = { position, normal, color }, count = position.length / 3;
-			          mesh = createMesh(data, [{ id: trip.id, properties: trip, faceStart: 0, faceEnd: count / 3, vertexStart: 0, vertexEnd: count }]);
-			          boats.set(trip.id, mesh);
-			          changed = true;
-			        }
-			        changed ||= !mesh.visible;
-			        mesh.visible = true;
-			        mesh.extras.featureFaces[0].properties = trip;
-			        const point = crs.project(new L.LatLng(trip.lat, trip.lng));
-			        // Fixed illustrative Seine surface (metres NGF), never sampled from riverbed terrain.
-			        const position = [(point.x - origin.x) * metres, surface, -(point.y - origin.y) * metres];
-			        const heading = -trip.heading * radians;
-			        changed ||= mesh.position.some((value, i) => value !== position[i]) || mesh.rotation[1] !== heading;
-			        mesh.position = position;
-			        mesh.rotation[1] = heading;
-			      }
-			      status.removeAttribute('role');
-			      status.textContent = !valid ? 'Cruises: select a valid simulation date' : trips.length ?
-			        `Cruises: ${trips.length} underway · estimated, not live GPS` : 'Cruises: outside published service hours';
-			      if (changed) layer.update();
-			    } catch (error) {
-			      for (const mesh of boats.values()) mesh.visible = false;
-			      clearInterval(timer); timer = undefined;
-			      layer.update();
-			      fail(error);
-			    }
-			  };
-			  const dispose = mesh => {
-			    if (layer.highlightedFeature?.mesh === mesh) {
-			      layer._setHighlight(null);
-			      layer.hoveredFeature = null;
-			      layer._showFeature(null);
-			    }
-			    layer.remove(mesh);
-			    for (const attribute of Object.values(mesh.geometry.attributes)) attribute.buffer.destroy();
-			    layer._removeProgram(mesh.program);
-			  };
-			  const start = () => {
-			    map.off('simulationtimechange terrainchange', update);
-			    map.on('simulationtimechange terrainchange', update);
-			    // Re-adding after the last GPU owner was removed can attach asynchronously.
-			    if (!layer.renderer && !timer) timer = setInterval(update, 250);
-			    update();
-			  };
-			  layer.on('error', ({ error }) => fail(error));
-			  layer.on('ready', () => { ready = true; if (layer._map) start(); });
-			  layer.on('add', () => { if (ready) start(); });
-			  layer.on('remove', () => {
-			    clearInterval(timer); timer = undefined;
-			    map.off('simulationtimechange terrainchange', update);
-			    for (const mesh of boats.values()) dispose(mesh);
-			    boats.clear();
-			    if (route) { dispose(route); route = null; }
-			    status.textContent = 'Cruises: layer off';
-			  });
-			  return layer;
-			}
 			const map = new L.Map('map', {
 				center: [48.8582601, 2.29449985],
 				zoom: 17,
@@ -493,16 +58,7 @@
 				touchRotate: true,
 				touchPitch: true
 			});
-			let sunlightControl, sunlightOverlay, cruiseBoats;
-			const sunlightLayer = L.Layer.extend({
-				onAdd() {
-					sunlightControl = sunlightControl || installSunlight(map);
-					if (!sunlightControl._map) sunlightControl.addTo(map);
-				},
-				onRemove() {
-					sunlightControl.remove();
-				},
-			});
+			let sunlightOverlay, cruiseBoats;
 			const positive = (value, maximum) => {
 				const number = Number(value);
 				return Number.isFinite(number) && number > 0 && number <= maximum ? number : null;
@@ -511,157 +67,179 @@
 				'Empty': new L.TileLayer(''),
 				// Offline archive built by `node build/pmtiles.js`.
 				'Plan IGN': new L.Layer({
-					source: 'data/paris-plan-ign.pmtiles',
-					maxZoom: 24,
-					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_PLAN-IGN">Plan IGN</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>'
+					source: {
+						url: 'data/paris-plan-ign.pmtiles',
+						maxZoom: 24,
+					},
+					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_PLAN-IGN">Plan IGN</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>',
 				}),
 				// Offline archive built by `node build/pmtiles.js`.
 				'Orthophoto IGN': new L.Layer({
-					source: 'data/paris-orthophotos.pmtiles',
-					maxZoom: 24,
-					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-ORTHO">Photographies aériennes IGN</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>'
+					source: {
+						url: 'data/paris-orthophotos.pmtiles',
+						maxZoom: 24,
+					},
+					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-ORTHO">Photographies aériennes IGN</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>',
 				}).addTo(map),
 			}, {
 				// Offline terrain tiles built from IGN's RGE ALTI WMTS (Float32 BIL).
-				'IGN Terrain (3D)': new L.Layer({
-					type: 'terrain',
-					source: 'data/paris-terrain.pmtiles',
-					center: [48.8582601, 2.29449985],
-					ariaLabel: 'IGN terrain with 3D map layers',
-					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_RGE-ALTI">RGE ALTI</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>'
+				'Terrain (3D)': new L.Layer({
+					source: {
+						type: 'terrain',
+						url: 'data/paris-terrain.pmtiles',
+						center: [48.8582601, 2.29449985],
+						ariaLabel: 'IGN terrain with 3D map layers',
+					},
+					attribution: '<a href="https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_RGE-ALTI">RGE ALTI</a> &copy; IGN &mdash; <a href="https://ia.numerique.gouv.fr/licence-ouverte-open-licence/">Licence Ouverte Etalab 2.0</a>',
 				}).addTo(map),
 				// Offline archive built by `node build/pmtiles.js`.
-				'Paris buildings (3D)': new L.Layer({
-					type: '3d',
-					attribution: '<a href="https://opendata.paris.fr/explore/dataset/volumesbatisparis/">Building volumes: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
-					source: 'data/paris-buildings.pmtiles',
-					roofTexture: true,
-					ariaLabel: '3D view of the Eiffel Tower and Paris buildings',
-					featureStyle({ properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } }) {
-						if (!Number.isFinite(storeys) || storeys < 0 || ![0, 1].includes(ground) ||
-							(ground === 0 && (!Number.isFinite(floors) || floors <= 0 || floors > storeys + 1))) return null;
-						// approximate height at 3 m/storey
-						const top = (storeys + 1) * 3;
-						return {
-							top,
-							bottom: ground === 0 ? Math.max(0, top - floors * 3) : 0,
-							color: { h: 0.09 - Math.min(storeys / 40, 1) * 0.055, s: 0.48,
-								l: 0.76 - Math.min(storeys / 40, 1) * 0.28 }
-						};
+				'Buildings': new L.Layer({
+					source: {
+						type: '3d',
+						url: 'data/paris-buildings.pmtiles',
+						roofTexture: true,
+						ariaLabel: '3D view of the Eiffel Tower and Paris buildings',
+						featureStyle({ properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } }) {
+							if (!Number.isFinite(storeys) || storeys < 0 || ![0, 1].includes(ground) ||
+								(ground === 0 && (!Number.isFinite(floors) || floors <= 0 || floors > storeys + 1))) return null;
+							// approximate height at 3 m/storey
+							const top = (storeys + 1) * 3;
+							return {
+								top,
+								bottom: ground === 0 ? Math.max(0, top - floors * 3) : 0,
+								color: { h: 0.09 - Math.min(storeys / 40, 1) * 0.055, s: 0.48,
+									l: 0.76 - Math.min(storeys / 40, 1) * 0.28 }
+							};
+						},
+						tooltipContent({ properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } }) {
+							const content = document.createElement('div');
+							content.innerHTML = `<b>Building</b><br>Estimated height: ${(storeys + 1) * 3} m · ${storeys} storeys${Number.isFinite(floors) ? ` · ${floors} ground floors` : ''}${ground === 0 ? ' · elevated ground floor' : ''}`;
+							return content;
+						},
 					},
-					tooltipContent({ properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } }) {
-						const content = document.createElement('div');
-						content.innerHTML = `<b>Building</b><br>Estimated height: ${(storeys + 1) * 3} m · ${storeys} storeys${Number.isFinite(floors) ? ` · ${floors} ground floors` : ''}${ground === 0 ? ' · elevated ground floor' : ''}`;
-						return content;
-					}
+					attribution: '<a href="https://opendata.paris.fr/explore/dataset/volumesbatisparis/">Building volumes: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 				}).addTo(map),
 				// Offline tree inventory; measurements are retained in the PMTiles GeoJSON.
-				'Paris trees (3D)': new L.Layer({
-					type: '3d',
-					source: 'data/paris-trees.pmtiles',
+				'Trees': new L.Layer({
+					source: {
+						type: '3d',
+						url: 'data/paris-trees.pmtiles',
+						featureStyle({ properties: p }) {
+							if (p.typeemplacement !== 'Arbre') return null;
+							const estimatedHeight = ({ 'Jeune (arbre)': 4, 'Jeune (arbre)Adulte': 8,
+								Adulte: 15, Mature: 20 })[p.stadedeveloppement] || 10;
+							const top = p.hauteurenm > 0 && p.hauteurenm <= 60 ? p.hauteurenm : estimatedHeight;
+							const trunkRadius = p.circonferenceencm > 0 && p.circonferenceencm <= 2500
+								? p.circonferenceencm / (200 * Math.PI) : top / 80;
+							const conifer = /^(Abies|Picea|Cedrus|Cupressus|Taxus|Sequoia|Sequoiadendron|Thuja)$/.test(p.genre);
+							const palm = /^(Phoenix|Trachycarpus|Chamaerops|Washingtonia)$/.test(p.genre);
+							return {
+								top, trunkRadius,
+								crownBottom: top * (palm ? 0.75 : conifer ? 0.2 : 0.35),
+								crownRadius: Math.max(trunkRadius, top * (conifer ? 0.18 : palm ? 0.22 : 0.28)),
+								crownShape: conifer ? 'cone' : 'round',
+								color: conifer ? 0x315e45 : palm ? 0x688d42 : 0x55863d,
+							};
+						},
+						tooltipContent({ properties: p }) {
+							const content = document.createElement('div');
+							content.style.whiteSpace = 'pre-line';
+							content.textContent = [
+								p.libellefrancais || p.genre || 'Tree',
+								[p.genre, p.espece].filter(Boolean).join(' '),
+								`Height: ${p.hauteurenm > 0 && p.hauteurenm <= 60 ? `${p.hauteurenm} m (recorded)` : 'estimated from development stage'}`,
+								`Trunk circumference: ${p.circonferenceencm > 0 && p.circonferenceencm <= 2500 ? `${p.circonferenceencm} cm (recorded)` : 'estimated from height'}`,
+								p.stadedeveloppement,
+								p.remarquable === 'OUI' ? 'Remarkable tree' : '',
+								'Schematic crown (not surveyed)',
+							].filter(Boolean).join('\n');
+							return content;
+						},
+					},
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/les-arbres/">Trees: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
-					featureStyle({ properties: p }) {
-						if (p.typeemplacement !== 'Arbre') return null;
-						const estimatedHeight = ({ 'Jeune (arbre)': 4, 'Jeune (arbre)Adulte': 8,
-							Adulte: 15, Mature: 20 })[p.stadedeveloppement] || 10;
-						const top = p.hauteurenm > 0 && p.hauteurenm <= 60 ? p.hauteurenm : estimatedHeight;
-						const trunkRadius = p.circonferenceencm > 0 && p.circonferenceencm <= 2500
-							? p.circonferenceencm / (200 * Math.PI) : top / 80;
-						const conifer = /^(Abies|Picea|Cedrus|Cupressus|Taxus|Sequoia|Sequoiadendron|Thuja)$/.test(p.genre);
-						const palm = /^(Phoenix|Trachycarpus|Chamaerops|Washingtonia)$/.test(p.genre);
-						return {
-							top, trunkRadius,
-							crownBottom: top * (palm ? 0.75 : conifer ? 0.2 : 0.35),
-							crownRadius: Math.max(trunkRadius, top * (conifer ? 0.18 : palm ? 0.22 : 0.28)),
-							crownShape: conifer ? 'cone' : 'round',
-							color: conifer ? 0x315e45 : palm ? 0x688d42 : 0x55863d,
-						};
-					},
-					tooltipContent({ properties: p }) {
-						const content = document.createElement('div');
-						content.style.whiteSpace = 'pre-line';
-						content.textContent = [
-							p.libellefrancais || p.genre || 'Tree',
-							[p.genre, p.espece].filter(Boolean).join(' '),
-							`Height: ${p.hauteurenm > 0 && p.hauteurenm <= 60 ? `${p.hauteurenm} m (recorded)` : 'estimated from development stage'}`,
-							`Trunk circumference: ${p.circonferenceencm > 0 && p.circonferenceencm <= 2500 ? `${p.circonferenceencm} cm (recorded)` : 'estimated from height'}`,
-							p.stadedeveloppement,
-							p.remarquable === 'OUI' ? 'Remarkable tree' : '',
-							'Schematic crown (not surveyed)',
-						].filter(Boolean).join('\n');
-						return content;
-					},
 				}).addTo(map),
 				// OSM way 5013364 links to 3dmr=4; revision 3 is a CC0, metre-scale GLB.
 				// Register the four ground corners to OSM pillars 69034127/135/179/180.
 				// The GLB is axis-aligned, not north-aligned; its horizontal footprint is slightly undersized.
-				'Eiffel Tower (3D)': new L.Layer({
-					nightSparkle: true,
-					center: [48.8582601, 2.29449985],
-					source: '../misc/eiffel-tower.glb',
-					tooltipContent() {
-						const content = document.createElement('div');
-						content.innerHTML = '<div><b>Eiffel Tower</b><br>Height: 330 m including antennas (300 m structure)<br>Opened: 1889, for the World Exhibition<br>Designer: Gustave Eiffel and his engineering team<br>Location: Champ de Mars, Paris</div>';
-						return content;
+				'Eiffel Tower': new L.Layer({
+					source: {
+						nightSparkle: true,
+						center: [48.8582601, 2.29449985],
+						url: '../misc/eiffel-tower.glb',
+						tooltipContent() {
+							const content = document.createElement('div');
+							content.innerHTML = '<div><b>Eiffel Tower</b><br>Height: 330 m including antennas (300 m structure)<br>Opened: 1889, for the World Exhibition<br>Designer: Gustave Eiffel and his engineering team<br>Location: Champ de Mars, Paris</div>';
+							return content;
+						},
+						rotation: [0, 45.81 * Math.PI / 180, 0],
+						scale: [1.0257, 1, 1.0167],
 					},
-					rotation: [0, 45.81 * Math.PI / 180, 0],
-					scale: [1.0257, 1, 1.0167],
 					attribution: '<a href="https://3dmr.eu/model/4">CC0 model: n42k / Blend Swap</a>',
 				}).addTo(map),
 				'Streetlights': new L.Layer({
-					type: '3d',
-					source: 'data/paris-streetlights.pmtiles',
-					nightLight: true,
-					featureStyle({ properties: p }) {
-					const category = String(p.lib_ouvrag || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-					const location = String(p.voie_libelle || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-					if (/galerie|poste et/.test(category) || /\b(souterrain|tunnel|sous[- ]?sol|sous[- ]?passage)\b/.test(location) ||
-						(Number.isFinite(Number(p.support_hauteur)) && Number(p.support_hauteur) < 0)) return null;
-					const height = positive(p.support_hauteur, 40) ?? 6;
-					const flux = positive(p.lampe_flux, 500000) ?? 6000;
-					const temperature = positive(p.lampe_temperature_couleur, 12000) ??
-						(/sodium/i.test(p.lampe_famille) ? 2000 : 3000);
-					const colors = [[2000, [255, 170, 75]], [2700, [255, 205, 135]],
-						[4000, [255, 237, 212]], [6500, [222, 235, 255]]];
-					const upper = colors.findIndex(([kelvin]) => kelvin >= temperature);
-					const b = colors[upper < 0 ? colors.length - 1 : upper], a = colors[Math.max(0, upper - 1)];
-					const fraction = a === b || upper < 0 ? 1 : (temperature - a[0]) / (b[0] - a[0]);
-					return {
-						top: height,
-						lightFlux: flux,
-						poleRadius: /candelabre|^mat$|porte lac/.test(category) ? 0.12 : 0,
-						lightRadius: Math.max(6, Math.min(22, height * 1.5 * Math.sqrt(flux / 10000))),
-						color: { r: (a[1][0] + (b[1][0] - a[1][0]) * fraction) / 255,
-						g: (a[1][1] + (b[1][1] - a[1][1]) * fraction) / 255,
-						b: (a[1][2] + (b[1][2] - a[1][2]) * fraction) / 255 },
-					};
-					},
-					tooltipContentfunction({ properties: p }) {
-						const content = document.createElement('div');
-						content.style.whiteSpace = 'pre-line';
-						const recorded = (field, maximum, unit, fallback) => {
-							const value = positive(p[field], maximum);
-							return value === null ? `${fallback} (assumed)` : `${value} ${unit} (recorded)`;
+					source: {
+						type: '3d',
+						url: 'data/paris-streetlights.pmtiles',
+						nightLight: true,
+						featureStyle({ properties: p }) {
+						const category = String(p.lib_ouvrag || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+						const location = String(p.voie_libelle || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+						if (/galerie|poste et/.test(category) || /\b(souterrain|tunnel|sous[- ]?sol|sous[- ]?passage)\b/.test(location) ||
+							(Number.isFinite(Number(p.support_hauteur)) && Number(p.support_hauteur) < 0)) return null;
+						const height = positive(p.support_hauteur, 40) ?? 6;
+						const flux = positive(p.lampe_flux, 500000) ?? 6000;
+						const temperature = positive(p.lampe_temperature_couleur, 12000) ??
+							(/sodium/i.test(p.lampe_famille) ? 2000 : 3000);
+						const colors = [[2000, [255, 170, 75]], [2700, [255, 205, 135]],
+							[4000, [255, 237, 212]], [6500, [222, 235, 255]]];
+						const upper = colors.findIndex(([kelvin]) => kelvin >= temperature);
+						const b = colors[upper < 0 ? colors.length - 1 : upper], a = colors[Math.max(0, upper - 1)];
+						const fraction = a === b || upper < 0 ? 1 : (temperature - a[0]) / (b[0] - a[0]);
+						return {
+							top: height,
+							lightFlux: flux,
+							poleRadius: /candelabre|^mat$|porte lac/.test(category) ? 0.12 : 0,
+							lightRadius: Math.max(6, Math.min(22, height * 1.5 * Math.sqrt(flux / 10000))),
+							color: { r: (a[1][0] + (b[1][0] - a[1][0]) * fraction) / 255,
+							g: (a[1][1] + (b[1][1] - a[1][1]) * fraction) / 255,
+							b: (a[1][2] + (b[1][2] - a[1][2]) * fraction) / 255 },
 						};
-						content.textContent = [
-							`Streetlight ${p.foyer || ''} · ${p.lib_ouvrag || 'lamp'}`,
-							p.voie_libelle,
-							`Height: ${recorded('support_hauteur', 40, 'm', '6 m')}`,
-							`Luminous flux: ${recorded('lampe_flux', 500000, 'lm', '6000 lm')}`,
-							`Colour temperature: ${recorded('lampe_temperature_couleur', 12000, 'K',
-							/sodium/i.test(p.lampe_famille) ? '2000 K' : '3000 K')}`,
-							p.lampe_famille,
-							p.lib_regime ? `Recorded regime: ${p.lib_regime} (not simulated)` : '',
-							'Approximate local lighting, not measured lux or live lamp status.',
-							'No obstacle shadows, photometric distribution or dimming schedule.',
-							'Schematic poles: recorded support height, assumed diameter and fixture shape.',
-						].filter(Boolean).join('\n');
-						return content;
+						},
+						tooltipContentfunction({ properties: p }) {
+							const content = document.createElement('div');
+							content.style.whiteSpace = 'pre-line';
+							const recorded = (field, maximum, unit, fallback) => {
+								const value = positive(p[field], maximum);
+								return value === null ? `${fallback} (assumed)` : `${value} ${unit} (recorded)`;
+							};
+							content.textContent = [
+								`Streetlight ${p.foyer || ''} · ${p.lib_ouvrag || 'lamp'}`,
+								p.voie_libelle,
+								`Height: ${recorded('support_hauteur', 40, 'm', '6 m')}`,
+								`Luminous flux: ${recorded('lampe_flux', 500000, 'lm', '6000 lm')}`,
+								`Colour temperature: ${recorded('lampe_temperature_couleur', 12000, 'K',
+								/sodium/i.test(p.lampe_famille) ? '2000 K' : '3000 K')}`,
+								p.lampe_famille,
+								p.lib_regime ? `Recorded regime: ${p.lib_regime} (not simulated)` : '',
+								'Approximate local lighting, not measured lux or live lamp status.',
+								'No obstacle shadows, photometric distribution or dimming schedule.',
+								'Schematic poles: recorded support height, assumed diameter and fixture shape.',
+							].filter(Boolean).join('\n');
+							return content;
+						},
 					},
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/eclairage-public/">Streetlights: Ville de Paris / Cielis</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 				}).addTo(map),
-				'Sunlight & shadows': (sunlightOverlay = new sunlightLayer()).addTo(map),
-				'Seine tourist boats (scheduled)': (cruiseBoats = installCruiseBoats(map, sunlightControl)).addTo(map),
+				'Shadows': (sunlightOverlay = new L.Layer({ source: {
+					type: 'sunlight'
+				} })).addTo(map),
+				'Bateaux-Mouches': (cruiseBoats = new L.Layer({
+					source: {
+						type: 'cruises',
+						clock: sunlightOverlay
+					},
+					attribution: '<a href="https://www.bateaux-mouches.fr/fr/croisiere/informations">Cruise timetable: Bateaux-Mouches</a> · estimated positions',
+				})).addTo(map),
 			}, { collapsed: false }).addTo(map);
 		</script>
 	</body>

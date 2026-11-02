@@ -71,7 +71,7 @@ Before(async function () {
     const response = await route.fetch();
     await route.fulfill({ response, body: `${await response.text()}\n${pmtilesMock}` });
   };
-  await this.context.route('**/misc/layer.js', mockPMTiles);
+  await this.context.route('**/dist/3d/types/*.js', mockPMTiles);
   this.page = await this.context.newPage();
 });
 
