@@ -33,8 +33,23 @@ L.GridLayer.include({
     },
 
     /**
+     * Preserve the 3D context on tile containers without making individual tile levels 3D.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    _initContainer() {
+        gridLayerProto._initContainer.apply(this, arguments);
+        if (!this._map._rotate || !this._container) { return; }
+        // Tile levels stay flat: preserving 3D on them also clips images in Firefox.
+        for (let pane = this._container; pane && pane !== this._map._rotatePane; pane = pane.parentElement) {
+            pane.style.transformStyle = 'preserve-3d';
+        }
+    },
+
+    /**
      * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
      * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).
+     * The first event also synchronizes levels created before any accumulated pans.
      * 
      * @listens L.Map~rotate
      * 
@@ -44,7 +59,7 @@ L.GridLayer.include({
         const map = this._map;
         if (!map) { return; }
         const origin = map.getPixelOrigin();
-        if (this._rotateOrigin && !this._rotateOrigin.equals(origin) && !map._animatingZoom && this._levels) {
+        if ((!this._rotateOrigin || !this._rotateOrigin.equals(origin)) && !map._animatingZoom && this._levels) {
             this._setZoomTransforms(map.getCenter(), map.getZoom());
         }
         this._rotateOrigin = origin;

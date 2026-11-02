@@ -56,3 +56,12 @@ Feature: Rotating a Leaflet map
   Scenario: Opening a popup in a second rotated map does not move it
     When I open a popup in a second rotated map with map listeners
     Then the second map center remains unchanged and its popup stays anchored
+
+  Scenario Outline: Markers keep Leaflet DOM rendering when the map prefers Canvas
+    When I add markers to a Canvas-preferred map at pitch <pitch>
+    Then the markers use Leaflet DOM icons while vector paths use Canvas
+
+    Examples:
+      | pitch |
+      | 0     |
+      | 45    |

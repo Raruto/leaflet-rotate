@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { After, AfterAll, Before, BeforeAll, Given, setDefaultTimeout } from '@cucumber/cucumber';
-import { chromium } from 'playwright';
+import { chromium, firefox } from 'playwright';
 import { startServer } from '../../build/server.js';
 
 setDefaultTimeout(10000);
@@ -9,19 +9,27 @@ let server;
 let browser;
 let baseUrl;
 
-BeforeAll(async () => {
+BeforeAll({ timeout: 60000 }, async () => {
   server = await startServer(0);
   baseUrl = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch();
+  const testBrowser = process.env.TEST_BROWSER;
+  const [engine, options] = testBrowser === 'firefox'
+    // Windows throttles requestAnimationFrame in windows it considers occluded.
+    ? [firefox, { firefoxUserPrefs: { 'widget.windows.window_occlusion_tracking.enabled': false } }]
+    : [chromium, testBrowser === 'chrome' || testBrowser === 'msedge' ? { channel: testBrowser } : {}];
+  browser = await engine.launch(options);
 });
 
 AfterAll({ timeout: 30000 }, async () => {
   await browser.close();
-  server.closeAllConnections();
-  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  await new Promise((resolve, reject) => {
+    server.close(error => error ? reject(error) : resolve());
+    server.closeAllConnections();
+  });
 });
 
-Before(async function () {
+// @unit scenarios run in Node only and need no browser page.
+Before({ tags: 'not @unit' }, async function () {
   this.baseUrl = baseUrl;
   this.context = await browser.newContext();
   await this.context.route(/.html$/, async route => {
@@ -37,6 +45,10 @@ Before(async function () {
           '<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>',
           '<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script><script>globalThis.L = globalThis.leaflet;</script>'
         )
+        .replace(
+          '"leaflet": "https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"',
+          '"leaflet": "https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"'
+        )
         .replace('https://unpkg.com/leaflet@1.9/dist/leaflet.css', 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css');
     }
     await route.fulfill({ response, body, headers: response.headers() });
@@ -44,7 +56,7 @@ Before(async function () {
   this.page = await this.context.newPage();
 });
 
-After(async function () {
+After({ tags: 'not @unit' }, async function () {
   await this.context.close();
 });
 

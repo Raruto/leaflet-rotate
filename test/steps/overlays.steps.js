@@ -425,3 +425,47 @@ Then('the second map center remains unchanged and its popup stays anchored', fun
   assert.ok(Math.hypot(...this.secondaryPopup.delta) < 2, JSON.stringify(this.secondaryPopup));
   assert.ok(Math.hypot(...this.secondaryPopup.tooltipDelta) < 2, JSON.stringify(this.secondaryPopup));
 });
+
+When('I add markers to a Canvas-preferred map at pitch {int}', async function (pitch) {
+  this.domMarkers = await this.page.evaluate(pitch => {
+    const container = document.createElement('div');
+    container.style.cssText = 'height: 300px; width: 500px';
+    document.body.appendChild(container);
+    const map = new L.Map(container, {
+      center: [55, 10], zoom: 6, rotate: true, bearing: 35, pitch, preferCanvas: true,
+    });
+    const marker = new L.Marker([55, 10], { draggable: true, rotation: Math.PI / 4 })
+      .bindPopup('DOM popup', { autoPan: false }).addTo(map);
+    const divMarker = new L.Marker([55.1, 10.1], { icon: new L.DivIcon({ html: 'Label' }) }).addTo(map);
+    const vector = new L.CircleMarker([55.2, 10.2]).addTo(map);
+    map.panBy([40, 20], { animate: false });
+    marker.setLatLng([55.3, 10.3]).setOpacity(0.5);
+    const element = marker.getElement();
+    const transform = new DOMMatrix(getComputedStyle(element).transform);
+    const position = L.DomUtil.getPosition(element).add(map._getMapPanePos());
+    const expected = map.latLngToContainerPoint(marker.getLatLng());
+    element.click();
+    const result = {
+      icon: element.tagName,
+      iconPane: element.parentNode === map.getPane('markerPane'),
+      shadow: marker._shadow.tagName,
+      divIcon: divMarker.getElement().tagName,
+      vectorCanvas: vector._renderer instanceof L.Canvas,
+      aligned: position.distanceTo(expected) < 1,
+      rotation: Math.abs(Math.atan2(transform.b, transform.a) - Math.PI / 4) < 1e-6,
+      opacity: element.style.opacity,
+      draggable: marker.dragging.enabled(),
+      popup: marker.isPopupOpen(),
+    };
+    marker.remove();
+    result.removed = !element.isConnected && !marker.getElement();
+    return result;
+  }, pitch);
+});
+
+Then('the markers use Leaflet DOM icons while vector paths use Canvas', function () {
+  assert.deepEqual(this.domMarkers, {
+    icon: 'IMG', iconPane: true, shadow: 'IMG', divIcon: 'DIV', vectorCanvas: true,
+    aligned: true, rotation: true, opacity: '0.5', draggable: true, popup: true, removed: true,
+  });
+});

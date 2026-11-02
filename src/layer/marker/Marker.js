@@ -201,17 +201,7 @@ L.Marker.include({
         }
 
         /** @TODO use markerProto._setPos */
-        let bearing = this.options.rotation || 0;
-        if (this.options.rotateWithView) {
-            bearing += this._map._bearing;
-        }
-        if (this.options.keepUpright) {
-            bearing = ((bearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-            if (bearing > Math.PI / 2 && bearing < 3 * Math.PI / 2) {
-                bearing += Math.PI;
-            }
-            bearing %= 2 * Math.PI;
-        }
+        const bearing = this._getIconBearing();
 
         /** @TODO use markerProto._setPos */
         if (this._icon) {
@@ -226,6 +216,29 @@ L.Marker.include({
         this._zIndex = pos.y + this.options.zIndexOffset;
 
         this._resetZIndex();
+    },
+
+    /**
+     * Compute the on-screen icon rotation from `rotation`, `rotateWithView` and `keepUpright`.
+     *
+     * @returns {number} Angle in radians.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    _getIconBearing() {
+        let bearing = this.options.rotation || 0;
+        if (this.options.rotateWithView) {
+            bearing += this._map._bearing;
+        }
+        if (this.options.keepUpright) {
+            bearing = ((bearing % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+            if (bearing > Math.PI / 2 && bearing < 3 * Math.PI / 2) {
+                bearing += Math.PI;
+            }
+            bearing %= 2 * Math.PI;
+        }
+
+        return bearing;
     },
 
     // _updateZIndex(offset) {

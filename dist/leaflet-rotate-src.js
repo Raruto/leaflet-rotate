@@ -478,6 +478,24 @@ var leafletRotate = (() => {
       if (this._map._rotate) {
         pos = this._map.rotatedPointToMapPanePoint(pos);
       }
+      const bearing = this._getIconBearing();
+      if (this._icon) {
+        L.DomUtil.setPosition(this._icon, pos, bearing, pos, this.options.scale);
+      }
+      if (this._shadow) {
+        L.DomUtil.setPosition(this._shadow, pos, bearing, pos, this.options.scale);
+      }
+      this._zIndex = pos.y + this.options.zIndexOffset;
+      this._resetZIndex();
+    },
+    /**
+     * Compute the on-screen icon rotation from `rotation`, `rotateWithView` and `keepUpright`.
+     *
+     * @returns {number} Angle in radians.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    _getIconBearing() {
       let bearing = this.options.rotation || 0;
       if (this.options.rotateWithView) {
         bearing += this._map._bearing;
@@ -489,14 +507,7 @@ var leafletRotate = (() => {
         }
         bearing %= 2 * Math.PI;
       }
-      if (this._icon) {
-        L.DomUtil.setPosition(this._icon, pos, bearing, pos, this.options.scale);
-      }
-      if (this._shadow) {
-        L.DomUtil.setPosition(this._shadow, pos, bearing, pos, this.options.scale);
-      }
-      this._zIndex = pos.y + this.options.zIndexOffset;
-      this._resetZIndex();
+      return bearing;
     },
     // _updateZIndex(offset) {
     //     if (!this._map._rotate) {
@@ -542,8 +553,23 @@ var leafletRotate = (() => {
       return events;
     },
     /**
+     * Preserve the 3D context on tile containers without making individual tile levels 3D.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    _initContainer() {
+      gridLayerProto._initContainer.apply(this, arguments);
+      if (!this._map._rotate || !this._container) {
+        return;
+      }
+      for (let pane = this._container; pane && pane !== this._map._rotatePane; pane = pane.parentElement) {
+        pane.style.transformStyle = "preserve-3d";
+      }
+    },
+    /**
      * Keep tile levels aligned when a bearing/pitch change shifts the pixel origin
      * (eg. when the rotation pivot is not the view center), then refresh tiles (throttled).
+     * The first event also synchronizes levels created before any accumulated pans.
      * 
      * @listens L.Map~rotate
      * 
@@ -555,7 +581,7 @@ var leafletRotate = (() => {
         return;
       }
       const origin = map.getPixelOrigin();
-      if (this._rotateOrigin && !this._rotateOrigin.equals(origin) && !map._animatingZoom && this._levels) {
+      if ((!this._rotateOrigin || !this._rotateOrigin.equals(origin)) && !map._animatingZoom && this._levels) {
         this._setZoomTransforms(map.getCenter(), map.getZoom());
       }
       this._rotateOrigin = origin;
@@ -797,6 +823,19 @@ var leafletRotate = (() => {
   });
   L.Map.include({
     /**
+     * Rebuild perspective before Leaflet calculates the origin of a reset view.
+     * A reset clears the outer pane translation, unlike a completed pan.
+     */
+    _resetView() {
+      if (this._pitch) {
+        delete this._pitchPan;
+        L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
+        this._updatePitchTransform();
+        arguments[0] = this._limitCenter(arguments[0], arguments[1], this.options.maxBounds);
+      }
+      return mapProto._resetView.apply(this, arguments);
+    },
+    /**
      * Apply an immediate animated-zoom frame without waiting for a transition delay.
      *
      * @param {L.LatLng} center Target center.
@@ -835,6 +874,7 @@ var leafletRotate = (() => {
         this.on("move", this._updatePitchPan, this);
         this.on("moveend", this._endPitchPan, this);
         this.on("move", this._updatePitchSky, this);
+        this.on("rotate", this._panInsideMaxBounds, this);
         this.setBearing(this.options.bearing);
         this.setPitch(this.options.pitch);
       }
@@ -1180,22 +1220,32 @@ var leafletRotate = (() => {
      * @param {L.Point|number[]} point Input pixel coordinate.
      * @param {DOMMatrix|Object} matrix Forward CSS matrix or inverse homography with
      *                                row-major coefficients `a` through `i`.
+     * @param {L.Point} [anchor] Keep inverse pan coordinates on this anchor's side of the horizon.
      * 
      * @returns {L.Point} Transformed pixel coordinate.
      * 
      * @since leaflet-rotate (0.5.0)
      */
-    _transformPitchPoint(point, matrix) {
+    _transformPitchPoint(point, matrix, anchor) {
       point = toPoint(point);
       if (!(matrix instanceof DOMMatrix)) {
-        const denominator = matrix.g * point.x + matrix.h * point.y + matrix.i;
+        if (anchor) {
+          const anchorW = matrix.g * anchor.x + matrix.h * anchor.y + matrix.i, pointW = matrix.g * point.x + matrix.h * point.y + matrix.i;
+          if (pointW * anchorW <= 0) {
+            point = anchor.add(point.subtract(anchor).multiplyBy(anchorW / (anchorW - pointW) * (1 - 1e-6)));
+          }
+        }
+        const denominator2 = matrix.g * point.x + matrix.h * point.y + matrix.i;
         return new L.Point(
-          (matrix.a * point.x + matrix.b * point.y + matrix.c) / denominator,
-          (matrix.d * point.x + matrix.e * point.y + matrix.f) / denominator
+          (matrix.a * point.x + matrix.b * point.y + matrix.c) / denominator2,
+          (matrix.d * point.x + matrix.e * point.y + matrix.f) / denominator2
         );
       }
-      const transformed = new DOMPoint(point.x, point.y).matrixTransform(matrix);
-      return new L.Point(transformed.x / transformed.w, transformed.y / transformed.w);
+      const denominator = matrix.m14 * point.x + matrix.m24 * point.y + matrix.m44;
+      return new L.Point(
+        (matrix.m11 * point.x + matrix.m21 * point.y + matrix.m41) / denominator,
+        (matrix.m12 * point.x + matrix.m22 * point.y + matrix.m42) / denominator
+      );
     },
     /**
      * Apply the current pitch/bearing CSS transform and cache its forward and inverse matrices.
@@ -1222,8 +1272,10 @@ var leafletRotate = (() => {
      */
     _setPitchTransform(transform) {
       this._rotatePane.style.transformOrigin = "0 0";
-      this._rotatePane.style.transform = transform;
       const matrix = this._pitchTransform = new DOMMatrix(transform), a = matrix.m11, b = matrix.m21, c = matrix.m41, d = matrix.m12, e = matrix.m22, f = matrix.m42, g = matrix.m14, h = matrix.m24, i = matrix.m44, determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+      const ground = DOMMatrix.fromMatrix(matrix);
+      ground.m13 = ground.m23 = ground.m43 = 0;
+      this._rotatePane.style.transform = `matrix3d(${Array.from(ground.toFloat64Array(), (value) => value * 1e3).join(",")})`;
       this._pitchInverseTransform = {
         a: (e * i - f * h) / determinant,
         b: (c * h - b * i) / determinant,
@@ -1306,7 +1358,7 @@ var leafletRotate = (() => {
     },
     /**
      * Fill the area above the far plane (where no tiles are loaded) with a sky gradient.
-     * Style it through the `.leaflet-pitch-sky` class.
+     * Style it through `.leaflet-pitch-sky` or the `--leaflet-sky-background` CSS property.
      * 
      * @since leaflet-rotate (0.5.1)
      */
@@ -1327,7 +1379,7 @@ var leafletRotate = (() => {
           width: "100%",
           zIndex: 0,
           pointerEvents: "none",
-          background: "linear-gradient(#9ec5e8, #dfe9f0)"
+          background: "var(--leaflet-sky-background, linear-gradient(#9ec5e8, #dfe9f0))"
         });
       }
       this._pitchSky.style.display = "";
@@ -1485,6 +1537,7 @@ var leafletRotate = (() => {
       L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
       if (this._rotate) {
         this._rotatePane = this.createPane("rotatePane", this._mapPane);
+        this._mapPane.style.transformStyle = this._rotatePane.style.transformStyle = "preserve-3d";
         this._norotatePane = this.createPane("norotatePane", this._mapPane);
         if (L.version.startsWith("2.")) {
           this._rotatePane.style.transformOrigin = "0 0";
@@ -1541,53 +1594,87 @@ var leafletRotate = (() => {
       return this;
     },
     /**
-     * Pans the map to the closest view that would lie inside the given bounds
-     * (if it's not already), controlling the animation using the options specific,
-     * if any.
-     * 
-     * @TODO check if map bounds calculated by `L.Map::panInsideBounds()`
-     *       function should match the `rotatePane` or `norotatePane` bounds
-     *
-     * @see https://github.com/fnicollet/Leaflet/issues/7
-     * 
-     * @param {L.LatLngBounds} bounds Geographic bounds to fit inside the viewport.
-     * @param {Object} [options] Pan animation options.
-     * 
-     * @returns {L.Map} This map instance.
-     * 
-     * @since leaflet-rotate (v0.1.0)
+     * Constrain the visible ground footprint, including its asymmetric pitched far side.
+     * When it is larger than maxBounds, Leaflet's rebound centers the excess on each axis.
      */
-    // panInsideBounds(bounds, options) {
-    //     this._enforcingBounds = true;
-    //     const center = this.getCenter(),
-    //         newCenter = this._limitCenter(center, this._zoom, L.latLngBounds(bounds));
-    //
-    //     if (!center.equals(newCenter)) {
-    //         this.panTo(newCenter, options);
-    //     }
-    //
-    //     this._enforcingBounds = false;
-    //     return this;
-    // },
-    // adjust center for view to get inside bounds
-    // _limitCenter(center, zoom, bounds) {
-    //
-    //     if (!bounds) { return center; }
-    //
-    //     const centerPoint = this.project(center, zoom),
-    //         viewHalf = this.getSize().divideBy(2),
-    //         viewBounds = new Bounds(centerPoint.subtract(viewHalf), centerPoint.add(viewHalf)),
-    //         offset = this._getBoundsOffset(viewBounds, bounds, zoom);
-    //
-    //     // If offset is less than a pixel, ignore.
-    //     // This prevents unstable projections from getting into
-    //     // an infinite loop of tiny offsets.
-    //     if (Math.abs(offset.x) <= 1 && Math.abs(offset.y) <= 1) {
-    //             return center;
-    //     }
-    //
-    //     return this.unproject(centerPoint.add(offset), zoom);
-    // },
+    _limitCenter(center, zoom, bounds) {
+      if (!this._rotate || !bounds) {
+        return mapProto._limitCenter.apply(this, arguments);
+      }
+      const centerPoint = this.project(center, zoom), layerCenter = this.containerPointToLayerPoint(this.getSize().divideBy(2)), footprint = this._getPaddedPixelBounds(0, false), viewBounds = new L.Bounds(
+        centerPoint.add(footprint.min.subtract(layerCenter)),
+        centerPoint.add(footprint.max.subtract(layerCenter))
+      ), offset = this._getBoundsOffset(viewBounds, bounds, zoom);
+      if (Math.abs(offset.x) <= 1 && Math.abs(offset.y) <= 1) {
+        return center;
+      }
+      return this.unproject(centerPoint.add(offset), zoom);
+    },
+    /**
+     * Reapply configured maximum bounds after a map transform.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    _panInsideMaxBounds() {
+      if (this.options.maxBounds) {
+        return mapProto._panInsideMaxBounds.apply(this, arguments);
+      }
+    },
+    /**
+     * Keep the visible ground footprint inside the given bounds.
+     *
+     * @param {L.LatLngBounds|Array} bounds Geographic bounds.
+     * @param {Object} [options] Pan options passed to Leaflet.
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    panInsideBounds(bounds, options) {
+      if (this._rotate) {
+        bounds = bounds instanceof L.LatLngBounds ? bounds : new L.LatLngBounds(bounds);
+        const center = this.getCenter(), limited = this._limitCenter(center, this._zoom, bounds);
+        const offset = this._getCenterOffset(limited);
+        if (!center.equals(limited) && Math.abs(offset.x) <= 1 && Math.abs(offset.y) <= 1) {
+          this._enforcingBounds = true;
+          this.setView(limited, this._zoom, { reset: true });
+          this._enforcingBounds = false;
+          return this;
+        }
+      }
+      return mapProto.panInsideBounds.apply(this, arguments);
+    },
+    /**
+     * Leaflet supplies inertia offsets in screen pixels, not projected CRS pixels.
+     * Keep the drag's moving anchor when inertia continues a pitched pan.
+     */
+    _limitOffset(offset, bounds) {
+      if (!this._rotate || !bounds) {
+        return mapProto._limitOffset.apply(this, arguments);
+      }
+      const pan = this._pitchPan, anchor = pan ? pan.anchor.add(this._getMapPanePos().subtract(pan.panePos)) : this.getSize().divideBy(2), layerAnchor = this.containerPointToLayerPoint(anchor), panePos = this._getMapPanePos(), target = anchor.subtract(offset).subtract(panePos), shift = (this._pitch ? this._transformPitchPoint(target, this._pitchInverseTransform, anchor.subtract(panePos)) : this.containerPointToLayerPoint(anchor.subtract(offset))).subtract(layerAnchor), footprint = this._getPaddedPixelBounds(0, false), origin = this.getPixelOrigin().subtract(shift), correction = this._getBoundsOffset(new L.Bounds(
+        footprint.min.add(origin),
+        footprint.max.add(origin)
+      ), bounds);
+      return anchor.subtract(this.layerPointToContainerPoint(layerAnchor.add(shift).subtract(correction)));
+    },
+    /**
+     * Pan by a screen-pixel offset, constraining large immediate pans to maxBounds.
+     *
+     * @param {L.Point|number[]} offset Pan offset in pixels.
+     * @param {Object} [options] Pan options passed to Leaflet.
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
+    panBy(offset, options) {
+      offset = toPoint(offset);
+      if (this._rotate && this._loaded && !this.getSize().contains(offset) && !(options && options.animate)) {
+        const anchor = this.getSize().divideBy(2), panePos = this._getMapPanePos(), layerAnchor = this.containerPointToLayerPoint(anchor), target = anchor.subtract(offset).subtract(panePos), shift = (this._pitch ? this._transformPitchPoint(target, this._pitchInverseTransform, anchor.subtract(panePos)) : this.containerPointToLayerPoint(anchor.subtract(offset))).subtract(layerAnchor), center = this.unproject(this.project(this.getCenter()).subtract(shift));
+        this._resetView(this._limitCenter(center, this._zoom, this.options.maxBounds), this._zoom);
+        return this;
+      }
+      return mapProto.panBy.call(this, offset, options);
+    },
     // @method flyToBounds(bounds: LatLngBounds, options?: fitBounds options): this
     // Sets the view of the map with a smooth animation like [`flyTo`](#map-flyto),
     // but takes a bounds parameter like [`fitBounds`](#map-fitbounds).
@@ -1750,22 +1837,26 @@ var leafletRotate = (() => {
      * @see src\layer\vector\Renderer::_update()
      * 
      * @param {number} padding Bounds padding as a fraction of map size.
+     * @param {boolean} [round=true] Round renderer bounds; navigation needs exact ground coordinates.
      * 
      * @returns {L.Bounds} Padded bounds in layer-point coordinates.
      * 
      * @since leaflet-rotate (v0.2.0)
      */
-    _getPaddedPixelBounds(padding) {
+    _getPaddedPixelBounds(padding, round = true) {
       if (!this._rotate && mapProto._getPaddedPixelBounds) {
         return mapProto._getPaddedPixelBounds.apply(this, arguments);
       }
       const [padMin, padMax] = this._getPitchedContainerBounds(padding);
       return new L.Bounds([
-        this.containerPointToLayerPoint([padMin.x, padMin.y]).floor(),
-        this.containerPointToLayerPoint([padMin.x, padMax.y]).floor(),
-        this.containerPointToLayerPoint([padMax.x, padMin.y]).floor(),
-        this.containerPointToLayerPoint([padMax.x, padMax.y]).floor()
-      ]);
+        [padMin.x, padMin.y],
+        [padMin.x, padMax.y],
+        [padMax.x, padMin.y],
+        [padMax.x, padMax.y]
+      ].map((point) => {
+        const projected = this.containerPointToLayerPoint(point);
+        return round ? projected.floor() : projected;
+      }));
     },
     /**
      * Build and fire Leaflet's location-found event, including the device heading.
@@ -1945,6 +2036,55 @@ var leafletRotate = (() => {
     }
   });
   L.Map.addInitHook("addHandler", "trackContainerMutation", L.Map.ContainerMutation);
+
+  // src/map/handler/Drag.js
+  var dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.Drag.prototype));
+  L.Map.Drag.include({
+    /**
+     * Capture the ground footprint and pointer anchor before a constrained drag.
+     */
+    _onDragStart() {
+      dragProto._onDragStart.apply(this, arguments);
+      const map = this._map;
+      this._rotateLimit = null;
+      if (!map._rotate || !map.options.maxBounds || !map.options.maxBoundsViscosity) {
+        return;
+      }
+      const anchor = (map.pointerEventToContainerPoint || map.mouseEventToContainerPoint).call(map, {
+        clientX: this._draggable._startPoint.x,
+        clientY: this._draggable._startPoint.y
+      }), footprint = map._getPaddedPixelBounds(0, false), origin = map.getPixelOrigin();
+      this._rotateLimit = {
+        anchor,
+        layerAnchor: map.containerPointToLayerPoint(anchor),
+        panePos: map._getMapPanePos().clone(),
+        footprint: new L.Bounds(footprint.min.add(origin), footprint.max.add(origin)),
+        matrix: map._pitch ? map._pitchTransform : null,
+        inverse: map._pitchInverseTransform,
+        bearing: map._bearing
+      };
+    },
+    /**
+     * Apply max-bounds viscosity in ground coordinates during a rotated drag.
+     */
+    _onPreDragLimit() {
+      const limit = this._rotateLimit;
+      if (!this._map._rotate || !limit) {
+        return dragProto._onPreDragLimit.apply(this, arguments);
+      }
+      const map = this._map, draggable = this._draggable, offset = draggable._newPos.subtract(draggable._startPos), shift = limit.matrix ? map._transformPitchPoint(
+        limit.anchor.add(offset).subtract(limit.panePos),
+        limit.inverse,
+        limit.anchor.subtract(limit.panePos)
+      ).subtract(limit.layerAnchor) : offset.rotate(-limit.bearing), correction = map._getBoundsOffset(new L.Bounds(
+        limit.footprint.min.subtract(shift),
+        limit.footprint.max.subtract(shift)
+      ), map.options.maxBounds);
+      shift._subtract(correction.multiplyBy(this._viscosity));
+      const limitedOffset = limit.matrix ? map._transformPitchPoint(limit.layerAnchor.add(shift), limit.matrix).add(limit.panePos).subtract(limit.anchor) : shift.rotate(limit.bearing);
+      draggable._newPos = draggable._startPos.add(limitedOffset);
+    }
+  });
 
   // src/map/handler/TouchGestures.js
   function touchToContainerPoint(map, touch) {

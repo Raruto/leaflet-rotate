@@ -72,11 +72,27 @@ export function startServer(port = 8080) {
         response.writeHead(404).end();
         return;
       }
-      response.writeHead(200, {
+      const headers = {
+        'Accept-Ranges': 'bytes',
         'Content-Type': types[extname(target).toLowerCase()] ?? 'application/octet-stream',
-      });
+      };
+      // Serve a single byte range per request.
+      const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? '');
+      let start = 0;
+      let end = content.size - 1;
+      if (range && (range[1] || range[2])) {
+        start = range[1] ? Number(range[1]) : Math.max(0, content.size - Number(range[2]));
+        end = range[1] && range[2] ? Math.min(Number(range[2]), end) : end;
+        if (start > end) {
+          response.writeHead(416, { 'Content-Range': `bytes */${content.size}` }).end();
+          return;
+        }
+        response.writeHead(206, { ...headers, 'Content-Length': end - start + 1, 'Content-Range': `bytes ${start}-${end}/${content.size}` });
+      } else {
+        response.writeHead(200, { ...headers, 'Content-Length': content.size });
+      }
       if (request.method === 'HEAD') response.end();
-      else createReadStream(target).on('error', error => {
+      else createReadStream(target, content.size ? { start, end } : undefined).on('error', error => {
         console.error(error);
         response.destroy(error);
       }).pipe(response);

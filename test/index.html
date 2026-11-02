@@ -162,20 +162,84 @@
 				version: 8,
 				sources: {
 					esri: { type: 'raster', tiles: [tiles], tileSize: 256, maxzoom: 18 },
-					polygon: { type: 'geojson', data: { type: 'Polygon', coordinates: [[...polygonLatLngs, polygonLatLngs[0]].map(([lat, lng]) => [lng, lat])] } },
-					route: { type: 'geojson', data: { type: 'LineString', coordinates: route.map(([lat, lng]) => [lng, lat]) } },
+					overlays: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } },
 				},
 				layers: [
 					{ id: 'esri', type: 'raster', source: 'esri' },
-					{ id: 'polygon', type: 'fill', source: 'polygon', paint: { 'fill-color': '#3388ff', 'fill-opacity': 0.2 } },
-					{ id: 'polygon-line', type: 'line', source: 'polygon', paint: { 'line-color': '#3388ff', 'line-width': 3 } },
-					{ id: 'route', type: 'line', source: 'route', paint: { 'line-color': 'yellow', 'line-width': 3 } },
+					{ id: 'overlay-fills', type: 'fill', source: 'overlays', filter: ['==', ['geometry-type'], 'Polygon'], paint: { 'fill-color': ['get', 'fillColor'], 'fill-opacity': ['get', 'fillOpacity'] } },
+					{ id: 'overlay-lines', type: 'line', source: 'overlays', filter: ['!=', ['geometry-type'], 'Point'], paint: { 'line-color': ['get', 'color'], 'line-opacity': ['get', 'opacity'], 'line-width': ['get', 'weight'] } },
+					{ id: 'overlay-points', type: 'circle', source: 'overlays', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': ['get', 'radius'], 'circle-color': ['get', 'fillColor'], 'circle-opacity': ['get', 'fillOpacity'], 'circle-stroke-color': ['get', 'color'], 'circle-stroke-opacity': ['get', 'opacity'], 'circle-stroke-width': ['get', 'weight'] } },
 				],
 			},
 		}) : null;
 		if (ml) {
 			ml.addControl(new maplibregl.NavigationControl({ visualizePitch: true }));
-			for (const name in places) new maplibregl.Marker().setLngLat([places[name][1], places[name][0]]).setPopup(new maplibregl.Popup().setText(name)).addTo(ml);
+			const mirrors = new Map();
+			let mirrorFrame;
+			const syncOverlays = () => {
+				mirrorFrame = null;
+				if (!ml.getSource('overlays')) return;
+				const active = new Set(), features = [];
+				lf.eachLayer(layer => {
+					if (layer instanceof L.Marker) {
+						active.add(layer);
+						let marker = mirrors.get(layer);
+						if (!marker) {
+							const element = document.createElement('div');
+							element.style.width = element.style.height = '0px';
+							const icon = layer.options.icon.createIcon();
+							icon.style.position = 'absolute';
+							icon.style.transform = `scale(${layer.options.scale ?? 1})`;
+							element.appendChild(icon);
+							marker = new maplibregl.Marker({ element, rotationAlignment: 'viewport', pitchAlignment: 'viewport', draggable: Boolean(layer.dragging?.enabled()) });
+							marker.on('drag', () => {
+								const ll = marker.getLngLat();
+								layer.setLatLng([ll.lat, ll.lng]);
+							});
+							layer.on('move', scheduleOverlays);
+							const tooltip = layer.getTooltip();
+							if (tooltip) marker.setPopup(new maplibregl.Popup().setHTML(tooltip.getContent()));
+							mirrors.set(layer, marker);
+							marker.setLngLat([layer.getLatLng().lng, layer.getLatLng().lat]).addTo(ml);
+						}
+						const ll = layer.getLatLng();
+						marker.setLngLat([ll.lng, ll.lat]);
+						marker.setRotation(layer._getIconBearing() * 180 / Math.PI);
+						marker.getElement().style.opacity = layer.options.opacity;
+					} else if (layer instanceof L.Path && !layer._marker) {
+						let feature = layer.toGeoJSON();
+						if (layer instanceof L.Circle) {
+							const center = layer.getLatLng(), angular = layer.getRadius() / 6371000,
+								lat = center.lat * Math.PI / 180, lng = center.lng * Math.PI / 180;
+							const ring = Array.from({ length: 65 }, (_, i) => {
+								const angle = i * 2 * Math.PI / 64;
+								const y = Math.asin(Math.sin(lat) * Math.cos(angular) + Math.cos(lat) * Math.sin(angular) * Math.cos(angle));
+								const x = lng + Math.atan2(Math.sin(angle) * Math.sin(angular) * Math.cos(lat), Math.cos(angular) - Math.sin(lat) * Math.sin(y));
+								return [x * 180 / Math.PI, y * 180 / Math.PI];
+							});
+							feature = { type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] } };
+						}
+						const o = layer.options;
+						feature.properties = {
+							color: o.color, fillColor: o.fillColor || o.color,
+							opacity: o.stroke ? o.opacity : 0, fillOpacity: o.fill ? o.fillOpacity : 0,
+							weight: o.weight || 0, radius: layer instanceof L.CircleMarker ? layer.getRadius() : 0,
+						};
+						features.push(feature);
+					}
+				});
+				for (const [layer, marker] of mirrors) {
+					if (!active.has(layer)) {
+						layer.off('move', scheduleOverlays);
+						marker.remove();
+						mirrors.delete(layer);
+					}
+				}
+				ml.getSource('overlays').setData({ type: 'FeatureCollection', features });
+			};
+			const scheduleOverlays = () => { mirrorFrame ??= requestAnimationFrame(syncOverlays); };
+			lf.on('layeradd layerremove move zoom rotate pitch', scheduleOverlays);
+			ml.on('load', syncOverlays);
 		}
 
 		/**
