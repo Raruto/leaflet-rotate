@@ -12,7 +12,19 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     const boats = () => layer.root.children.find(mesh => mesh.extras.featureFaces.length);
     const boatCount = () => boats()?.extras.featureFaces.length ?? 0;
     const stride = () => boats().extras.featureFaces[0].vertexEnd * 3;
-    const firstBoat = () => [...boats().geometry.attributes.position.data.slice(0, stride())];
+    // Boats are placed by a compute pass: read the positions back from the GPU.
+    const gpuPositions = async () => {
+      const { buffer } = boats().geometry.attributes.position, { device } = owner.renderer;
+      const read = device.createBuffer({ size: buffer.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const encoder = device.createCommandEncoder();
+      encoder.copyBufferToBuffer(buffer, 0, read, 0, buffer.size);
+      device.queue.submit([encoder.finish()]);
+      await read.mapAsync(GPUMapMode.READ);
+      const data = new Float32Array(read.getMappedRange().slice(0));
+      read.destroy();
+      return data;
+    };
+    const firstBoat = async () => [...(await gpuPositions()).slice(0, stride())];
     const gpuErrors = [];
     owner.renderer.device.addEventListener('uncapturederror', event => gpuErrors.push(event.error.message));
     const select = (day, minute) => {
@@ -28,19 +40,22 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     const routeAtNight = route.geometry.drawRange.count > 100 && route.visible && route.extras.featureFaces.length === 0 &&
       route.program.depthTest === false && route.program.depthWrite === false;
     select('2026-11-02', 555); // 09:15 UTC = first winter departure 10:15 Paris.
-    const firstPosition = firstBoat();
+    const firstPosition = await firstBoat();
     select('2026-11-02', 565);
-    const moved = firstBoat().some((value, i) => value !== firstPosition[i]);
-    const manualPosition = firstBoat();
+    const moved = (await firstBoat()).some((value, i) => value !== firstPosition[i]);
+    const manualPosition = await firstBoat();
     await new Promise(resolve => setTimeout(resolve, 600));
-    const frozen = firstBoat().every((value, i) => value === manualPosition[i]);
+    const frozen = (await firstBoat()).every((value, i) => value === manualPosition[i]);
     select('2026-11-02', 600);
     const twoTrips = boatCount();
     const properties = boats().extras.featureFaces.map(face => face.properties);
     // The hull's first vertex sits 0.1 m above the water surface.
-    const heights = boats().extras.featureFaces.map(face =>
-      boats().geometry.attributes.position.data[face.vertexStart * 3 + 1] - 0.1 + layer.root.position[1]);
-    const finite = layer.root.children.every(mesh =>
+    const positions = await gpuPositions();
+    const heights = boats().extras.featureFaces.map(face => positions[face.vertexStart * 3 + 1] - 0.1 + layer.root.position[1]);
+    // The CPU copy used for picking must match the compute pass.
+    layer.raycast({ clientX: 0, clientY: 0 });
+    const cpuMatchesGpu = boats().geometry.attributes.position.data.every((value, i) => Math.abs(value - positions[i]) < 1e-3);
+    const finite = positions.every(Number.isFinite) && layer.root.children.every(mesh =>
       Object.values(mesh.geometry.attributes).every(attribute => [...attribute.data].every(Number.isFinite)));
     const tooltip = layer.options.tooltipContent({ properties: properties[0] }).textContent;
     const shared = layer.renderer === streetlights.renderer;
@@ -56,9 +71,9 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     try {
       sunlightOverlay.control.getContainer().querySelector('button').click();
       await new Promise(resolve => setTimeout(resolve, 350));
-      const before = firstBoat();
+      const before = await firstBoat();
       await new Promise(resolve => setTimeout(resolve, 600));
-      liveMoved = firstBoat().some((value, i) => value !== before[i]);
+      liveMoved = (await firstBoat()).some((value, i) => value !== before[i]);
     } finally { window.Date = OriginalDate; sunlightOverlay.control.live = false; }
     select('2026-11-02', 1290);
     const closed = boatCount() === 0 && layer.root.children.length === 1 && layer.root.children[0] === route;
@@ -120,7 +135,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     for (const mesh of layer.root.children) mesh.visible = true;
     window.previousBoatBuffers = layer.root.children.flatMap(mesh => Object.values(mesh.geometry.attributes).map(a => a.buffer));
     await owner.renderer.device.queue.onSubmittedWorkDone();
-    return { nightCount, moved, frozen, twoTrips, properties, heights, finite, tooltip, shared,
+    return { nightCount, moved, frozen, twoTrips, properties, heights, finite, cpuMatchesGpu, tooltip, shared,
       noDuplicateNodes, liveMoved, closed, gpuErrors, routeAtNight,
       invalidClears, recovered, clearedHighlight, boatPixels, routePixels, riverCoverage, overviewRoutePixels };
   });
@@ -128,7 +143,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   assert.equal(result.twoTrips, 2);
   assert.deepEqual(result.properties.map(trip => trip.departure), ['10:15', '11:00']);
   assert.ok(result.heights.every(height => Math.abs(height - 27.15) < 1e-4), String(result.heights));
-  for (const key of ['moved', 'frozen', 'finite', 'shared', 'noDuplicateNodes', 'liveMoved',
+  for (const key of ['moved', 'frozen', 'finite', 'cpuMatchesGpu', 'shared', 'noDuplicateNodes', 'liveMoved',
     'closed', 'routeAtNight', 'invalidClears', 'recovered', 'clearedHighlight']) {
     assert.equal(result[key], true, key);
   }
