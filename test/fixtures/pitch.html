@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>
+    <script src="../../dist/leaflet-rotate-src.js"></script>
+  </head>
+  <body>
+    <div id="first" style="width:400px;height:300px"></div>
+    <script>
+      window.testPitch = { map: new L.Map('first', {
+        center: [48.8582601, 2.29449985], zoom: 17, rotate: true, pitch: 45, bearing: 30,
+      }) };
+    </script>
+  </body>
+</html>

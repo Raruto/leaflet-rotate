@@ -5,7 +5,7 @@ After({ tags: '@navigation-bounds' }, function () {
   assert.deepEqual(this.navigationErrors, [], 'No browser errors during navigation');
 });
 
-Given('a map with the Paris navigation limits is open', { timeout: 30000 }, async function () {
+Given('a standalone map with navigation limits is open', { timeout: 30000 }, async function () {
   this.navigationErrors = [];
   this.page.on('pageerror', error => this.navigationErrors.push(error.message));
   await this.page.clock.install();

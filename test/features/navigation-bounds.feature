@@ -1,7 +1,7 @@
 @navigation-bounds
 Feature: Navigation limits on rotated and pitched maps
   Background:
-    Given a map with the Paris navigation limits is open
+    Given a standalone map with navigation limits is open
 
   Scenario Outline: Zoom and programmatic navigation respect the transformed viewport
     When navigation rotation is <enabled> with bearing <bearing> and pitch <pitch>

@@ -206,28 +206,6 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/Layer.js
-  L.Layer.types = {};
-  var route;
-  L.Layer.include({
-    initialize(options) {
-      L.Util.setOptions(this, options);
-    }
-  });
-  L.Layer.addInitHook(function() {
-    const { options } = this;
-    if (Object.getPrototypeOf(this) !== L.Layer.prototype || !options.source) return;
-    if (route) return route(this, options);
-    Object.assign(this, { onAdd() {
-    }, onRemove() {
-    } });
-    const pending = this.ready = ((url) => import(url))(`./3d/index.js`).then((module) => {
-      route = module.route;
-      route(this, options);
-      return this.ready === pending ? this : this.ready;
-    });
-  });
-
   // src/layer/Popup.js
   var popupProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Popup.prototype));
   L.Popup.include({

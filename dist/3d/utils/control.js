@@ -1,2 +1,0 @@
-function c(e,r){const o=e._map,t=()=>{const l=[...o.getContainer().querySelectorAll(".leaflet-control-layers-selector")].find(n=>n.layerId===globalThis.L.Util.stamp(e));return l?.closest("label").after(r),!!l},a=()=>queueMicrotask(()=>o.hasLayer(e)&&t());return o.on("layeradd layerremove",a),e.once("remove",()=>{o.off("layeradd layerremove",a),r.remove()}),t()}export{c as underEntry};
-//# sourceMappingURL=control.js.map

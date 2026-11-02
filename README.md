@@ -121,15 +121,6 @@ npm run test  # build and run browser tests
 
 After that you can start developing inside the `src` and `test` folders (eg. open "http://localhost:8080/test" in your browser to preview changes).
 
-#### Offline Paris 3D example
-
-The [3D example](examples/leaflet-rotate-3d.html) loads local archives from `examples/data/`.
-Build all archives with `node build/pmtiles.js`, or just the tree inventory with:
-
-```shell
-node build/pmtiles.js --only=trees
-```
-
 ---
 
 **Side notes:**

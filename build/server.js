@@ -76,7 +76,7 @@ export function startServer(port = 8080) {
         'Accept-Ranges': 'bytes',
         'Content-Type': types[extname(target).toLowerCase()] ?? 'application/octet-stream',
       };
-      // Single byte ranges are enough for PMTiles clients.
+      // Serve a single byte range per request.
       const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? '');
       let start = 0;
       let end = content.size - 1;
