@@ -1,4 +1,4 @@
-import { atmosphere, moonPosition, solarPosition } from '../utils/sun.js';
+import { atmosphere, moonPosition, solarPosition, projectCelestialBody } from '../utils/sun.js';
 import { underEntry } from '../utils/control.js';
 
 function installSunlight(map) {
@@ -24,13 +24,9 @@ function installSunlight(map) {
       disc.hidden = true;
       if (!sky || !body || body.altitude <= 0 || !sun) continue;
       if (disc.parentNode !== sky) sky.append(disc);
-      const [x, y, z] = body.direction;
-      const right = x * Math.cos(bearing) - z * Math.sin(bearing);
-      const up = -x * Math.sin(bearing) * Math.cos(pitch) + y * Math.sin(pitch) - z * Math.cos(bearing) * Math.cos(pitch);
-      const forward = -x * Math.sin(bearing) * Math.sin(pitch) - y * Math.cos(pitch) - z * Math.cos(bearing) * Math.sin(pitch);
-      if (forward <= 0) continue;
-      const left = size.x / 2 + size.y * 1.5 * right / forward;
-      const top = size.y / 2 - size.y * 1.5 * up / forward;
+      const point = projectCelestialBody(body.direction, size, pitch, bearing);
+      if (!point) continue;
+      const { left, top } = point;
       disc.hidden = left < 0 || left > size.x || top < 0 || top > sky.clientHeight || sky.style.display === 'none';
       disc.style.left = `${left}px`; disc.style.top = `${top}px`;
     }

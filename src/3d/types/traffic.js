@@ -1,27 +1,8 @@
 import './3d.js';
-import { along, scheduledTrips, speed, vehicleOffsets } from '../utils/traffic.js';
+import { computeBounds } from '../utils/geometry.js';
+import { along, speed, toLanes, tripsAt, routeGeometry } from '../utils/traffic.js';
 import { build, vehicles } from '../utils/vehicles.js';
 import { underEntry } from '../utils/control.js';
-
-// GeoJSON (Multi)LineStrings become lanes ({latlngs, properties, elevation?}); prepare() adds `points` ([x, z, ground]),
-// `lengths` and `length` in layer-local metres.
-const toLanes = ({ features = [] }) => features.flatMap(({ geometry, properties }) => {
-  const lines = geometry?.type === 'LineString' ? [geometry.coordinates] : geometry?.type === 'MultiLineString' ? geometry.coordinates : [];
-  return lines.map(line => ({ latlngs: line.map(([lng, lat]) => [lat, lng]), properties: properties ?? {}, elevation: properties?.elevation }));
-});
-
-// A lane with a `timetable` runs scheduled trips end to end; one with a `flow` (vehicles/h) loops evenly spaced vehicles.
-const tripsAt = (time, lanes, velocity) => lanes.flatMap((lane, l) => {
-  const { timetable, flow = 0 } = lane.properties;
-  if (!lane.length) return [];
-  if (timetable) return scheduledTrips(time, timetable).map(trip => ({
-    id: `${l}-${trip.id}`, lane, distance: trip.progress * lane.length, speed: lane.length / (timetable.duration * 60),
-    properties: { ...lane.properties, departure: trip.departure },
-  }));
-  const travelled = time / 1000 * velocity;
-  return (lane.offsets ||= vehicleOffsets(lane.length, flow, velocity))
-    .map((offset, k) => ({ id: `${l}-${k}`, lane, distance: (offset + travelled) % lane.length, speed: velocity, properties: lane.properties }));
-});
 
 const tooltip = ({ properties: p }) => {
   const content = document.createElement('div');
@@ -96,24 +77,8 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
 
   // Dashed lane outline, just above the lanes.
   const drawRoute = () => {
-    const position = [], normal = [], color = [];
-    for (const { points, lengths } of lanes) for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1], b = points[i];
-      const dx = b[0] - a[0], dz = b[1] - a[1], length = lengths[i] - lengths[i - 1];
-      if (!length) continue;
-      const x = -dz / length * 2.5, z = dx / length * 2.5;
-      for (let distance = Math.floor(lengths[i - 1] / 30) * 30; distance < lengths[i]; distance += 30) {
-        const start = Math.max(0, (distance - lengths[i - 1]) / length);
-        const end = Math.min(1, (distance + 18 - lengths[i - 1]) / length);
-        if (end <= start) continue;
-        const p = [a[0] + dx * start, a[1] + dz * start], q = [a[0] + dx * end, a[1] + dz * end], y = a[2] + 0.4;
-        for (const point of [[p[0] - x, p[1] - z], [p[0] + x, p[1] + z], [q[0] + x, q[1] + z],
-          [p[0] - x, p[1] - z], [q[0] + x, q[1] + z], [q[0] - x, q[1] - z]]) {
-          position.push(point[0], y, point[1]); normal.push(0, 1, 0); color.push(0.08, 0.7, 0.85);
-        }
-      }
-    }
-    route = createMesh({ position, normal, color }, [], { emissive: [0.03, 0.25, 0.3], alphaMode: 'BLEND' });
+
+    route = createMesh(routeGeometry(lanes), [], { emissive: [0.03, 0.25, 0.3], alphaMode: 'BLEND' });
     route.renderOrder = 1000;
   };
   // One batched mesh, `vertices` per vehicle; the compute pass writes its position/normal buffers (STORAGE).
@@ -130,7 +95,7 @@ function installTraffic(layer, { url, model, lights, side, outline, velocity }) 
   // Vehicles never leave their lanes: cull and pick against the lanes' extent.
   const bounds = () => {
     const extent = { attributes: { position: { data: lanes.flatMap(lane => lane.points.flatMap(([x, z, y]) => [x - 20, y, z - 20, x + 20, y + 5, z + 20])) } } };
-    layer._computeBounds(extent);
+    computeBounds(extent);
     mesh.geometry.bounds = extent.bounds;
   };
 

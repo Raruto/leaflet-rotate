@@ -1,11 +1,13 @@
 import './3d.js';
+import { read, getHeader, getZxy } from '../scene/pmtiles.js';
+import { decompress } from '../utils/pmtiles.js';
 
-/** A raster TileLayer backed by a PMTiles archive; reuses the '3d' PMTiles reader. */
+/** A raster TileLayer backed by the shared PMTiles reader. */
 L.Layer.types.pmtiles = L.TileLayer.extend({
-  _read:       L.Layer.types['3d'].prototype._read,
-  _decompress: L.Layer.types['3d'].prototype._decompress,
-  getHeader:   L.Layer.types['3d'].prototype.getHeader,
-  getZxy:      L.Layer.types['3d'].prototype.getZxy,
+  _read(offset, length, signal) { return read(this, offset, length, signal); },
+  _decompress(data, compression) { return decompress(data, compression); },
+  getHeader() { return getHeader(this); },
+  getZxy(z, x, y, signal) { return getZxy(this, z, x, y, signal); },
 
   initialize(options) {
     L.TileLayer.prototype.initialize.call(this, options.url, options);

@@ -11,9 +11,11 @@
  *   - 'sunlight': simulation clock control, sun/moon lighting and shadows;
  *   - 'traffic': vehicles moving along GeoJSON lanes (measured flow or timetable);
  *   - 'walk': third-person pedestrian moved with the keyboard, the camera following behind.
- * - scene/: the parts (mixins) composing the '3d' type: GPU setup, models, PMTiles reader, geometry,
- *   lighting, sources, picking and rendering. Other 3D types extend '3d'.
- * - utils/: pure helpers without DOM or GPU (sun position, traffic scheduling, vehicle models), unit-tested in Node.
+ * - scene/: named operations for GPU resources, model/archive loading, lighting, sources, picking
+ *   and rendering. They receive the layer explicitly; types/3d.js declares its delegates, without mixins.
+ * - utils/: computations and scene-data helpers, independent of Leaflet layers and GPU devices.
+ *   Geometry, decoders, lighting grids, terrain sampling, traffic and collisions can be tested in Node;
+ *   scene transforms/picking use browser DOMMatrix/DOMPoint, and CSS colors use a canvas.
  * Dataset-specific code and data (routes, timetables, API loaders) belong to the application, e.g. misc/.
  *
  * When `type` is omitted it is inferred from `source.url`: *.pmtiles -> 'pmtiles', anything else -> '3d'.

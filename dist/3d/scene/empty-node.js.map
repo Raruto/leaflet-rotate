@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../../src/3d/scene/empty-node.js"],
-  "sourcesContent": ["/** A fresh, empty scene-graph node. */\r\nexport const emptyNode = () => ({\r\n  position: [0, 0, 0],\r\n  rotation: [0, 0, 0],\r\n  scale: [1, 1, 1],\r\n  worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],\r\n  children: [],\r\n  visible: true,\r\n});\r\n"],
-  "mappings": "AACO,MAAMA,EAAY,KAAO,CAC9B,SAAU,CAAC,EAAG,EAAG,CAAC,EAClB,SAAU,CAAC,EAAG,EAAG,CAAC,EAClB,MAAO,CAAC,EAAG,EAAG,CAAC,EACf,YAAa,CAAC,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,EAAG,CAAC,EAC5D,SAAU,CAAC,EACX,QAAS,EACX",
-  "names": ["emptyNode"]
-}

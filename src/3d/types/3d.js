@@ -15,8 +15,8 @@
  * data/model -> ready. Removal cancels source work and detaches this layer only;
  * the last removal destroys the context. Model CPU arrays/images survive for re-add.
  *
- * This file holds the Leaflet lifecycle and public helpers; the rest lives in scene/ (one mixin per concern:
- * pmtiles reader, GLB models, GPU setup, lighting, geometry, PMTiles sources, picking, rendering/camera).
+ * This file holds the Leaflet lifecycle and explicit delegates to scene/ operations.
+ * Stateless computations live in utils/; scene/ owns loading, GPU resources and interaction.
  * PMTiles v3 reading is implemented directly by this layer. Models are static triangles, without
  * animation, skinning, morph targets, normal maps or required extensions.
  *
@@ -77,18 +77,65 @@
  * @since leaflet-rotate (v0.6.0)
  */
 
-import { emptyNode } from '../scene/empty-node.js';
-import pmtiles from '../scene/pmtiles.js';
-import model from '../scene/model.js';
-import gpu from '../scene/gpu.js';
-import lighting from '../scene/lighting.js';
-import geometry from '../scene/geometry.js';
-import sources from '../scene/sources.js';
-import picking from '../scene/picking.js';
-import render from '../scene/render.js';
+import * as shapes from '../utils/geometry.js';
+import * as gpu from '../scene/gpu.js';
+import * as lighting from '../scene/lighting.js';
+import * as model from '../scene/model.js';
+import * as picking from '../scene/picking.js';
+import * as pmtiles from '../scene/pmtiles.js';
+import * as archive from '../utils/pmtiles.js';
+import * as render from '../scene/render.js';
+import * as graph from '../utils/scene.js';
+import * as sources from '../scene/sources.js';
 
 L.Layer.types['3d'] = L.Layer.extend({
-  ...pmtiles, ...model, ...gpu, ...lighting, ...geometry, ...sources, ...picking, ...render,
+  color(value) { return shapes.parseColor(value); },
+  _setVertexColor(mesh, start, end, color) { shapes.setVertexColor(mesh, start, end, color); return this.update(); },
+  _triangulate(contour, holes) { return shapes.triangulate(contour, holes); },
+  _isClockWise(points) { return shapes.isClockWise(points); },
+  _treeGeometry(point, style, addTriangle) { return shapes.treeGeometry(point, style, addTriangle); },
+  _lightGeometry(point, style, addTriangle) { return shapes.lightGeometry(point, style, addTriangle); },
+  _lampPostGeometry(point, style, addTriangle) { return shapes.lampPostGeometry(point, style, addTriangle); },
+  _attach(map) { return gpu.attach(this, map); },
+  _destroyTexture(texture) { return gpu.destroyTexture(this, texture); },
+  _createProgram(material) { return gpu.createProgram(this, material); },
+  _removeProgram(program) { return gpu.removeProgram(program); },
+  _createMesh(data, material, usage) { return gpu.createMesh(this, data, material, usage); },
+  _disposeMesh(mesh) { return gpu.disposeMesh(this, mesh); },
+  _computeBounds(geometry) { return shapes.computeBounds(geometry); },
+  _drawGeometry(mesh, pass, cullMode, frontFace) { return gpu.drawGeometry(this, mesh, pass, cullMode, frontFace); },
+  _initSunlight() { return lighting.initSunlight(this); },
+  _resizeSunlight(size) { return lighting.resizeSunlight(this, size); },
+  _bindSunlight() { return lighting.bindSunlight(this); },
+  _updatePointLights() { return lighting.updatePointLights(this); },
+  _renderSunlight(encoder, meshes, sunlight) { return lighting.renderSunlight(this, encoder, meshes, sunlight); },
+  _loadModel() { return model.loadModel(this); },
+  raycast(event, objects, recursive) { return picking.raycast(this, event, objects, recursive); },
+  _findFeature(event) { return picking.findFeature(this, event); },
+  _setHighlight(feature) { return picking.setHighlight(this, feature); },
+  _showFeature(feature, event) { return picking.showFeature(this, feature, event); },
+  _onPointerMove(event) { return picking.onPointerMove(this, event); },
+  _onClick(event) { return picking.onClick(this, event); },
+  _onPointerLeave() { return picking.onPointerLeave(this); },
+  _read(offset, length, signal) { return pmtiles.read(this, offset, length, signal); },
+  _decompress(data, compression) { return archive.decompress(data, compression); },
+  getHeader() { return pmtiles.getHeader(this); },
+  getZxy(z, x, y, signal) { return pmtiles.getZxy(this, z, x, y, signal); },
+  update() { return render.update(this); },
+  _onMapChange() { return render.onMapChange(this); },
+  _getTileLevel() { return render.getTileLevel(this); },
+  _startZoom() { return render.startZoom(this); },
+  _endZoom() { return render.endZoom(this); },
+  _render() { return render.render(this); },
+  setParent(node, parent) { return graph.setParent(node, parent); },
+  traverse(node, callback) { return graph.traverse(node, callback); },
+  _updateWorldMatrix(node) { return graph.updateWorldMatrix(node); },
+  _updateCamera(camera) { return graph.updateCamera(camera); },
+  _onTerrainChange() { return sources.onTerrainChange(this); },
+  _updateArea() { return sources.updateArea(this); },
+  _pump() { return sources.pump(this); },
+  _releaseArea(area) { return sources.releaseArea(this, area); },
+  _updateStatus(enabled) { return sources.updateStatus(this, enabled); },
 
   statics: {
     /** Rendering owner per map; entries are removed on the last layer removal. */
@@ -127,7 +174,7 @@ L.Layer.types['3d'] = L.Layer.extend({
     // Defer initialization so callers can subscribe to ready/error after construction.
     queueMicrotask(async () => {
       try {
-        this.root = emptyNode();
+        this.root = graph.emptyNode();
         this.raycaster = {
           origin:    [0, 0, 0],
           direction: [0, 0, 0]
