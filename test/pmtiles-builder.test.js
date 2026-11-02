@@ -13,6 +13,38 @@ const downloadSource = source.slice(source.indexOf('async function download('), 
 const helpers = source.slice(source.indexOf('function tileId('), source.indexOf('async function build('));
 const buildSource = source.slice(source.indexOf('async function build('), source.indexOf('await mkdir(outDir'));
 
+test('tree tiles preserve inventory properties and own boundary points exactly once', () => {
+  const index = new Function(`${source.slice(source.indexOf('function indexPointTiles('),
+    source.indexOf('// Same clipping'))}; return indexPointTiles;`)();
+  const tree = (id, coordinates) => ({ type: 'Feature', geometry: { type: 'Point', coordinates },
+    properties: { idbase: id, hauteurenm: 20, circonferenceencm: 185, genre: 'Platanus' } });
+  const data = { type: 'FeatureCollection', features: [tree(1, [0, 0]), tree(2, [-0.001, 0])] };
+  const tiles = index(data, 16, [-1, -1, 1, 1]);
+  assert.equal(tiles.size, 2);
+  assert.deepEqual(tiles.get('32768/32768'), [data.features[0]]);
+  assert.deepEqual(tiles.get('32767/32768'), [data.features[1]]);
+  assert.equal([...tiles.values()].flat().length, 2);
+  assert.equal(data.features[0].id, 1);
+  assert.equal(data.features[0].properties.circonferenceencm, 185);
+  assert.throws(() => index({}, 16, [-1, -1, 1, 1]), /Invalid tree GeoJSON/);
+  assert.throws(() => index({ ...data, features: [tree(1, [NaN, 0])] }, 16, [-1, -1, 1, 1]), /Invalid tree coordinates/);
+  assert.throws(() => index(data, 16, [2, 2, 3, 3]), /outside archive bounds/);
+});
+
+test('streetlight tiles retain each lamp, including colocated lamps, and photometric source values', () => {
+  const index = new Function(`${source.slice(source.indexOf('function indexPointTiles('),
+    source.indexOf('// Same clipping'))}; return indexPointTiles;`)();
+  const lamp = foyer => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [2.29, 48.85] },
+    properties: { foyer, cod_ouvrag: 'shared', support_hauteur: '7.0', lampe_flux: '13165.0',
+      lampe_temperature_couleur: '2700.0' } });
+  const data = { type: 'FeatureCollection', features: [lamp('one'), lamp('two')] };
+  const points = [...index(data, 16, [2.2, 48.7, 2.5, 49], 'foyer', 'streetlight').values()].flat();
+  assert.equal(points.length, 2);
+  assert.deepEqual(points.map(p => p.id), ['one', 'two']);
+  assert.equal(points[0].properties.lampe_flux, '13165.0');
+  assert.equal(points[0].properties.lampe_temperature_couleur, '2700.0');
+});
+
 test('downloads retry missing/empty responses and reject permanent holes', async () => {
   for (const status of [404, 503, 200]) {
     let requests = 0;

@@ -127,6 +127,103 @@ npm run test  # build and run browser tests
 
 After that you can start developing inside the `src` and `test` folders (eg. open "http://localhost:8080/test" in your browser to preview changes).
 
+#### Offline Paris 3D example
+
+The [3D example](examples/leaflet-rotate-3d-layer.html) loads local archives from `examples/data/`.
+Build all archives with `node build/pmtiles.js`, or just the tree inventory with:
+
+```shell
+node build/pmtiles.js --only=trees
+```
+
+The tree archive contains the [Ville de Paris tree inventory](https://opendata.paris.fr/explore/dataset/les-arbres/)
+(ODbL), including its peripheral parks. It is not a census of all trees or woodland.
+The switchable **Paris trees (3D)** layer uses recorded height (metres) and trunk circumference
+(centimetres, converted to radius), with schematic crowns based on genus. Missing/implausible
+measurements use development-stage height estimates (4/8/15/20 m for young/young-adult/adult/mature,
+10 m otherwise) and a trunk radius of height/80. Tooltips distinguish measurements from estimates;
+crown dimensions are always estimates. Empty planting locations and stumps are not rendered.
+Trees share the 3D renderer, terrain elevation, picking and hover tooltips with the other overlays.
+
+#### Sunlight and shadows
+
+The always-visible **Sunlight & shadows** control is at the top left of the 3D example.
+It starts enabled at the current time and updates every minute until you adjust the date or time.
+Drag the time slider to preview any minute of the selected **UTC** day; changing the date
+also switches to manual time. **Now** returns to the current date/time and resumes the clock.
+The checkbox disables the simulation and restores the original lighting.
+The sky blends between blue daylight, warm twilight and dark night; terrain imagery,
+buildings and trees receive matching warm/cool illumination. Sun and moon discs move
+with the selected time and map orientation. They appear only above the horizon and
+inside the view: increase pitch and look towards their direction to see them.
+Lunar positions use an approximate geocentric orbit (no parallax/refraction); discs are
+exaggerated for visibility and the moon does not simulate its phase.
+
+Solar simulation uses the selected UTC date/time and map centre to calculate solar altitude
+and azimuth. A shared 2048-pixel directional depth map casts shadows from loaded buildings,
+trees and models onto the 3D scene, including terrain imagery.
+At night direct light is disabled; below 3 degrees altitude shadows are disabled to avoid unstable
+near-horizon projections. This is indicative, not a thermal/irradiance study: heights/crowns may be
+estimated, unloaded objects cannot cast shadows, transparency cutouts cast as solid triangles,
+and clouds/atmospheric refraction are not modelled. Orthophotos retain their original baked lighting.
+Turn the simulation off to restore the original illumination.
+
+#### Streetlights and Eiffel Tower night lighting
+
+The **Paris streetlights (night)** overlay is enabled by default and loads
+`examples/data/paris-streetlights.pmtiles`, built from the
+[Ville de Paris / Cielis public lighting inventory](https://opendata.paris.fr/explore/dataset/eclairage-public/)
+(ODbL). Rebuild it with `node build/pmtiles.js --only=streetlights`.
+The archive retains each lamp, including lamps sharing the same support, and records the
+source update/retrieval timestamps in its metadata. It is an inventory snapshot, not live status.
+
+Bulb height follows recorded support height; colour follows recorded Kelvin, and indicative
+ground reach uses support height and luminous flux: `1.5 * height * sqrt(lumens / 10000)`,
+clamped to 6–22 m. Missing/implausible values assume 6 m, 6000 lm and 3000 K (2000 K for sodium).
+Tooltips distinguish recorded/assumed values and retain the source's operating-regime label.
+Local lights illuminate the terrain and nearby buildings, trees and models using surface normals,
+inverse-square distance falloff and a smooth range cutoff. A cached spatial grid evaluates only
+nearby lamps, without limiting the number per cell. They blend in between solar altitudes +3 and -6 degrees.
+Switch the layer off to compare the city without artificial lighting.
+Schematic grey poles and lamp heads remain visible during daylight (and with solar simulation off).
+Poles are drawn only for inventory categories Candélabre, Mât and Porte LAC RATP, once per support;
+wall-mounted fixtures do not get an invented pole. Height follows the recorded/assumed support height,
+while diameter and head shape are illustrative. Gallery/service-gallery fixtures, explicitly underground
+street labels (tunnel, souterrain, sous-sol/sous-passage), and negative support heights are excluded
+from both rendering and local illumination. Ground-mounted outdoor lamps are not treated as underground.
+
+This is approximate local lighting, **not measured lux, coverage guarantees or a calibrated
+photometric simulation**: lamps do not cast obstacle shadows or model luminaire aiming/distribution,
+dimming, faults or switching schedules. Light can therefore pass through walls or tree crowns.
+Electrical wattage is retained but is not treated as luminous output.
+The Eiffel Tower model has sparse individual warm-white luminous points on its structure during
+simulated night, not a uniformly emissive golden material. This is not a reproduction of the actual
+sparkling show or its operating schedule.
+Disabling solar simulation switches off both artificial-light effects and restores original materials.
+
+#### Scheduled Seine cruises
+
+The default-enabled **Seine tourist boats (scheduled)** overlay shows schematic 3D sightseeing
+boats following the [Bateaux-Mouches route and timetable](https://www.bateaux-mouches.fr/fr/croisiere/informations).
+It shares the date/time slider, moves continuously in **Now** mode, and interprets departures in
+**Europe/Paris** local time, including daylight saving (the slider still displays UTC).
+Disabling sunlight does not disable the boat schedule.
+A cyan dashed trace shows the same route on the water, including outside service hours;
+it shares the boat overlay toggle and terrain/camera projection.
+The trace is an informational overlay, drawn above terrain and bridges for readability;
+boats retain normal depth occlusion.
+
+Published departures are every 30 minutes from 10:00 to 21:30 April–October, and every
+45 minutes from 10:15 to 21:30 November–March, with an extra 22:00 departure on October Saturdays.
+Each trip lasts an estimated hour: Alma → northern branch past the Louvre → Île Saint-Louis →
+southern branch past Notre-Dame → Eiffel Tower/Bir-Hakeim → Alma. Outside these trips no boats
+are shown; this is not a 24-hour service.
+
+Positions are **estimates, not live GPS**: the route is approximate, speed is constant, and boat
+models do not represent individual vessels. The water surface is fixed at an illustrative 27.15 m NGF,
+independent of riverbed elevation. School-holiday extras, lunch/dinner services, cancellations,
+traffic, bridge clearance, floods and changing river levels are not modelled.
+
 ---
 
 **Side notes:**

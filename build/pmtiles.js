@@ -1,5 +1,5 @@
 // Builds the offline PMTiles archives used by examples/leaflet-rotate-3d-layer.html.
-// Usage: npm run pmtiles -- [--bbox=west,south,east,north] [--minzoom=11] [--maxzoom=17] [--only=buildings,trees,orthophotos,plan-ign,terrain]
+// Usage: node build/pmtiles.js [--bbox=west,south,east,north] [--minzoom=11] [--maxzoom=17] [--only=buildings,trees,streetlights,orthophotos,plan-ign,terrain]
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
@@ -12,7 +12,7 @@ const { values: args } = parseArgs({
     bbox: { type: 'string', default: '2.15,48.75,2.55,48.95' },
     minzoom: { type: 'string', default: '11' },
     maxzoom: { type: 'string', default: '17' },
-    only: { type: 'string', default: 'buildings,trees,orthophotos,plan-ign,terrain' },
+    only: { type: 'string', default: 'buildings,trees,streetlights,orthophotos,plan-ign,terrain' },
   },
 });
 const rasterBbox = args.bbox.split(',').map(Number);
@@ -28,8 +28,35 @@ const ignAttribution = 'IGN — Licence Ouverte Etalab 2.0';
 const terrainZoom = 14;
 const terrainSourceTiles = new Map();
 let treeTiles;
+let lightTiles;
 
 const archives = {
+  streetlights: {
+    tileType: 0,
+    tileCompression: 2,
+    bbox: [2.20, 48.74, 2.48, 48.92],
+    minZoom: 16,
+    maxZoom: 16,
+    concurrency: 2,
+    attribution: 'Ville de Paris / Cielis — ODbL',
+    metadata: { source: 'https://opendata.paris.fr/explore/dataset/eclairage-public/', format: 'geojson' },
+    async tile(z, x, y) {
+      lightTiles ||= (async () => {
+        const base = 'https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/eclairage-public';
+        const metadata = JSON.parse(await download(base));
+        const url = new URL(`${base}/exports/geojson`);
+        url.searchParams.set('select', 'geo_point_2d,foyer,cod_ouvrag,lib_domain,lib_ouvrag,lib_regime,support_hauteur,lampe_puissance,lampe_flux,lampe_famille,lampe_temperature_couleur,voie_libelle,date_maj');
+        const data = JSON.parse(await download(url));
+        Object.assign(archives.streetlights.metadata, {
+          sourceUpdatedAt: metadata.metas.default.modified, retrievedAt: new Date().toISOString(),
+          records: data.features?.length,
+        });
+        return indexPointTiles(data, z, archives.streetlights.bbox, 'foyer', 'streetlight');
+      })();
+      const tiles = await lightTiles;
+      return gzipSync(JSON.stringify({ type: 'FeatureCollection', features: tiles.get(`${x}/${y}`) || [] }));
+    },
+  },
   trees: {
     tileType: 0,
     tileCompression: 2,
@@ -44,7 +71,7 @@ const archives = {
       treeTiles ||= (async () => {
         const url = new URL('https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/les-arbres/exports/geojson');
         url.searchParams.set('select', 'geo_point_2d,idbase,typeemplacement,hauteurenm,circonferenceencm,genre,espece,libellefrancais,stadedeveloppement,remarquable');
-        return indexTreeTiles(JSON.parse(await download(url)), z, archives.trees.bbox);
+        return indexPointTiles(JSON.parse(await download(url)), z, archives.trees.bbox);
       })();
       const tiles = await treeTiles;
       return gzipSync(JSON.stringify({ type: 'FeatureCollection', features: tiles.get(`${x}/${y}`) || [] }));
@@ -105,18 +132,18 @@ const archives = {
   },
 };
 
-function indexTreeTiles(data, z, [west, south, east, north]) {
-  if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error('Invalid tree GeoJSON');
+function indexPointTiles(data, z, [west, south, east, north], idProperty = 'idbase', label = 'tree') {
+  if (data.type !== 'FeatureCollection' || !Array.isArray(data.features)) throw new Error(`Invalid ${label} GeoJSON`);
   const tiles = new Map();
   for (const feature of data.features) {
     const [lng, lat] = feature.geometry?.coordinates || [];
     if (feature.geometry?.type !== 'Point' || !Number.isFinite(lng) || !Number.isFinite(lat)) {
-      throw new Error('Invalid tree coordinates');
+      throw new Error(`Invalid ${label} coordinates`);
     }
     if (lng < west || lng > east || lat < south || lat > north) {
-      throw new Error('Tree outside archive bounds; update trees.bbox');
+      throw new Error(`${label} outside archive bounds; update archive bbox`);
     }
-    feature.id = feature.properties.idbase;
+    feature.id = feature.properties[idProperty];
     const key = `${lngToX(lng, z)}/${latToY(lat, z)}`;
     if (!tiles.has(key)) tiles.set(key, []);
     tiles.get(key).push(feature);

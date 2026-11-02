@@ -701,7 +701,7 @@ L.Map.include({
 
     /**
      * Fill the area above the far plane (where no tiles are loaded) with a sky gradient.
-     * Style it through the `.leaflet-pitch-sky` class.
+     * Style it through `.leaflet-pitch-sky` or the `--leaflet-sky-background` CSS property.
      * 
      * @since leaflet-rotate (0.5.1)
      */
@@ -715,7 +715,7 @@ L.Map.include({
             this._pitchSky = L.DomUtil.create('div', 'leaflet-pitch-sky', this._container);
             Object.assign(this._pitchSky.style, {
                 position: 'absolute', left: 0, top: 0, width: '100%', zIndex: 0, pointerEvents: 'none',
-                background: 'linear-gradient(#9ec5e8, #dfe9f0)',
+                background: 'var(--leaflet-sky-background, linear-gradient(#9ec5e8, #dfe9f0))',
             });
         }
         this._pitchSky.style.display = '';

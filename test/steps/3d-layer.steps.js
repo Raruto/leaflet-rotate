@@ -4,14 +4,171 @@ import { After, AfterAll, Before, Given, Then, When } from '@cucumber/cucumber';
 
 const coveredFunctions = new Map();
 
+Then('the offline Paris trees render and recover after toggling', { timeout: 60000 }, async function () {
+  const loaded = () => this.page.waitForFunction(() => {
+    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const error = [...tree._areas.values()].find(area => area.error);
+    if (error) throw new Error(error.error);
+    return tree._inflight === 0 && [...tree._areas.values()].some(area => area.buildings > 0);
+  }, null, { timeout: 45000 });
+  await loaded();
+  const result = await this.page.evaluate(() => {
+    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    const features = tree.root.children.flatMap(mesh => mesh.extras.featureFaces);
+    const result = {
+      count: features.length, inventory: features.every(f => f.id === f.properties.idbase),
+      vertices: tree.root.children.every(mesh => [...mesh.geometry.attributes.position.data].every(Number.isFinite)),
+      shared: tree.renderer === layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer.renderer,
+    };
+    window.treeRendererBefore = tree.renderer;
+    window.treeMeshesBefore = [...tree.root.children];
+    return result;
+  });
+  assert.ok(result.count > 0);
+  assert.equal(result.inventory, true);
+  assert.equal(result.vertices, true);
+  assert.equal(result.shared, true);
+  const control = this.page.getByRole('checkbox', { name: 'Paris trees (3D)', exact: true });
+  await control.uncheck();
+  assert.equal(await this.page.evaluate(() => {
+    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    return !tree._map && tree._areas.size === 0 && window.treeRendererBefore.canvas.isConnected;
+  }), true);
+  await control.check();
+  await loaded();
+  assert.equal(await this.page.evaluate(() => {
+    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    return tree.renderer === window.treeRendererBefore &&
+      tree.root.children.every(mesh => !window.treeMeshesBefore.includes(mesh));
+  }), true);
+});
+
+Then('tree points preserve dimensions, terrain elevation, picking and validation', async function () {
+  const result = await this.page.evaluate(async () => {
+    const map = test3d.map;
+    const layer = new L.Layer({ type: '3d' }).addTo(map);
+    await nativeChecks.ready(layer);
+    const center = map.getCenter(), zoom = 16;
+    const tile = map.project(center, zoom).divideBy(256).floor();
+    const style = { top: 20, trunkRadius: 0.5, crownRadius: 4, crownBottom: 7, color: 0x55863d };
+    layer.options.featureStyle = feature => feature.properties.skip ? null : style;
+    const feature = { type: 'Feature', id: 123, properties: { genre: 'Platanus' },
+      geometry: { type: 'Point', coordinates: [center.lng, center.lat] } };
+    const area = () => ({ coords: { z: zoom, x: tile.x, y: tile.y }, request: new AbortController() });
+    const areas = [];
+    const load = async (features, block = area()) => {
+      areas.push(block);
+      return nativeChecks.loadBlock(layer, block, features);
+    };
+    const previousTerrain = map._terrain3D;
+    map._terrain3D = { _getElevation: () => 50 };
+    const errors = [];
+    layer.on('error', ({ error }) => errors.push(error.message));
+    try {
+      const round = await load([feature, { ...feature, properties: { skip: true } }]);
+      const mesh = round.mesh;
+      const positions = mesh.geometry.attributes.position.data;
+      const normals = mesh.geometry.attributes.normal.data;
+      const colors = mesh.geometry.attributes.color.data;
+      const xs = [], ys = [], zs = [], trunkXs = [];
+      for (let i = 0; i < positions.length; i += 3) {
+        xs.push(positions[i]); ys.push(positions[i + 1]); zs.push(positions[i + 2]);
+        if (positions[i + 1] === 50) trunkXs.push(positions[i]);
+      }
+      const bounds = [Math.min(...ys), Math.max(...ys), Math.max(...xs) - Math.min(...xs),
+        Math.max(...zs) - Math.min(...zs), Math.max(...trunkXs) - Math.min(...trunkXs)];
+      const normalLengths = [];
+      for (let i = 0; i < normals.length; i += 3) normalLengths.push(Math.hypot(...normals.slice(i, i + 3)));
+      layer._shared._updateWorldMatrix(layer.root, true);
+      const intersections = nativeChecks.intersections(mesh, [0, 100, 0], [0, -1, 0], layer);
+      const face = mesh.extras.featureFaces[0];
+      const before = [...colors];
+      layer._setHighlight({ ...face, mesh });
+      layer._setHighlight(null);
+      style.crownShape = 'cone';
+      const cone = await load([feature]);
+      const outside = await load([feature], { ...area(), coords: { z: zoom, x: tile.x + 1, y: tile.y } });
+      style.trunkRadius = -1;
+      const invalid = await load([feature]);
+      return {
+        bounds, unitNormals: normalLengths.every(n => Math.abs(n - 1) < 1e-6),
+        finite: [...positions].every(Number.isFinite), picked: intersections.length > 0,
+        topHit: intersections[0]?.[1], featureId: face.id, properties: face.properties,
+        loaded: round.buildings, skipped: round.skipped, colorRestored: before.every((v, i) => v === colors[i]),
+        coneVertices: cone.mesh.geometry.attributes.position.count,
+        roundVertices: mesh.geometry.attributes.position.count, outside: outside.buildings,
+        invalid: !invalid.mesh && !!invalid.error, errors,
+      };
+    } finally {
+      map._terrain3D = previousTerrain;
+      for (const block of areas) layer._releaseArea(block);
+      layer.remove();
+    }
+  });
+  assert.deepEqual(result.bounds, [50, 70, 8, 8, 1]);
+  assert.equal(result.finite, true);
+  assert.equal(result.unitNormals, true);
+  assert.equal(result.picked, true);
+  assert.ok(Math.abs(result.topHit - 70) < 1e-5);
+  assert.equal(result.featureId, 123);
+  assert.equal(result.properties.genre, 'Platanus');
+  assert.equal(result.loaded, 1);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.outside, 0);
+  assert.equal(result.colorRestored, true);
+  assert.ok(result.coneVertices < result.roundVertices);
+  assert.equal(result.invalid, true);
+  assert.deepEqual(result.errors, ['Invalid tree dimensions or crown shape']);
+});
+
+Then('tree inventory attributes control dimensions, crowns and tooltip estimates', async function () {
+  const result = await this.page.evaluate(() => {
+    const entry = layers._layers.find(entry => entry.name === 'Paris trees (3D)');
+    const tree = entry.layer;
+    const properties = { typeemplacement: 'Arbre', hauteurenm: 20, circonferenceencm: 185,
+      genre: 'Platanus', espece: 'x hispanica', libellefrancais: '<img src=x onerror=alert(1)>',
+      stadedeveloppement: 'Adulte', remarquable: 'OUI' };
+    const style = p => tree.options.featureStyle({ properties: { ...properties, ...p } });
+    const tooltip = tree.options.tooltipContent({ properties });
+    const missing = tree.options.tooltipContent({ properties: { ...properties, hauteurenm: 0, circonferenceencm: null } });
+    return {
+      enabled: map.hasLayer(tree), source: tree.options.source,
+      measured: style({}), conifer: style({ genre: 'Picea' }), palm: style({ genre: 'Phoenix' }),
+      estimates: ['Jeune (arbre)', 'Jeune (arbre)Adulte', 'Adulte', 'Mature', null].map(stage =>
+        style({ hauteurenm: 0, circonferenceencm: 0, stadedeveloppement: stage })),
+      stump: style({ typeemplacement: 'Souche' }), empty: style({ typeemplacement: 'Emplacement libre' }),
+      safe: tooltip.children.length === 0 && tooltip.textContent.includes('<img src=x'),
+      tooltip: tooltip.textContent, missing: missing.textContent,
+    };
+  });
+  assert.equal(result.enabled, true);
+  assert.equal(result.source, 'data/paris-trees.pmtiles');
+  assert.equal(result.measured.top, 20);
+  assert.ok(Math.abs(result.measured.trunkRadius - 185 / (200 * Math.PI)) < 1e-10);
+  assert.equal(result.measured.crownShape, 'round');
+  assert.equal(result.conifer.crownShape, 'cone');
+  assert.ok(result.conifer.crownRadius < result.measured.crownRadius);
+  assert.ok(result.palm.crownBottom > result.measured.crownBottom);
+  assert.deepEqual(result.estimates.map(s => s.top), [4, 8, 15, 20, 10]);
+  assert.ok(result.estimates.every(s => s.trunkRadius === s.top / 80));
+  assert.equal(result.stump, null);
+  assert.equal(result.empty, null);
+  assert.equal(result.safe, true);
+  assert.match(result.tooltip, /20 m \(recorded\)/);
+  assert.match(result.tooltip, /185 cm \(recorded\)/);
+  assert.match(result.tooltip, /Remarkable tree/);
+  assert.match(result.missing, /estimated from development stage/);
+  assert.match(result.missing, /estimated from height/);
+});
+
 Then('roof imagery follows raster loading, background changes and renderer ownership', { timeout: 30000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map, zoom = 17;
     const boundary = map.project(map.getCenter(), zoom).divideBy(256).floor().multiplyBy(256);
     map.setView(map.unproject(boundary, zoom), zoom, { animate: false });
     map.setPitch(0); map.setBearing(0);
-    const owner = new L.Layer3D().addTo(map);
-    const layer = new L.Layer3D({ roofTexture: true }).addTo(map);
+    const owner = new L.Layer({ type: '3d' }).addTo(map);
+    const layer = new L.Layer({ type: '3d', roofTexture: true }).addTo(map);
     await Promise.all([nativeChecks.ready(owner), nativeChecks.ready(layer)]);
     const ring = [[-60, -60], [60, -60], [60, 60], [-60, 60], [-60, -60]]
       .map(offset => map.unproject(boundary.add(offset), zoom)).map(p => [p.lng, p.lat]);
@@ -36,8 +193,8 @@ Then('roof imagery follows raster loading, background changes and renderer owner
         return { data: (x % 2 === 0) !== swapped ? red : blue };
       },
     });
-    const first = new L.PMTilesLayer('roof-first.pmtiles', { archive: archive(false) });
-    const second = new L.PMTilesLayer('roof-second.pmtiles', { archive: archive(true) });
+    const first = new L.Layer({ type: 'pmtiles', source: 'roof-first.pmtiles', archive: archive(false) });
+    const second = new L.Layer({ type: 'pmtiles', source: 'roof-second.pmtiles', archive: archive(true) });
     const sample = (offset, height) => {
       layer._shared._render();
       const crs = map.options.crs;
@@ -149,16 +306,16 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
     ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 256, 128);
     ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 128, 256, 128);
     const image = await (await fetch(canvas.toDataURL())).arrayBuffer();
-    const getHeader = L.PMTilesLayer.prototype.getHeader;
-    const getZxy = L.PMTilesLayer.prototype.getZxy;
-    const buildingHeader = L.Layer3D.prototype.getHeader;
-    const buildingTile = L.Layer3D.prototype.getZxy;
+    const getHeader = L.Layer.types.pmtiles.prototype.getHeader;
+    const getZxy = L.Layer.types.pmtiles.prototype.getZxy;
+    const buildingHeader = L.Layer.types['3d'].prototype.getHeader;
+    const buildingTile = L.Layer.types['3d'].prototype.getZxy;
     let release;
     let pending = new Promise(resolve => { release = resolve; });
-    L.PMTilesLayer.prototype.getHeader = function () {
+    L.Layer.types.pmtiles.prototype.getHeader = function () {
       return this.url.endsWith('/fixture-terrain.pmtiles') ? Promise.resolve(header) : getHeader.call(this);
     };
-    L.PMTilesLayer.prototype.getZxy = async function (z, x, y, signal) {
+    L.Layer.types.pmtiles.prototype.getZxy = async function (z, x, y, signal) {
       if (!this.url.endsWith('/fixture-terrain.pmtiles')) return getZxy.call(this, z, x, y, signal);
       await pending;
       signal.throwIfAborted();
@@ -170,8 +327,8 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
       }
       return { data: values.buffer };
     };
-    L.Layer3D.prototype.getHeader = async () => header;
-    L.Layer3D.prototype.getZxy = async () => ({
+    L.Layer.types['3d'].prototype.getHeader = async () => header;
+    L.Layer.types['3d'].prototype.getZxy = async () => ({
       data: new TextEncoder().encode(JSON.stringify({ type: 'FeatureCollection', features: [feature] })),
     });
     const wait = async condition => {
@@ -184,14 +341,14 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
         await new Promise(requestAnimationFrame);
       }
     };
-    const terrain = new L.TerrainLayer({ source: 'fixture-terrain.pmtiles' });
-    const raster = new L.PMTilesLayer('fixture-raster.pmtiles', {
+    const terrain = new L.Layer({ type: 'terrain', source: 'fixture-terrain.pmtiles' });
+    const raster = new L.Layer({ type: 'pmtiles', source: 'fixture-raster.pmtiles',
       archive: { getHeader: async () => ({ ...header, tileType: 2 }), getZxy: async () => ({ data: image }) },
     });
-    const buildings = new L.Layer3D({ source: 'fixture-buildings.pmtiles', roofTexture: true,
+    const buildings = new L.Layer({ type: '3d', source: 'fixture-buildings.pmtiles', roofTexture: true,
       featureStyle: () => ({ top: 15 }) }).addTo(map);
     const modelLocation = map.unproject(center.add([20, 20]), zoom);
-    const model = new L.Layer3D({ center: [modelLocation.lat, modelLocation.lng] }).addTo(map);
+    const model = new L.Layer({ type: '3d', center: [modelLocation.lat, modelLocation.lng] }).addTo(map);
     const errors = [];
     terrain.on('error', ({ error }) => errors.push(error.message));
     raster.on('tileerror', ({ error }) => errors.push(error.message));
@@ -316,10 +473,10 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
     } finally {
       release();
       raster.remove(); terrain.remove(); buildings.remove(); model.remove();
-      L.PMTilesLayer.prototype.getHeader = getHeader;
-      L.PMTilesLayer.prototype.getZxy = getZxy;
-      L.Layer3D.prototype.getHeader = buildingHeader;
-      L.Layer3D.prototype.getZxy = buildingTile;
+      L.Layer.types.pmtiles.prototype.getHeader = getHeader;
+      L.Layer.types.pmtiles.prototype.getZxy = getZxy;
+      L.Layer.types['3d'].prototype.getHeader = buildingHeader;
+      L.Layer.types['3d'].prototype.getZxy = buildingTile;
     }
   }, order);
   for (const name of ['initiallyFlat', 'hidden', 'restored', 'cancelled', 'reattached']) assert.equal(result[name], true, name);
@@ -339,7 +496,7 @@ Then('terrain enabled {string} raster loading preserves imagery, elevations and 
 Then('cancelled building downloads recover without errors or stale meshes', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer3D({ source: 'paris-buildings.pmtiles' }).addTo(map);
+    const layer = new L.Layer({ type: '3d', source: 'paris-buildings.pmtiles' }).addTo(map);
     await nativeChecks.ready(layer);
     const idle = async () => {
       const deadline = performance.now() + 3000;
@@ -571,7 +728,7 @@ Then('raster zoom transitions stay paused between WebGPU frames and resume on re
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     const tiles = new L.TileLayer('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=').addTo(map);
-    const first = new L.Layer3D().addTo(map), second = new L.Layer3D().addTo(map);
+    const first = new L.Layer({ type: '3d' }).addTo(map), second = new L.Layer({ type: '3d' }).addTo(map);
     await Promise.all([first, second].map(nativeChecks.ready));
     let samples = 0, frozen = true, transferred = false, resumed = false;
     const render = first._render;
@@ -701,7 +858,7 @@ Then('raster tiles remain aligned after panning before their first pitch change'
 Then('building blocks cover pitched views and retain overlapping areas', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer3D({ source: 'paris-buildings.pmtiles' }).addTo(map);
+    const layer = new L.Layer({ type: '3d', source: 'paris-buildings.pmtiles' }).addTo(map);
     await nativeChecks.ready(layer);
     const idle = async () => { while (layer._inflight) await new Promise(requestAnimationFrame); };
     await idle();
@@ -754,11 +911,9 @@ Then('building blocks cover pitched views and retain overlapping areas', async f
 });
 
 Then('the native PMTiles methods handle directories, compression and failures', async function () {
-  await this.context.unroute('**/misc/3DLayer.js');
-  await this.context.unroute('**/misc/PMTilesLayer.js');
-  await this.page.evaluate(() => { delete L.PMTilesLayer; delete L.Layer3D; });
-  await this.page.addScriptTag({ url: `${this.baseUrl}/misc/3DLayer.js` });
-  await this.page.addScriptTag({ url: `${this.baseUrl}/misc/PMTilesLayer.js` });
+  await this.context.unroute('**/misc/layer.js');
+  await this.page.evaluate(() => { delete L.Layer.types; });
+  await this.page.addScriptTag({ url: `${this.baseUrl}/misc/layer.js` });
   const exposesReaderClass = await this.page.evaluate(() => 'PMTiles' in L);
   assert.equal(exposesReaderClass, false, 'PMTiles methods belong to their consuming layers');
   const directory = entries => {
@@ -830,7 +985,7 @@ Then('the native PMTiles methods handle directories, compression and failures', 
     });
   });
   const result = await this.page.evaluate(async () => {
-    const archive = new L.PMTilesLayer('fixture.pmtiles');
+    const archive = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles' });
     await archive.ready;
     const header = archive.header;
     const read = async (x, y) => {
@@ -842,18 +997,18 @@ Then('the native PMTiles methods handle directories, compression and failures', 
     const cancelled = await archive.getZxy(1, 0, 0, abort.signal).then(() => false, error => error.name === 'AbortError');
     const errors = [];
     for (const query of ['version', 'compression', 'http', 'truncated', 'changed']) {
-      const reader = new L.PMTilesLayer(`fixture.pmtiles?${query}`);
+      const reader = new L.Layer({ type: 'pmtiles', source: `fixture.pmtiles?${query}` });
       errors.push(await reader.ready.then(() => reader.getZxy(1, 0, 0))
         .then(() => '', error => error.message));
     }
     const invalid = await archive.getZxy(1, 2, 0).then(() => false, error => error.message === 'Invalid PMTiles tile coordinates');
-    const full = new L.PMTilesLayer('fixture.pmtiles?full');
+    const full = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles?full' });
     await full.ready;
     const fullTile = await full.getZxy(1, 1, 0);
-    const plain = new L.PMTilesLayer('fixture.pmtiles?plain');
+    const plain = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles?plain' });
     await plain.ready;
     const plainTile = await plain.getZxy(1, 1, 0);
-    const badDirectory = new L.PMTilesLayer('fixture.pmtiles?directory');
+    const badDirectory = new L.Layer({ type: 'pmtiles', source: 'fixture.pmtiles?directory' });
     const directoryError = await badDirectory.ready.then(() => badDirectory.getZxy(1, 0, 0))
       .then(() => false, error => error instanceof Error);
     return { tiles, cancelled, invalid, zoom: [header.minZoom, header.maxZoom], errors,
@@ -871,13 +1026,13 @@ Then('the native PMTiles methods handle directories, compression and failures', 
     'Unable to read PMTiles: HTTP 503', 'Truncated PMTiles range', 'PMTiles archive changed; recreate the layer']);
   assert.equal(requests.filter(request => request.start === 127).length, 5, 'One root request per reader');
   const real = await this.page.evaluate(async () => {
-    const buildings = new L.Layer3D({ source: '../examples/data/paris-buildings.pmtiles' });
+    const buildings = new L.Layer({ type: '3d', source: '../examples/data/paris-buildings.pmtiles' });
     await nativeChecks.ready(buildings);
     const header = buildings.header;
     const point = test3d.map.project(new L.LatLng(48.85826, 2.2945), header.minZoom).divideBy(256).floor();
     const tile = await buildings.getZxy(header.minZoom, point.x, point.y);
     const collection = JSON.parse(new TextDecoder().decode(tile.data));
-    const raster = new L.PMTilesLayer('../examples/data/paris-orthophotos.pmtiles');
+    const raster = new L.Layer({ type: 'pmtiles', source: '../examples/data/paris-orthophotos.pmtiles' });
     await raster.ready;
     const rasterHeader = raster.header;
     const rasterPoint = test3d.map.project(new L.LatLng(48.85826, 2.2945), rasterHeader.maxZoom).divideBy(256).floor();
@@ -899,7 +1054,7 @@ Before({ tags: '@3d-layer' }, async function () {
 After({ tags: '@3d-layer' }, async function () {
   if (!process.env.COVERAGE_3D) return;
   const entries = await this.page.coverage.stopJSCoverage();
-  for (const entry of entries.filter(entry => entry.url.endsWith('/misc/3DLayer.js'))) {
+  for (const entry of entries.filter(entry => entry.url.endsWith('/misc/layer.js'))) {
     for (const fn of entry.functions) {
       const range = fn.ranges[0];
       if (!fn.functionName) continue;
@@ -960,7 +1115,7 @@ Then('configured models preserve external assets and can be detached and reattac
   }));
   const result = await this.page.evaluate(async () => {
     const url = new URL('manual/model.gltf', document.baseURI).href;
-    const layer = new L.Layer3D({ model: url });
+    const layer = new L.Layer({ type: '3d', source: url });
     let ready = false;
     const loaded = nativeChecks.ready(layer).then(() => { ready = true; });
     await new Promise(requestAnimationFrame);
@@ -999,7 +1154,7 @@ Then('configured models preserve external assets and can be detached and reattac
     contentType: 'application/json', body: JSON.stringify(description),
   }));
   const missingUV = await this.page.evaluate(async () => {
-    const layer = new L.Layer3D({ model: 'manual/no-uv.gltf' }).addTo(test3d.map);
+    const layer = new L.Layer({ type: '3d', source: 'manual/no-uv.gltf' }).addTo(test3d.map);
     let programs = 0;
     const createProgram = layer._createProgram;
     layer._createProgram = function (...args) { programs++; return createProgram.apply(this, args); };
@@ -1018,7 +1173,7 @@ Then('DOM tooltip content stays inside the map without interpreting text as HTML
     container.style.cursor = 'crosshair';
     const node = document.createElement('div');
     node.textContent = '<img src=x onerror=alert(1)>';
-    const layer = new L.Layer3D({ tooltipContent: () => node }).addTo(map);
+    const layer = new L.Layer({ type: '3d', tooltipContent: () => node }).addTo(map);
     await nativeChecks.ready(layer);
     const rect = container.getBoundingClientRect();
     const feature = { id: 'dom', model: {}, properties: {} };
@@ -1046,7 +1201,7 @@ Then('DOM tooltip content stays inside the map without interpreting text as HTML
 
 Then('layer-owned objects preserve values and visibility without engine classes', async function () {
   const result = await this.page.evaluate(async () => {
-    const layer = new L.Layer3D();
+    const layer = new L.Layer({ type: '3d' });
     await nativeChecks.ready(layer);
     layer.addTo(test3d.map);
     const scene = nativeChecks.group();
@@ -1073,13 +1228,13 @@ Then('layer-owned objects preserve values and visibility without engine classes'
     }
     mesh.worldMatrix = matrix;
     const objects = [scene, layer.camera, layer.raycaster, layer.renderer, mesh, mesh.geometry, mesh.program];
-    const noEngine = !('Native' in L.Layer3D) && !('Native' in layer) && !('loadModel' in layer) &&
+    const noEngine = !('Native' in L.Layer.types['3d']) && !('Native' in layer) && !('loadModel' in layer) &&
       objects.every(object => object.constructor === Object) &&
       Object.getPrototypeOf(layer.camera.position) === Array.prototype &&
       Object.getPrototypeOf(mesh.worldMatrix) === Array.prototype &&
       objects.every(object => Object.getPrototypeOf(object) === Object.prototype &&
         Object.values(object).every(value => typeof value !== 'function')) &&
-      !Object.keys(L.Layer3D.prototype).some(name => /Methods|Prototype/.test(name));
+      !Object.keys(L.Layer.types['3d'].prototype).some(name => /Methods|Prototype/.test(name));
     const independent = scene.position !== layer.root.position &&
       scene.children !== layer.root.children && scene.worldMatrix !== layer.root.worldMatrix;
     const nodes = [
@@ -1132,7 +1287,7 @@ Then('layer-owned objects preserve values and visibility without engine classes'
 
 Then('a source block with {string} reports {string} without attaching a mesh', async function (invalid, message) {
   const result = await this.page.evaluate(async invalid => {
-    const layer = new L.Layer3D().addTo(test3d.map);
+    const layer = new L.Layer({ type: '3d' }).addTo(test3d.map);
     await nativeChecks.ready(layer);
     layer.options.featureStyle = () => ({ top: 10 });
     const anchor = layer.location, west = anchor.lng, south = anchor.lat;
@@ -1177,7 +1332,7 @@ async function prepare3DChecks(page) {
           gl: layer.renderer.gl,
           geometry: layer._createGeometry(layer.renderer.gl, Object.fromEntries(Object.entries(attributes)
             .map(([name, values]) => [name, { size: 3, data: new Float32Array(values) }]))),
-          program, id: L.Layer3D._nextId++, renderOrder: 0, extras: {},
+          program, id: L.Layer.types['3d']._nextId++, renderOrder: 0, extras: {},
         };
       },
       ready(layer) {
@@ -1251,7 +1406,7 @@ Then('native triangulation and glTF decoding preserve geometry without library r
     contentType: 'application/json', body: new URL(route.request().url()).searchParams.get('fixture'),
   }));
   const result = await this.page.evaluate(async () => {
-    const layer = new L.Layer3D().addTo(test3d.map);
+    const layer = new L.Layer({ type: '3d' }).addTo(test3d.map);
     await nativeChecks.ready(layer);
     const square = (x, y, size) => [{ x, y }, { x: x + size, y },
       { x: x + size, y: y + size }, { x, y: y + size }];
@@ -1304,7 +1459,7 @@ Then('native triangulation and glTF decoding preserve geometry without library r
     }];
     const url = new URL('accessors.gltf', document.baseURI);
     url.searchParams.set('fixture', JSON.stringify(description));
-    const configured = new L.Layer3D({ model: url.href }).addTo(test3d.map);
+    const configured = new L.Layer({ type: '3d', source: url.href }).addTo(test3d.map);
     await nativeChecks.ready(configured);
     const model = configured.model;
     const [first, second] = model.children.map(node => node.children[0]);
@@ -1335,9 +1490,9 @@ Then('3D click reports the picked object without changing the map view', { timeo
     const map = test3d.map;
     map.options.zoomAnimation = false;
     map.options.maxZoom = 24;
-    const origin = new L.Layer3D().addTo(map);
-    const far = new L.Layer3D({ center: [48.85835, 2.29465], tooltipContent: () => 'Far' }).addTo(map);
-    const near = new L.Layer3D({ center: [48.85835, 2.29465], tooltipContent: () => 'Near' }).addTo(map);
+    const origin = new L.Layer({ type: '3d' }).addTo(map);
+    const far = new L.Layer({ type: '3d', center: [48.85835, 2.29465], tooltipContent: () => 'Far' }).addTo(map);
+    const near = new L.Layer({ type: '3d', center: [48.85835, 2.29465], tooltipContent: () => 'Near' }).addTo(map);
     await Promise.all([origin, far, near].map(nativeChecks.ready));
     for (const [layer, height] of [[far, 0], [near, 20]]) {
       layer.model = nativeChecks.group();
@@ -1413,7 +1568,7 @@ Then('3D click reports the picked object without changing the map view', { timeo
 Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer3D({
+    const layer = new L.Layer({ type: '3d',
       source: 'paris-buildings.pmtiles',
       featureStyle: () => ({ top: 10 }),
       tooltipContent: feature => `Height: ${feature.properties.height} m`,
@@ -1449,7 +1604,7 @@ Then('a 3D layer creates and cleans up its own hover tooltip', { timeout: 60000 
     container.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: document.body }));
     container.dispatchEvent(new MouseEvent('mouseleave', { relatedTarget: document.body }));
     const leaveCleared = tooltip.hidden && container.style.cursor === 'crosshair' && !layer.highlightedFeature;
-    const other = new L.Layer3D({
+    const other = new L.Layer({ type: '3d',
       center: [map.getCenter().lat, map.getCenter().lng],
       source: 'paris-buildings.pmtiles', featureStyle: () => ({ top: 10 }),
       tooltipContent: () => 'Other feature',
@@ -1480,8 +1635,8 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     const initial = map.getCenter();
-    const beforeReady = new L.Layer3D({ ariaLabel: 'Automatic origin' }).addTo(map);
-    const afterReady = new L.Layer3D();
+    const beforeReady = new L.Layer({ type: '3d', ariaLabel: 'Automatic origin' }).addTo(map);
+    const afterReady = new L.Layer({ type: '3d' });
     await Promise.all([beforeReady, afterReady].map(nativeChecks.ready));
     const deferred = afterReady.location == null && !afterReady.renderer;
     afterReady.addTo(map);
@@ -1498,7 +1653,7 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
     beforeReady.remove();
     afterReady.remove();
     const center = [48.858, 2.295];
-    const explicit = new L.Layer3D({ center });
+    const explicit = new L.Layer({ type: '3d', center });
     await nativeChecks.ready(explicit);
     center[0] = 0;
     const explicitPreserved = explicit.location.equals([48.858, 2.295]);
@@ -1510,9 +1665,9 @@ Then('3D layers without a location keep their first map origin', { timeout: 6000
 Then('a configured 3D model loads with its transforms and attribution', { timeout: 60000 }, async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
-    const layer = new L.Layer3D({
+    const layer = new L.Layer({ type: '3d',
       center: [48.8582601, 2.29449985],
-      model: '../misc/eiffel-tower.glb',
+      source: '../misc/eiffel-tower.glb',
       rotation: [0, 0.8, 0],
       scale: [1.02, 1, 1.01],
       attribution: 'Test model attribution',
@@ -1741,10 +1896,9 @@ Given('a map with the standalone 3D module and no dependency import map', async 
       <script src="https://unpkg.com/leaflet@${process.env.LEAFLET_VERSION === '2' ? '2.0.0-alpha.1/dist/leaflet-global-src.js' : '1.9/dist/leaflet-src.js'}"></script>
       <script>globalThis.L = globalThis.leaflet || globalThis.L;</script>
       <script src="../dist/leaflet-rotate-src.js"></script>
-      <script src="../misc/3DLayer.js"></script>
-      <script src="../misc/PMTilesLayer.js"></script>
+      <script src="../misc/layer.js"></script>
       <script>
-        window.test3d = { Layer3D: L.Layer3D, map: new L.Map('first', {
+        window.test3d = { Layer3D: L.Layer.types['3d'], map: new L.Map('first', {
           center: [48.8582601, 2.29449985], zoom: 17, rotate: true, pitch: 45, bearing: 30
         }) };
       </script>`,
@@ -1755,7 +1909,7 @@ Given('a map with the standalone 3D module and no dependency import map', async 
   assert.deepEqual(this.threeRequests, []);
   assert.deepEqual(this.oglRequests, []);
   assert.equal(await this.page.evaluate(() => [...document.scripts].every(script => !script.type)), true);
-  assert.equal(await this.page.evaluate(() => L.Layer3D.SceneRenderer), undefined);
+  assert.equal(await this.page.evaluate(() => L.Layer.types['3d'].SceneRenderer), undefined);
 });
 
 When('I add and remove independent 3D layers', { timeout: 60000 }, async function () {
@@ -1774,7 +1928,7 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     const object = nativeChecks.group();
     second.add(object);
     const shared = first._shared === first && second._shared === first &&
-      L.Layer3D._renderers.get(map) === first &&
+      L.Layer.types['3d']._renderers.get(map) === first &&
       first.renderer === second.renderer && first.camera === second.camera &&
       first.scene === second.scene && first.root !== second.root &&
       first.root.parent === second.root.parent && document.querySelectorAll('.leaflet-3d').length === 1;
@@ -1805,7 +1959,7 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     first.remove();
     await new Promise(requestAnimationFrame);
     const retained = second.renderer === renderer && renderer.gl.canvas.isConnected && disposals === 0 &&
-      second._shared === second && L.Layer3D._renderers.get(map) === second &&
+      second._shared === second && L.Layer.types['3d']._renderers.get(map) === second &&
       second._sceneOrigin === sceneOrigin && !first._frame &&
       second.camera.projectionViewMatrix.every((value, index) => Math.abs(value - matrix[index]) < 1e-10);
     const otherMap = new L.Map('second', { center: second.location, zoom: 17, rotate: true });
@@ -1890,7 +2044,7 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
         getHeader: () => new Promise(resolve => { resolveHeader = resolve; }),
         getZxy: async () => undefined,
       };
-      const layer = new L.PMTilesLayer('test.pmtiles', { archive }).addTo(map);
+      const layer = new L.Layer({ type: 'pmtiles', source: 'test.pmtiles', archive }).addTo(map);
       const delayed = !layer._container;
       await Promise.resolve();
       resolveHeader({ maxZoom: 12 });
@@ -1899,17 +2053,17 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
       const tileZoom = layer._tileZoom;
       const initialized = Boolean(layer._container);
       layer.remove();
-      const override = await new L.PMTilesLayer('test.pmtiles', {
+      const override = await new L.Layer({ type: 'pmtiles', source: 'test.pmtiles',
         archive: { getHeader: async () => ({ maxZoom: 12 }) }, maxNativeZoom: 10,
       }).ready;
-      const failed = new L.PMTilesLayer('test.pmtiles', {
+      const failed = new L.Layer({ type: 'pmtiles', source: 'test.pmtiles',
         archive: { getHeader: async () => { throw new Error('Missing archive'); } },
       });
       let emitted;
       failed.on('error', event => { emitted = event.error; });
       const error = await failed.ready.then(() => null, error => error);
       const coords = { z: 12, x: 1, y: 2 };
-      const raster = await new L.PMTilesLayer('test.pmtiles', {
+      const raster = await new L.Layer({ type: 'pmtiles', source: 'test.pmtiles',
         archive: { getHeader: async () => ({ maxZoom: 12 }), getZxy: async () => undefined },
       }).ready;
       const missingTile = await new Promise(resolve => {
@@ -1966,11 +2120,13 @@ const openEiffelExample = async function () {
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
   await this.page.waitForFunction(() => window.map && typeof window.map.getPitch === 'function');
+  await this.page.waitForFunction(() => sunlightControl && cruiseBoats &&
+    layers._layers.some(entry => entry.name === 'Streetlights'));
   await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
-    !(layer instanceof L.Layer3D) || (layer.root && (!layer.options.model || layer.model) &&
-      (!layer.options.source || layer.header))));
+    !(layer instanceof L.Layer.types['3d']) || (layer.root && (!layer.modelUrl || layer.model) &&
+      (!layer.url || layer.header))));
   await this.page.evaluate(() => Promise.all(layers._layers
-    .filter(({ layer }) => !(layer instanceof L.Layer3D)).map(({ layer }) => layer.ready)));
+    .filter(({ layer }) => !(layer instanceof L.Layer.types['3d'])).map(({ layer }) => layer.ready)));
   const layout = await this.page.evaluate(() => {
     const rect = map.getContainer().getBoundingClientRect();
     return {
@@ -1978,7 +2134,7 @@ const openEiffelExample = async function () {
       viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
       preferCanvas: map.options.preferCanvas,
       classicScriptsOnly: [...document.scripts].every(script => !script.type),
-      globalLibraries: typeof L.Layer3D === 'function' && typeof L.PMTilesLayer === 'function',
+      globalLibraries: typeof L.Layer.types['3d'] === 'function' && typeof L.Layer.types.pmtiles === 'function',
       vectorLayers: Object.values(map._layers).filter(layer => layer instanceof L.Path).length,
       backgrounds: [...document.querySelectorAll('.leaflet-control-layers-base label')].map(label => label.textContent.trim()),
       activeBackgrounds: layers._layers.filter(entry => !entry.overlay && map.hasLayer(entry.layer)).map(entry => entry.name),
@@ -2000,8 +2156,7 @@ Given('the Eiffel Tower example page is open', { timeout: 60000 }, openEiffelExa
 
 // Real offline archives: terrain and orthophoto tiles exercise the GPU upload paths.
 Given('the Eiffel Tower example page is open with its offline archives', { timeout: 60000 }, async function () {
-  await this.context.unroute('**/misc/3DLayer.js');
-  await this.context.unroute('**/misc/PMTilesLayer.js');
+  await this.context.unroute('**/misc/layer.js');
   await openEiffelExample.call(this);
 });
 
@@ -2022,7 +2177,7 @@ When('I load a configured 3D model with {string}', async function (failure) {
     status, body, contentType: 'application/octet-stream',
   }));
   this.invalid3d = await this.page.evaluate(async () => {
-    const layer = new L.Layer3D({ model: 'invalid-model.glb' }).addTo(test3d.map);
+    const layer = new L.Layer({ type: '3d', source: 'invalid-model.glb' }).addTo(test3d.map);
     let emitted;
     layer.on('error', event => { emitted = event.error; });
     const error = await nativeChecks.ready(layer).then(() => null, error => error);
@@ -2049,8 +2204,8 @@ Then('the failed model has no attached geometry', function () {
 Then('building style for {int} storeys, {int} floors and ground {int} is {string}',
   async function (storeys, floors, ground, expected) {
     const result = await this.page.evaluate(({ storeys, floors, ground }) => {
-      const layer = layers._layers.find(entry => entry.layer instanceof L.Layer3D &&
-        !(entry.layer instanceof L.TerrainLayer) && entry.layer.options.source).layer;
+      const layer = layers._layers.find(entry => entry.layer instanceof L.Layer.types['3d'] &&
+        !(entry.layer instanceof L.Layer.types.terrain) && entry.layer.url).layer;
       const feature = { properties: { h_et_max: storeys, nb_pl: floors, b_rdc: ground } };
       const style = layer.options.featureStyle(feature);
       return style === null ? null : {
@@ -2069,11 +2224,11 @@ Then('building style for {int} storeys, {int} floors and ground {int} is {string
 
 When('I select the {string} background in the 3D example', async function (background) {
   await this.page.evaluate(() => {
-    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer3D &&
-      !(entry.layer instanceof L.TerrainLayer))
+    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer.types['3d'] &&
+      !(entry.layer instanceof L.Layer.types.terrain))
       .map(entry => entry.layer);
     window.exampleSceneBefore = {
-      overlays, renderer: overlays[0].renderer, canvas: overlays[0].renderer.gl.canvas,
+      overlays, renderer: overlays[0].renderer, canvas: overlays[0].renderer.canvas,
       model: overlays.find(layer => layer.model).model,
       center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
     };
@@ -2088,15 +2243,15 @@ Then('only the {string} background is active and the 3D scene is unchanged', asy
   }, background);
   const result = await this.page.evaluate(() => {
     const before = window.exampleSceneBefore;
-    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer3D &&
-      !(entry.layer instanceof L.TerrainLayer))
+    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer.types['3d'] &&
+      !(entry.layer instanceof L.Layer.types.terrain))
       .map(entry => entry.layer);
     const tower = overlays.find(layer => layer.model);
     return {
-      enabled: overlays.length === 2 && overlays.every(layer => map.hasLayer(layer)),
+      enabled: overlays.length === 5 && overlays.every(layer => map.hasLayer(layer)),
       shared: overlays.every(layer => layer.renderer === before.renderer),
       canvas: document.querySelectorAll('.leaflet-3d').length === 1 &&
-        before.canvas.isConnected && tower.renderer.gl.canvas === before.canvas,
+        before.canvas.isConnected && tower.renderer.canvas === before.canvas,
       model: tower.model === before.model && tower.model.parent === tower.root,
       camera: map.getCenter().equals(before.center) && map.getZoom() === before.zoom &&
         map.getBearing() === before.bearing && map.getPitch() === before.pitch,
@@ -2108,21 +2263,34 @@ Then('only the {string} background is active and the 3D scene is unchanged', asy
 When('I disable and restore the 3D overlays through the layer control', async function () {
   const towerControl = this.page.getByRole('checkbox', { name: 'Eiffel Tower (3D)', exact: true });
   const buildingsControl = this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true });
+  const treesControl = this.page.getByRole('checkbox', { name: 'Paris trees (3D)', exact: true });
+  const terrainControl = this.page.getByRole('checkbox', { name: 'IGN Terrain (3D)', exact: true });
+  const lightsControl = this.page.getByRole('checkbox', { name: 'Paris streetlights (night)', exact: true });
+  const boatsControl = this.page.getByRole('checkbox', { name: 'Seine tourist boats (scheduled)', exact: true });
+  await boatsControl.uncheck();
+  await lightsControl.uncheck();
+  await terrainControl.uncheck();
   await this.page.evaluate(() => {
     const tower = layers._layers.find(entry => entry.layer.model).layer;
-    window.exampleOverlayBefore = { tower, model: tower.model, canvas: tower.renderer.gl.canvas };
+    window.exampleOverlayBefore = { tower, model: tower.model, canvas: tower.renderer.canvas };
   });
   await towerControl.uncheck();
   const towerDisabled = await this.page.evaluate(() => {
     const before = window.exampleOverlayBefore;
-    const buildings = layers._layers.find(entry => entry.layer instanceof L.Layer3D &&
-      !(entry.layer instanceof L.TerrainLayer) && entry.layer.options.source).layer;
+    const buildings = layers._layers.find(entry => entry.layer instanceof L.Layer.types['3d'] &&
+      !(entry.layer instanceof L.Layer.types.terrain) && entry.layer.url).layer;
     return !map.hasLayer(before.tower) && map.hasLayer(buildings) &&
-      before.canvas.isConnected && buildings.renderer.gl.canvas === before.canvas &&
+      before.canvas.isConnected && buildings.renderer.canvas === before.canvas &&
       !map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
       !before.tower._tooltip;
   });
   await buildingsControl.uncheck();
+  const treesRetained = await this.page.evaluate(() => {
+    const tree = layers._layers.find(entry => entry.name === 'Paris trees (3D)').layer;
+    return map.hasLayer(tree) && tree.renderer.canvas === window.exampleOverlayBefore.canvas &&
+      tree.renderer.canvas.isConnected;
+  });
+  await treesControl.uncheck();
   const allDisabled = await this.page.evaluate(() =>
     !document.querySelector('.leaflet-3d') && !document.querySelector('.leaflet-3d-tooltip') &&
     !window.exampleOverlayBefore.canvas.isConnected);
@@ -2135,20 +2303,26 @@ When('I disable and restore the 3D overlays through the layer control', async fu
     const before = window.exampleOverlayBefore;
     const tower = before.tower;
     return map.hasLayer(tower) && tower.model === before.model &&
-      tower.renderer.gl.canvas !== before.canvas && tower.renderer.gl.canvas.isConnected &&
+      tower.renderer.canvas !== before.canvas && tower.renderer.canvas.isConnected &&
       map.attributionControl.getContainer().textContent.includes('CC0 model:') &&
       tower._tooltip.hidden;
   });
   await buildingsControl.check();
+  await treesControl.check();
+  await terrainControl.check();
+  await lightsControl.check();
+  await boatsControl.check();
+  await this.page.waitForFunction(() => layers._layers.filter(entry => entry.overlay)
+    .every(({ layer }) => layer.root && layer.renderer));
   const bothRestored = await this.page.evaluate(() => {
-    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer3D &&
-      !(entry.layer instanceof L.TerrainLayer))
+    const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer.types['3d'] &&
+      !(entry.layer instanceof L.Layer.types.terrain))
       .map(entry => entry.layer);
     return overlays.every(layer => map.hasLayer(layer)) &&
-      overlays[0].renderer === overlays[1].renderer &&
+      overlays.every(layer => layer.renderer === overlays[0].renderer) &&
       document.querySelectorAll('.leaflet-3d').length === 1;
   });
-  this.exampleOverlayChecks = { towerDisabled, allDisabled, towerRestored, bothRestored };
+  this.exampleOverlayChecks = { towerDisabled, treesRetained, allDisabled, towerRestored, bothRestored };
 });
 
 Then('the 3D canvas and model attribution follow the enabled overlays', function () {
@@ -2275,7 +2449,7 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
     const tileErrors = [];
     let baseLayer;
     map.eachLayer(layer => {
-      if (layer instanceof L.PMTilesLayer && layer._map) baseLayer = layer;
+      if (layer instanceof L.Layer.types.pmtiles && layer._map) baseLayer = layer;
     });
     for (const [zoom, pitch, bearing] of [[17, 0, 0], [17, 45, 30], [18, 60, 135], [16, 80, 270]]) {
       map.setView(tower.location, zoom, { animate: false });
@@ -2386,7 +2560,7 @@ When('I visit and inspect the Eiffel Tower 3D model', { timeout: 60000 }, async 
     const sharedCanvasRemains = document.querySelector('.leaflet-3d') === eiffel.renderer.gl.canvas;
     map.removeLayer(eiffel);
     const other3d = [];
-    map.eachLayer(layer => { if (layer instanceof L.Layer3D) other3d.push(layer); });
+    map.eachLayer(layer => { if (layer instanceof L.Layer.types['3d']) other3d.push(layer); });
     other3d.forEach(layer => layer.remove());
     const removed = !document.querySelector('.leaflet-3d');
     tower.addTo(map);
@@ -2427,7 +2601,7 @@ When('I pan the shared WebGPU renderer', async function () {
   this.page.on('pageerror', onPageError);
   try {
     this.webgpuPan = await this.page.evaluate(async () => {
-      const modelLayer = layers._layers.find(({ layer }) => layer.options.model)?.layer;
+      const modelLayer = layers._layers.find(({ layer }) => layer.modelUrl)?.layer;
       const owner = modelLayer?._shared;
       if (!owner?.renderer?.device) throw new Error('The WebGPU model renderer is not ready');
       owner._render();
@@ -2527,7 +2701,7 @@ Then('WebGPU matrices match DOMMatrix and frame resources are reused', function 
 
 // Settled scene: terrain meshes exist, the roof atlas was built and no raster layer is still loading.
 const waitForWebGPUScene = page => page.waitForFunction(() => {
-  const owner = L.Layer3D._renderers.get(map);
+  const owner = L.Layer.types['3d']._renderers.get(map);
   return owner?.renderer?.device && owner._roofRaster && map._terrain3D?._rasterTiles.size > 0 &&
     !Object.values(map._layers).some(layer => layer.isLoading?.());
 }, null, { timeout: 50000 });
@@ -2539,7 +2713,7 @@ When('I drive the shared WebGPU renderer with map events', { timeout: 60000 }, a
   try {
     await waitForWebGPUScene(this.page);
     this.webgpuPacing = await this.page.evaluate(async () => {
-      const owner = L.Layer3D._renderers.get(map);
+      const owner = L.Layer.types['3d']._renderers.get(map);
       const { device } = owner.renderer;
       const frame = () => new Promise(requestAnimationFrame);
       const gpuErrors = [];
@@ -2681,7 +2855,7 @@ When('I rebuild the WebGPU roof atlas', { timeout: 60000 }, async function () {
   try {
     await waitForWebGPUScene(this.page);
     this.webgpuAtlas = await this.page.evaluate(async () => {
-      const owner = L.Layer3D._renderers.get(map);
+      const owner = L.Layer.types['3d']._renderers.get(map);
       const terrain = map._terrain3D;
       const { device } = owner.renderer;
       const gpuErrors = [];
@@ -2708,7 +2882,7 @@ When('I rebuild the WebGPU roof atlas', { timeout: 60000 }, async function () {
       }
       const atlas = owner._roofRaster.texture;
       const tiles = Object.values(map._layers)
-        .filter(layer => layer instanceof L.PMTilesLayer && layer._tiles && layer.options.opacity > 0)
+        .filter(layer => layer instanceof L.Layer.types.pmtiles && layer._tiles && layer.options.opacity > 0)
         .flatMap(layer => Object.values(layer._tiles)
           .filter(tile => tile.el.done && !tile.el.request.signal.aborted && tile.el.isConnected)
           .map(tile => ({ ...tile, layer })));
@@ -2810,7 +2984,7 @@ When('I inspect the WebGPU terrain tiles', { timeout: 60000 }, async function ()
   try {
     await waitForWebGPUScene(this.page);
     this.webgpuTerrain = await this.page.evaluate(async () => {
-      const owner = L.Layer3D._renderers.get(map);
+      const owner = L.Layer.types['3d']._renderers.get(map);
       const terrain = map._terrain3D;
       const { device } = owner.renderer;
       const crs = map.options.crs;
@@ -2856,7 +3030,7 @@ When('I inspect the WebGPU terrain tiles', { timeout: 60000 }, async function ()
         @group(0) @binding(1) var<storage, read> terrains: array<vec4<f32>>;
         @group(0) @binding(2) var<storage, read> uvs: array<vec2<f32>>;
         @group(0) @binding(3) var<storage, read_write> heights: array<f32>;
-        ${L.TerrainLayer.elevationWGSL}
+        ${L.Layer.types.terrain.elevationWGSL}
         @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           if (id.x >= arrayLength(&heights)) { return; }
           let t = terrains[id.x];
@@ -2987,12 +3161,12 @@ Given('the Paris buildings example is open with sample volumes', { timeout: 6000
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
   await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
-    !(layer instanceof L.Layer3D) || (layer.root && (!layer.options.model || layer.model) &&
-      (!layer.options.source || layer.header))));
+    !(layer instanceof L.Layer.types['3d']) || (layer.root && (!layer.modelUrl || layer.model) &&
+      (!layer.url || layer.header))));
   await this.page.evaluate(() => Promise.all(layers._layers
-    .filter(({ layer }) => !(layer instanceof L.Layer3D)).map(({ layer }) => layer.ready)));
+    .filter(({ layer }) => !(layer instanceof L.Layer.types['3d'])).map(({ layer }) => layer.ready)));
   await this.page.waitForFunction(() => {
-    const buildings = Object.values(map._layers).find(layer => layer.group);
+    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
     const error = buildings && [...buildings._areas.values()].find(area => area.error);
     if (error) throw new Error(error.error);
     return buildings && buildings._inflight === 0 && buildings._areas.size > 0 &&
@@ -3005,8 +3179,8 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
   const result = await this.page.evaluate(async () => {
     let tower, buildings;
     map.eachLayer(layer => {
-      if (layer.renderer && !layer.model) tower = layer;
-      if (layer.group) buildings = layer;
+      if (layer.model) tower = layer;
+      if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer;
     });
     const backend = tower;
     const mesh = buildings.group.children[0];
@@ -3033,10 +3207,10 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       min: geometry.bounds.min[1],
       max: geometry.bounds.max[1],
       sharedScene: buildings.root.parent === buildings.scene &&
-        Object.values(map._layers).filter(layer => layer instanceof L.Layer3D)
+        Object.values(map._layers).filter(layer => layer instanceof L.Layer.types['3d'])
           .every(layer => layer.renderer === buildings.renderer),
-      true3DLayer: buildings instanceof L.Layer3D && !(buildings instanceof L.GridLayer),
-      noSubclass: buildings.constructor === L.Layer3D,
+      true3DLayer: buildings instanceof L.Layer.types['3d'] && !(buildings instanceof L.GridLayer),
+      noSubclass: buildings.constructor === L.Layer.types['3d'],
       meshes: buildings.group.children.length,
       skipped: [...buildings._areas.values()].reduce((sum, area) => sum + (area.skipped || 0), 0)
     };
@@ -3054,7 +3228,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
   assert.equal(result.skipped, 1);
 
   const genericStyle = await this.page.evaluate(async feature => {
-    const buildings = Object.values(map._layers).find(layer => layer.group);
+    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
     const coords = { z: buildings.header.minZoom };
     const point = map.project(new L.LatLng(48.8585, 2.2955), coords.z).divideBy(256).floor();
     Object.assign(coords, { x: point.x, y: point.y });
@@ -3066,7 +3240,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       content = await nativeChecks.loadBlock(buildings, area, [{ ...feature, id: 'custom-volume',
         properties: { height: 22 } }]);
       const geometry = content.mesh.geometry;
-      L.Layer3D.prototype._computeBounds(geometry);
+      L.Layer.types['3d'].prototype._computeBounds(geometry);
       buildings.options.featureStyle = () => ({ top: 3, bottom: 4 });
       const invalid = await nativeChecks.loadBlock(buildings, { coords, request: new AbortController() }, [feature]);
       const error = invalid.error;
@@ -3085,7 +3259,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     let tower, buildings;
     map.eachLayer(layer => {
       if (layer.renderer && !layer.model) tower = layer;
-      if (layer.group) buildings = layer;
+      if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer;
     });
     const backend = tower;
     buildings.featureEvents = [];
@@ -3116,7 +3290,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     document.querySelector('.leaflet-3d-tooltip').textContent.includes('Estimated height: 15 m'));
   const highlightedColor = await this.page.evaluate(vertexStart => {
     let buildings;
-    map.eachLayer(layer => { if (layer.group) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     return {
       highlight: buildings.group.children[0].highlight,
       highlighted: buildings.highlightedFeature?.vertexStart,
@@ -3140,14 +3314,14 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
   });
   this.clickCleared = await this.page.evaluate(() => {
       let buildings;
-      map.eachLayer(layer => { if (layer.group) buildings = layer; });
+      map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
       return buildings._tooltip.hidden && !buildings.hoveredFeature && !buildings.highlightedFeature &&
         map.getContainer().style.cursor !== 'pointer';
     });
   assert.equal(this.hoverHighlight, true, JSON.stringify({ interaction, highlightedColor }));
   assert.equal(this.clickCleared, true);
   const events = await this.page.evaluate(() => {
-    const buildings = Object.values(map._layers).find(layer => layer.group);
+    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
     return buildings.featureEvents;
   });
   assert.ok(events.some(event => event.type === 'featurehover' && event.id));
@@ -3156,8 +3330,8 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
 
 When('I move and toggle the Paris building volumes', { timeout: 60000 }, async function () {
   const status = text => this.page.waitForFunction(text => {
-    const buildings = layers._layers.find(entry => entry.layer instanceof L.Layer3D &&
-      !(entry.layer instanceof L.TerrainLayer) && entry.layer.options.source).layer;
+    const buildings = layers._layers.find(entry => entry.layer instanceof L.Layer.types['3d'] &&
+      !(entry.layer instanceof L.Layer.types.terrain) && entry.layer.url).layer;
     if (buildings._inflight || !buildings._areas.size) return false;
     const areas = [...buildings._areas.values()];
     if (text === 'Unable to load') return areas.some(area => area.error);
@@ -3167,7 +3341,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   }, text);
   const meshes = () => this.page.evaluate(() => {
     let buildings;
-    map.eachLayer(layer => { if (layer.group) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     return buildings.group.children.length;
   });
   const away = () => this.page.evaluate(() => map.setView([48.85657, 2.39], 16, { animate: false }));
@@ -3186,10 +3360,10 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
     let eiffel, buildings;
     map.eachLayer(layer => {
       if (layer.model) eiffel = layer;
-      if (layer.group) buildings = layer;
+      if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer;
     });
     return !eiffel && buildings.group.parent === buildings.scene &&
-      buildings.renderer.gl.canvas.isConnected && buildings.group.children.length === 1;
+      buildings.renderer.canvas.isConnected && buildings.group.children.length === 1;
   });
 
   await this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true }).uncheck();
@@ -3203,7 +3377,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   await this.page.getByRole('checkbox', { name: 'Paris buildings (3D)', exact: true }).check();
   await status('Unable to load');
   this.failureText = await this.page.evaluate(() => {
-    const buildings = Object.values(map._layers).find(layer => layer.group);
+    const buildings = layers._layers.find(entry => entry.name === 'Paris buildings (3D)').layer;
     return [...buildings._areas.values()].map(area => area.error).filter(Boolean).join('; ');
   });
   this.failBuildings = false;
@@ -3226,7 +3400,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   this.expandedForCameraChanges = this.buildingRequests.length > requestsBeforeCameraChanges;
   this.areaBudget = await this.page.evaluate(() => {
     let buildings;
-    map.eachLayer(layer => { if (layer.group) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     const z = buildings.header.minZoom;
     const nw = map.project([buildings.header.maxLat, buildings.header.minLon], z).divideBy(256).floor();
     const se = map.project([buildings.header.minLat, buildings.header.maxLon], z).divideBy(256).floor();
@@ -3235,7 +3409,7 @@ When('I move and toggle the Paris building volumes', { timeout: 60000 }, async f
   });
   this.cancelledConstruction = await this.page.evaluate(async feature => {
     let buildings;
-    map.eachLayer(layer => { if (layer.group) buildings = layer; });
+    map.eachLayer(layer => { if (layer.options.source?.endsWith('paris-buildings.pmtiles')) buildings = layer; });
     const point = map.project(new L.LatLng(48.8585, 2.2955), buildings.header.minZoom).divideBy(256).floor();
     const area = { coords: { z: buildings.header.minZoom, x: point.x, y: point.y }, request: new AbortController() };
     const before = buildings.root.children.length;

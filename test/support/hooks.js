@@ -55,9 +55,9 @@ Before(async function () {
     await route.fulfill({ response, body, headers: response.headers() });
   });
   // Deterministic PMTiles: tests answer tiles through the exposed `pmtilesTile(url, z, x, y)` binding.
-  const pmtilesMock = `for (const prototype of [L.PMTilesLayer?.prototype, L.Layer3D?.prototype].filter(Boolean)) {
+  const pmtilesMock = `for (const prototype of [L.Layer.types?.pmtiles?.prototype, L.Layer.types?.['3d']?.prototype].filter(Boolean)) {
       prototype.getHeader = async function () {
-        return this.url.endsWith('/paris-buildings.pmtiles')
+        return ['buildings', 'trees', 'streetlights'].some(name => this.url.endsWith('/paris-' + name + '.pmtiles'))
           ? { minZoom: 16, maxZoom: 16, minLon: 2.2424, minLat: 48.8162, maxLon: 2.416, maxLat: 48.9022 }
           : { minZoom: 11, maxZoom: 19 };
       };
@@ -71,8 +71,7 @@ Before(async function () {
     const response = await route.fetch();
     await route.fulfill({ response, body: `${await response.text()}\n${pmtilesMock}` });
   };
-  await this.context.route('**/misc/3DLayer.js', mockPMTiles);
-  await this.context.route('**/misc/PMTilesLayer.js', mockPMTiles);
+  await this.context.route('**/misc/layer.js', mockPMTiles);
   this.page = await this.context.newPage();
 });
 
