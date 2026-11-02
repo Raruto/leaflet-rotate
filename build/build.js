@@ -11,7 +11,7 @@ const options = {
   sourcemap: true,
   outdir: 'dist',
   entryNames: 'leaflet-rotate-src',
-  // Layer types stay separate files (dist/3d/types/*.js), loaded by `import()` on first use.
+  // The 3D router and its types stay separate files (dist/3d/), loaded by `import()` on first use.
   // esbuild would glob a templated `import()` into the bundle; a variable path keeps it a runtime import.
   plugins: [{
     name: 'external-layer-types',

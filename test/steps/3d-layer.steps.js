@@ -1056,11 +1056,11 @@ Before({ tags: '@3d-layer' }, async function () {
 After({ tags: '@3d-layer' }, async function () {
   if (!process.env.COVERAGE_3D) return;
   const entries = await this.page.coverage.stopJSCoverage();
-  for (const entry of entries.filter(entry => entry.url.includes('/dist/3d/types/'))) {
+  for (const entry of entries.filter(entry => entry.url.includes('/dist/3d/'))) {
     for (const fn of entry.functions) {
       const range = fn.ranges[0];
       if (!fn.functionName) continue;
-      const key = `${range.startOffset}:${range.endOffset}`;
+      const key = `${entry.url}:${range.startOffset}:${range.endOffset}`;
       const previous = coveredFunctions.get(key);
       coveredFunctions.set(key, {
         name: fn.functionName,
@@ -2044,7 +2044,8 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
       };
       const layer = new L.Layer({ source: { type: 'pmtiles', url: 'test.pmtiles', archive } }).addTo(map);
       const delayed = !layer._container;
-      await Promise.resolve();
+      // The first routed layer may still be loading its router.
+      while (!resolveHeader) await new Promise(resolve => setTimeout(resolve));
       resolveHeader({ maxZoom: 12 });
       await layer.ready;
       const nativeZoom = layer.options.maxNativeZoom;
@@ -2249,7 +2250,7 @@ Then('only the {string} background is active and the 3D scene is unchanged', asy
       .map(entry => entry.layer);
     const tower = overlays.find(layer => layer.model);
     return {
-      enabled: overlays.length === 5 && overlays.every(layer => map.hasLayer(layer)),
+      enabled: overlays.length === 6 && overlays.every(layer => map.hasLayer(layer)),
       shared: overlays.every(layer => layer.renderer === before.renderer),
       canvas: document.querySelectorAll('.leaflet-3d').length === 1 &&
         before.canvas.isConnected && tower.renderer.canvas === before.canvas,
@@ -2261,13 +2262,15 @@ Then('only the {string} background is active and the 3D scene is unchanged', asy
   for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
 });
 
-When('I disable and restore the 3D overlays through the layer control', async function () {
+When('I disable and restore the 3D overlays through the layer control', { timeout: 60000 }, async function () {
   const towerControl = this.page.getByRole('checkbox', { name: 'Eiffel Tower', exact: true });
   const buildingsControl = this.page.getByRole('checkbox', { name: 'Buildings', exact: true });
   const treesControl = this.page.getByRole('checkbox', { name: 'Trees', exact: true });
   const terrainControl = this.page.getByRole('checkbox', { name: 'Terrain (3D)', exact: true });
-  const lightsControl = this.page.getByRole('checkbox', { name: 'Paris streetlights (night)', exact: true });
+  const lightsControl = this.page.getByRole('checkbox', { name: 'Streetlights', exact: true });
   const boatsControl = this.page.getByRole('checkbox', { name: 'Bateaux-Mouches', exact: true });
+  const trafficControl = this.page.getByRole('checkbox', { name: 'Traffic', exact: true });
+  await trafficControl.uncheck();
   await boatsControl.uncheck();
   await lightsControl.uncheck();
   await terrainControl.uncheck();
@@ -2313,7 +2316,8 @@ When('I disable and restore the 3D overlays through the layer control', async fu
   await terrainControl.check();
   await lightsControl.check();
   await boatsControl.check();
-  await this.page.waitForFunction(() => layers._layers.filter(entry => entry.overlay)
+  await trafficControl.check();
+  await this.page.waitForFunction(() => layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer.types['3d'])
     .every(({ layer }) => layer.root && layer.renderer));
   const bothRestored = await this.page.evaluate(() => {
     const overlays = layers._layers.filter(entry => entry.overlay && entry.layer instanceof L.Layer.types['3d'] &&

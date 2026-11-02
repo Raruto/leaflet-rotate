@@ -7,8 +7,12 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   await this.page.waitForFunction(() => cruiseBoats?.renderer);
   const result = await this.page.evaluate(async () => {
     const layer = cruiseBoats, owner = L.Layer.types['3d']._renderers.get(map);
-    const { cruiseDistance, cruisePosition, cruiseRoute } = L.Layer.types.cruises;
-    const boatMeshes = () => layer.root.children.filter(mesh => mesh.extras.featureFaces.length);
+    const { cruiseDistance, cruisePosition, cruiseRoute } = await import(new URL('../dist/3d/utils/seine.js', location.href));
+    // One batched mesh holds every boat; each boat owns a featureFaces vertex range.
+    const boats = () => layer.root.children.find(mesh => mesh.extras.featureFaces.length);
+    const boatCount = () => boats()?.extras.featureFaces.length ?? 0;
+    const stride = () => boats().extras.featureFaces[0].vertexEnd * 3;
+    const firstBoat = () => [...boats().geometry.attributes.position.data.slice(0, stride())];
     const gpuErrors = [];
     owner.renderer.device.addEventListener('uncapturederror', event => gpuErrors.push(event.error.message));
     const select = (day, minute) => {
@@ -19,29 +23,29 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
       owner._render();
     };
     select('2026-11-02', 120);
-    const nightCount = boatMeshes().length;
+    const nightCount = boatCount();
     const route = layer.root.children[0];
     const routeAtNight = route.geometry.drawRange.count > 100 && route.visible && route.extras.featureFaces.length === 0 &&
       route.program.depthTest === false && route.program.depthWrite === false;
     select('2026-11-02', 555); // 09:15 UTC = first winter departure 10:15 Paris.
-    const first = boatMeshes()[0];
-    const firstPosition = [...first.position];
+    const firstPosition = firstBoat();
     select('2026-11-02', 565);
-    const moved = first.position.some((value, i) => value !== firstPosition[i]);
-    const manualPosition = [...first.position];
+    const moved = firstBoat().some((value, i) => value !== firstPosition[i]);
+    const manualPosition = firstBoat();
     await new Promise(resolve => setTimeout(resolve, 600));
-    const frozen = first.position.every((value, i) => value === manualPosition[i]);
+    const frozen = firstBoat().every((value, i) => value === manualPosition[i]);
     select('2026-11-02', 600);
-    const twoTrips = boatMeshes().length;
-    const properties = boatMeshes().map(mesh => mesh.extras.featureFaces[0].properties);
-    const heights = boatMeshes().map(mesh => mesh.position[1] + layer.root.position[1]);
+    const twoTrips = boatCount();
+    const properties = boats().extras.featureFaces.map(face => face.properties);
+    // The hull's first vertex sits 0.1 m above the water surface.
+    const heights = boats().extras.featureFaces.map(face =>
+      boats().geometry.attributes.position.data[face.vertexStart * 3 + 1] - 0.1 + layer.root.position[1]);
     const finite = layer.root.children.every(mesh =>
       Object.values(mesh.geometry.attributes).every(attribute => [...attribute.data].every(Number.isFinite)));
     const tooltip = layer.options.tooltipContent({ properties: properties[0] }).textContent;
     const shared = layer.renderer === streetlights.renderer;
-    const noDuplicateNodes = new Set(boatMeshes().map(mesh => mesh.id)).size === twoTrips;
+    const noDuplicateNodes = new Set(boats().extras.featureFaces.map(face => face.id)).size === twoTrips;
     select('2026-06-21', 600);
-    const firstSummer = boatMeshes()[0];
     // Exercise live ticking with a deterministic clock in an operating interval.
     const OriginalDate = Date, start = OriginalDate.parse('2026-06-21T10:00:01Z'), wall = performance.now();
     window.Date = class extends OriginalDate {
@@ -52,23 +56,22 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     try {
       sunlightOverlay.control.getContainer().querySelector('button').click();
       await new Promise(resolve => setTimeout(resolve, 350));
-      const before = [...firstSummer.position];
+      const before = firstBoat();
       await new Promise(resolve => setTimeout(resolve, 600));
-      liveMoved = firstSummer.position.some((value, i) => value !== before[i]);
+      liveMoved = firstBoat().some((value, i) => value !== before[i]);
     } finally { window.Date = OriginalDate; sunlightOverlay.control.live = false; }
     select('2026-11-02', 1290);
-    const closed = boatMeshes().length === 0 && layer.root.children[0] === route;
+    const closed = boatCount() === 0 && layer.root.children.length === 1 && layer.root.children[0] === route;
     select('2026-11-02', 600);
-    const old = boatMeshes()[0];
-    layer._setHighlight({ mesh: old, vertexStart: 0, vertexEnd: old.geometry.drawRange.count });
+    layer._setHighlight({ ...boats().extras.featureFaces[0], mesh: boats() });
     select('2026-11-02', 660);
     const clearedHighlight = !layer.highlightedFeature;
     const date = sunlightOverlay.control.getContainer().querySelector('input[type=date]');
     date.value = ''; date.dispatchEvent(new Event('change'));
-    const invalidClears = boatMeshes().length === 0;
+    const invalidClears = boatCount() === 0;
     select('2026-11-02', 600);
-    const recovered = boatMeshes().length === 2 && boatMeshes().every(mesh => mesh.visible);
-    const trip = boatMeshes()[0].extras.featureFaces[0].properties;
+    const recovered = boatCount() === 2 && boats().visible;
+    const trip = boats().extras.featureFaces[0].properties;
     const renderer = owner.renderer, { device } = renderer;
     renderer.context.configure({ device, format: renderer.format, alphaMode: 'premultiplied',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
@@ -103,7 +106,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     route.visible = true;
     map.setPitch(45); map.setBearing(25); map.setView([trip.lat, trip.lng], 19, { animate: false });
     const visible = await capture();
-    for (const mesh of boatMeshes()) mesh.visible = false;
+    boats().visible = false;
     const noBoats = await capture();
     route.visible = false;
     const noRoute = await capture();
@@ -124,7 +127,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   assert.equal(result.nightCount, 0);
   assert.equal(result.twoTrips, 2);
   assert.deepEqual(result.properties.map(trip => trip.departure), ['10:15', '11:00']);
-  assert.ok(result.heights.every(height => Math.abs(height - 27.15) < 1e-8));
+  assert.ok(result.heights.every(height => Math.abs(height - 27.15) < 1e-4), String(result.heights));
   for (const key of ['moved', 'frozen', 'finite', 'shared', 'noDuplicateNodes', 'liveMoved',
     'closed', 'routeAtNight', 'invalidClears', 'recovered', 'clearedHighlight']) {
     assert.equal(result[key], true, key);
@@ -138,12 +141,18 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   const control = this.page.getByRole('checkbox', { name: 'Bateaux-Mouches', exact: true });
   await control.uncheck();
   assert.equal(await this.page.evaluate(() => !cruiseBoats._map && !cruiseBoats.root.children.length &&
-    document.querySelector('.cruise-status').textContent.includes('off')), true);
+    [...document.querySelectorAll('.traffic-status')].some(status => status.textContent === 'Cruises: layer off')), true);
   await control.check();
-  await this.page.waitForFunction(() => cruiseBoats.root.children.length === 3);
+  await this.page.waitForFunction(() => cruiseBoats.root.children.length === 2);
   assert.equal(await this.page.evaluate(() => cruiseBoats.root.children.every(mesh =>
     Object.values(mesh.geometry.attributes).every(a => !previousBoatBuffers.includes(a.buffer)))), true);
+  // Without a clock the boats run live on the current timetable.
   await this.page.evaluate(() => map.removeLayer(sunlightOverlay));
-  assert.equal(await this.page.evaluate(() => cruiseBoats.root.children.length === 1), true);
+  assert.equal(await this.page.evaluate(async () => {
+    const { scheduledCruises } = await import(new URL('../dist/3d/utils/seine.js', location.href));
+    await new Promise(requestAnimationFrame);
+    const boats = cruiseBoats.root.children.find(mesh => mesh.extras.featureFaces.length);
+    return (boats?.extras.featureFaces.length ?? 0) === scheduledCruises(new Date()).length;
+  }), true);
   assert.deepEqual(errors, []);
 });

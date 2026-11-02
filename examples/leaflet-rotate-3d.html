@@ -132,16 +132,16 @@
 				// The GLB is axis-aligned, not north-aligned; its horizontal footprint is slightly undersized.
 				'Eiffel Tower': new L.Layer({
 					source: {
-						nightSparkle: true,
-						center: [48.8582601, 2.29449985],
 						url: '../misc/eiffel-tower.glb',
 						tooltipContent() {
 							const content = document.createElement('div');
 							content.innerHTML = '<div><b>Eiffel Tower</b><br>Height: 330 m including antennas (300 m structure)<br>Opened: 1889, for the World Exhibition<br>Designer: Gustave Eiffel and his engineering team<br>Location: Champ de Mars, Paris</div>';
 							return content;
 						},
+						center: [48.8582601, 2.29449985],
 						rotation: [0, 45.81 * Math.PI / 180, 0],
 						scale: [1.0257, 1, 1.0167],
+						nightSparkle: true,
 					},
 					attribution: '<a href="https://3dmr.eu/model/4">CC0 model: n42k / Blend Swap</a>',
 				}).addTo(map),
@@ -209,9 +209,16 @@
 				}).addTo(map),
 				'Bateaux-Mouches': new L.Layer({
 					source: {
-						type: 'cruises',
+						type: 'traffic',
+						network: 'seine',
 					},
 					attribution: '<a href="https://www.bateaux-mouches.fr/fr/croisiere/informations">Cruise timetable: Bateaux-Mouches</a> · estimated positions',
+				}).addTo(map),
+				'Traffic': new L.Layer({
+					source: {
+						type: 'traffic',
+					},
+					attribution: '<a href="https://opendata.paris.fr/explore/dataset/comptages-routiers-permanents/">Traffic counts: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 				}).addTo(map),
 				'Shadows': new L.Layer({ source: {
 					type: 'sunlight'
