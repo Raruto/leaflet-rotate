@@ -1,9 +1,9 @@
 /**
  * `new L.Layer({ source: { type, url, ...settings }, pane, attribution })`: layers with a `source`
- * are routed by src/layer/3d/index.js, loaded on first use. Subclasses are unchanged.
+ * are routed by src/3d/index.js, loaded on first use. Subclasses are unchanged.
  */
 
-// Shared registry: type modules (src/layer/3d/types) register here.
+// Shared registry: type modules (src/3d/types) register here.
 L.Layer.types = {};
 
 let route;

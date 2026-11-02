@@ -1,6 +1,49 @@
 import assert from 'node:assert/strict';
 import { Then } from '@cucumber/cucumber';
 
+// The lamp style lives in the example page, as the Streetlights layer featureStyle.
+const lamp = (page, properties = {}) =>
+  page.evaluate(properties => streetlights.options.featureStyle({ properties }), properties);
+
+Then('a lamp {int} m high with {int} lm at {int} K is {int} m high, lights {float} m scaled by the flux and is warm white',
+  async function (height, flux, kelvin, top, radius) {
+    const style = await lamp(this.page, { support_hauteur: `${height}.0`, lampe_flux: `${flux}.0`, lampe_temperature_couleur: `${kelvin}.0` });
+    assert.equal(style.top, top);
+    assert.ok(Math.abs(style.lightRadius - radius * Math.sqrt(flux / 10000)) < 1e-10);
+    assert.equal(style.color.r, 1);
+    assert.equal(style.color.b, 135 / 255);
+  });
+
+Then('a lamp without valid records uses the default {int} m height', async function (top) {
+  const defaults = await lamp(this.page);
+  assert.equal(defaults.top, top);
+  assert.deepEqual(await lamp(this.page, { support_hauteur: 'None', lampe_flux: '-10', lampe_temperature_couleur: '' }), defaults);
+});
+
+Then('sodium lamps are warmer than the default and 6500 K lamps are bluish', async function () {
+  const defaults = await lamp(this.page), sodium = await lamp(this.page, { lampe_famille: 'Lampe sodium haute pression' });
+  assert.ok(sodium.color.b < defaults.color.b);
+  const white = await lamp(this.page, { lampe_temperature_couleur: '6500' });
+  assert.ok(white.color.b > white.color.r);
+});
+
+Then('the light radius stays between {int} and {int} m', async function (low, high) {
+  assert.equal((await lamp(this.page, { support_hauteur: 40, lampe_flux: 500000 })).lightRadius, high);
+  assert.equal((await lamp(this.page, { support_hauteur: 1, lampe_flux: 10 })).lightRadius, low);
+});
+
+Then(/^lamps on "(.+)" have (?:a ([\d.]+) m|no) pole$/, async function (supports, radius) {
+  for (const lib_ouvrag of supports.split(', ')) {
+    assert.equal((await lamp(this.page, { lib_ouvrag })).poleRadius, Number(radius ?? 0), lib_ouvrag);
+  }
+});
+
+Then('underground lamps are excluded:', async function (table) {
+  for (const { property, value, shown } of table.hashes()) {
+    assert.equal(Boolean(await lamp(this.page, { [property]: value })), shown === 'yes', `${property}: ${value}`);
+  }
+});
+
 Then('streetlights and the Eiffel Tower emit light only during simulated night', { timeout: 120000 }, async function () {
   const errors = [];
   this.page.on('pageerror', error => errors.push(error.message));

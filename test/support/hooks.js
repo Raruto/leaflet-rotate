@@ -37,7 +37,8 @@ AfterAll({ timeout: 30000 }, async () => {
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 });
 
-Before(async function () {
+// @unit scenarios run in Node only and need no browser page.
+Before({ tags: 'not @unit' }, async function () {
   this.baseUrl = baseUrl;
   this.context = await browser.newContext();
   await this.context.route(/.html$/, async route => {
@@ -82,7 +83,7 @@ Before(async function () {
   this.page = await this.context.newPage();
 });
 
-After(async function () {
+After({ tags: 'not @unit' }, async function () {
   await this.context.close();
 });
 

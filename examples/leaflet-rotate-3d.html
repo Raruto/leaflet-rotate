@@ -210,13 +210,17 @@
 				'Bateaux-Mouches': new L.Layer({
 					source: {
 						type: 'traffic',
-						network: 'seine',
+						url: '../misc/seine-cruises.geojson',
+						vehicle: 'boat',
+						outline: true,
+						label: 'Cruises',
 					},
 					attribution: '<a href="https://www.bateaux-mouches.fr/fr/croisiere/informations">Cruise timetable: Bateaux-Mouches</a> · estimated positions',
 				}).addTo(map),
 				'Traffic': new L.Layer({
 					source: {
 						type: 'traffic',
+						url: '../misc/paris-traffic.js',
 					},
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/comptages-routiers-permanents/">Traffic counts: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 				}).addTo(map),

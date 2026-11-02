@@ -26,11 +26,11 @@ const options = {
   }],
 };
 const typesOptions = {
-  entryPoints: ['src/layer/3d/**/*.js'],
+  entryPoints: ['src/3d/**/*.js'],
   format: 'esm',
   minify: true,
   sourcemap: true,
-  outbase: 'src/layer/3d',
+  outbase: 'src/3d',
   outdir: 'dist/3d',
 };
 const minifiedOptions = { ...options, entryNames: 'leaflet-rotate', minify: true };

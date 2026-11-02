@@ -9,7 +9,7 @@ import { gzipSync, inflateSync } from 'node:zlib';
 
 const { values: args } = parseArgs({
   options: {
-    bbox: { type: 'string', default: '2.15,48.75,2.55,48.95' },
+    bbox: { type: 'string', default: '2.26,48.83,2.35,48.89' },
     minzoom: { type: 'string', default: '11' },
     maxzoom: { type: 'string', default: '17' },
     only: { type: 'string', default: 'buildings,trees,streetlights,orthophotos,plan-ign,terrain' },
@@ -285,7 +285,7 @@ async function download(url) {
       const data = Buffer.from(await response.arrayBuffer());
       if (data.length) return data;
       if (attempt === 5) throw new Error(`Empty tile response for ${url}`);
-    } else if ((response.status !== 404 && response.status !== 429 && response.status < 500) || attempt === 5) {
+    } else if ((response.status !== 400 && response.status !== 404 && response.status !== 429 && response.status < 500) || attempt === 5) {
       throw new Error(`HTTP ${response.status} for ${url}`);
     }
     await sleep(1000 * 2 ** attempt);
