@@ -78,6 +78,42 @@
 					}
 				}).addTo(map),
 				// OSM way 5013364 links to 3dmr=4; revision 3 is a CC0, metre-scale GLB.
+				'Paris trees (3D)': new L.Layer3D({
+					source: 'data/paris-trees.pmtiles',
+					attribution: '<a href="https://opendata.paris.fr/explore/dataset/les-arbres/">Trees: Ville de Paris</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
+					featureStyle({ properties: p }) {
+						if (p.typeemplacement !== 'Arbre') return null;
+						const estimatedHeight = ({ Jeune: 4, 'Jeune (arbre)': 4, 'Jeune (arbre)Adulte': 8,
+							'Jeune (arbre) adulte': 8, Adulte: 15, Mature: 20 })[p.stadedeveloppement] || 10;
+						const top = p.hauteurenm > 0 && p.hauteurenm <= 60 ? p.hauteurenm : estimatedHeight;
+						const trunkRadius = p.circonferenceencm > 0 && p.circonferenceencm <= 2500
+							? p.circonferenceencm / (200 * Math.PI) : top / 80;
+						const conifer = /^(Abies|Picea|Cedrus|Cupressus|Taxus|Sequoia|Sequoiadendron|Thuja)$/.test(p.genre);
+						const palm = /^(Phoenix|Trachycarpus|Chamaerops|Washingtonia)$/.test(p.genre);
+						return {
+							top, trunkRadius,
+							crownBottom: top * (palm ? 0.75 : conifer ? 0.2 : 0.35),
+							crownRadius: Math.max(trunkRadius, top * (conifer ? 0.18 : palm ? 0.22 : 0.28)),
+							crownShape: conifer ? 'cone' : 'round',
+							color: conifer ? 0x315e45 : palm ? 0x688d42 : 0x55863d,
+						};
+					},
+					tooltipContent({ properties: p }) {
+						const content = document.createElement('div');
+						content.style.whiteSpace = 'pre-line';
+						content.textContent = [
+							p.libellefrancais || p.genre || 'Tree',
+							[p.genre, p.espece].filter(Boolean).join(' '),
+							`Height: ${p.hauteurenm > 0 && p.hauteurenm <= 60 ? `${p.hauteurenm} m (recorded)` : 'estimated from development stage'}`,
+							`Trunk circumference: ${p.circonferenceencm > 0 && p.circonferenceencm <= 2500 ? `${p.circonferenceencm} cm (recorded)` : 'estimated from height'}`,
+							p.stadedeveloppement,
+							p.remarquable === 'OUI' ? 'Remarkable tree' : '',
+							'Schematic crown (not surveyed)',
+						].filter(Boolean).join('\n');
+						return content;
+					},
+				}).addTo(map),
+				// OSM way 5013364 links to 3dmr=4; revision 3 is a CC0, metre-scale GLB.
 				// Register the four ground corners to OSM pillars 69034127/135/179/180.
 				// The GLB is axis-aligned, not north-aligned; its horizontal footprint is slightly undersized.
 				'Eiffel Tower (3D)': new L.Layer3D({

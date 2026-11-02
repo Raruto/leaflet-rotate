@@ -2447,26 +2447,23 @@ When('I pan the shared WebGPU renderer', async function () {
       const canvas = owner.renderer.canvas;
       const device = owner.renderer.device;
       const renderer = owner.renderer;
-      const matrices = [probe.modelViewMatrix, probe.normalMatrix];
       const worldMatrix = probe.worldMatrix;
       const beforeWorldMatrix = Array.from(worldMatrix);
       const bindGroup = probe.bindGroup;
-      const uniformData = probe.uniformData;
+      const uniformData = renderer.uniformData;
       const uniformBuffer = renderer.uniformBuffer;
-      const beforeData = Array.from(uniformData);
+      const beforeFrame = Array.from(uniformData.subarray(0, 56));
+      // The shader composes view × world: slot 0 must hold the camera, one mesh slot the probe's world matrix.
       const measure = () => {
-        const modelView = new DOMMatrix(owner.camera.viewMatrix)
-          .multiply(new DOMMatrix(probe.worldMatrix)).toFloat64Array();
-        const inverse = new DOMMatrix(modelView).inverse().toFloat64Array();
-        const normal = [
-          inverse[0], inverse[4], inverse[8], 0,
-          inverse[1], inverse[5], inverse[9], 0,
-          inverse[2], inverse[6], inverse[10], 0,
-          0, 0, 0, 1,
-        ];
+        const camera = owner.camera, data = renderer.uniformData;
+        let world = Infinity;
+        for (let slot = 1; slot < renderer.uniformSlot; slot++) {
+          world = Math.min(world, Math.max(...probe.worldMatrix.map((value, i) => Math.abs(Math.fround(value) - data[slot * 64 + i]))));
+        }
         return {
-          modelView: Math.max(...modelView.map((value, i) => Math.abs(value - probe.modelViewMatrix[i]))),
-          normal: Math.max(...normal.map((value, i) => Math.abs(value - probe.normalMatrix[i]))),
+          view: Math.max(...camera.viewMatrix.map((value, i) => Math.abs(Math.fround(value) - data[i]))),
+          projection: Math.max(...camera.projectionMatrix.map((value, i) => Math.abs(Math.fround(value) - data[16 + i]))),
+          world,
         };
       };
       const firstErrors = measure();
@@ -2496,11 +2493,10 @@ When('I pan the shared WebGPU renderer', async function () {
         firstErrors, secondErrors, meshes, visibleMeshes, probeCulled, sortDepthError,
         canvasReused: canvas === owner.renderer.canvas,
         deviceReused: device === owner.renderer.device,
-        matrixBuffersReused: matrices[0] === probe.modelViewMatrix && matrices[1] === probe.normalMatrix,
         worldMatrixReused, transformInvalidated,
-        uniformDataReused: uniformData === probe.uniformData,
+        uniformDataReused: uniformData === renderer.uniformData,
         gpuUniformBufferReused: uniformBuffer === renderer.uniformBuffer,
-        uniformValuesChanged: beforeData.some((value, i) => value !== uniformData[i]),
+        uniformValuesChanged: beforeFrame.some((value, i) => value !== uniformData[i]),
         bindGroupReused: bindGroup === probe.bindGroup,
       };
     });
@@ -2515,11 +2511,11 @@ Then('WebGPU matrices match DOMMatrix and frame resources are reused', function 
   assert.ok(result.visibleMeshes > 0, JSON.stringify(result));
   assert.ok(result.sortDepthError < 1e-6, JSON.stringify(result));
   assert.equal(result.probeCulled, true);
-  assert.ok(result.firstErrors.modelView < 1e-5 && result.firstErrors.normal < 1e-5, JSON.stringify(result.firstErrors));
-  assert.ok(result.secondErrors.modelView < 1e-5 && result.secondErrors.normal < 1e-5, JSON.stringify(result.secondErrors));
+  for (const errors of [result.firstErrors, result.secondErrors]) {
+    assert.ok(errors.view === 0 && errors.projection === 0 && errors.world === 0, JSON.stringify(errors));
+  }
   assert.equal(result.canvasReused, true);
   assert.equal(result.deviceReused, true);
-  assert.equal(result.matrixBuffersReused, true);
   assert.equal(result.worldMatrixReused, true);
   assert.equal(result.transformInvalidated, true);
   assert.equal(result.uniformDataReused, true);
@@ -2549,7 +2545,7 @@ When('I drive the shared WebGPU renderer with map events', { timeout: 60000 }, a
       const gpuErrors = [];
       const onGpuError = event => gpuErrors.push(event.error.message);
       device.addEventListener('uncapturederror', onGpuError);
-      let renders = 0, uniformWrites = 0;
+      let renders = 0, uniformWrites = 0, otherWrites = 0, buffers = new Set();
       const render = owner._render;
       owner._render = function () {
         renders++;
@@ -2558,6 +2554,7 @@ When('I drive the shared WebGPU renderer with map events', { timeout: 60000 }, a
       const writeBuffer = device.queue.writeBuffer;
       device.queue.writeBuffer = function (buffer) {
         if (buffer === owner.renderer.uniformBuffer) uniformWrites++;
+        else if (buffers.has(buffer)) otherWrites++;
         return writeBuffer.apply(this, arguments);
       };
       try {
@@ -2604,7 +2601,22 @@ When('I drive the shared WebGPU renderer with map events', { timeout: 60000 }, a
           if (mesh.boundBuffer === owner.renderer.uniformBuffer) sharedBindings++;
         });
         const uniformSlots = owner.renderer.uniformSlot;
-        const uniformCapacity = owner.renderer.uniformBuffer.size / 512;
+        const uniformCapacity = owner.renderer.uniformBuffer.size / 256;
+
+        // Hover highlight is a shader vertex range: no vertex color re-upload.
+        const buildings = [...owner._layers].find(layer => layer.group?.children.some(mesh => mesh.extras?.featureFaces?.length));
+        const target = buildings.group.children.find(mesh => mesh.extras?.featureFaces?.length);
+        const feature = target.extras.featureFaces[0];
+        await frame();
+        otherWrites = 0;
+        buffers = new Set(Object.values(target.geometry.attributes).map(attribute => attribute.buffer));
+        buildings._setHighlight({ mesh: target, ...feature });
+        await frame();
+        const highlight = { range: target.highlight, expected: [feature.vertexStart, feature.vertexEnd] };
+        buildings._setHighlight(null);
+        await frame();
+        highlight.cleared = target.highlight;
+        highlight.writes = otherWrites;
 
         // During zoom animations map events wait for the frame that also advances the CSS transitions.
         await frame();
@@ -2624,7 +2636,7 @@ When('I drive the shared WebGPU renderer with map events', { timeout: 60000 }, a
         await device.queue.onSubmittedWorkDone();
         return {
           synchronousRenders, sameTickRenders, deferredRenders, frameRenders, panRenders, panTotals,
-          drawn, sharedBindings, ownBuffers, uniformSlots, uniformCapacity,
+          drawn, sharedBindings, ownBuffers, uniformSlots, uniformCapacity, highlight,
           animating, zoomTickRenders, zoomFrameRenders, gpuErrors,
         };
       } finally {
@@ -2651,7 +2663,10 @@ Then('map events render in the same tick, updates share one animation frame and 
   assert.ok(result.drawn > 1, details);
   assert.equal(result.sharedBindings, result.drawn, details);
   assert.equal(result.ownBuffers, 0, details);
-  assert.ok(result.uniformSlots >= result.drawn && result.uniformSlots <= result.uniformCapacity, details);
+  assert.ok(result.uniformSlots > result.drawn && result.uniformSlots <= result.uniformCapacity, details);
+  assert.deepEqual(result.highlight.range, result.highlight.expected, details);
+  assert.equal(result.highlight.cleared, null, details);
+  assert.equal(result.highlight.writes, 0, details);
   assert.equal(result.animating, true, details);
   assert.equal(result.zoomTickRenders, 0, details);
   assert.equal(result.zoomFrameRenders, 1, details);
@@ -2817,35 +2832,89 @@ When('I inspect the WebGPU terrain tiles', { timeout: 60000 }, async function ()
       const origin = crs.project(terrain.location);
       const metres = Math.cos(terrain.location.lat * Math.PI / 180);
       const base = terrain._terrainOriginElevation;
-      let maxError = 0, vertices = 0, wrongVertexCount = 0, notUploaded = 0, wrongSize = 0, missingCoords = 0, relief = 0;
+      // Run the shader's own elevation code on every grid vertex, as the vertex stage does.
+      const vertices = [];
+      let wrongVertexCount = 0, notUploaded = 0, wrongSize = 0, missingCoords = 0, raisedGrid = 0;
+      const grids = new Set(), divisionLevels = new Set();
       for (const [tile, mesh] of terrain._rasterTiles) {
         const coords = coordsByTile.get(tile);
         if (!coords) { missingCoords++; continue; }
         if (mesh.texture.uploaded !== tile) notUploaded++;
         if (mesh.texture.texture.width !== tile.width || mesh.texture.texture.height !== tile.height) wrongSize++;
         const divisions = Math.max(1, Math.min(64, 256 / 2 ** (coords.z - terrain._terrainZoom)));
-        const positions = mesh.geometry.attributes.position.data;
-        if (positions.length !== (divisions + 1) ** 2 * 3) { wrongVertexCount++; continue; }
-        // Reference: geographic round trip per vertex, as the grid was built before the linear shortcut.
-        for (let row = 0; row <= divisions; row++) {
-          for (let column = 0; column <= divisions; column++) {
-            const latlng = map.unproject([(coords.x + column / divisions) * 256, (coords.y + row / divisions) * 256], coords.z);
-            const point = crs.project(latlng);
-            const elevation = (terrain._getElevation(latlng) ?? base) - base;
-            const i = (row * (divisions + 1) + column) * 3;
-            maxError = Math.max(maxError,
-              Math.abs(positions[i] - (point.x - origin.x) * metres),
-              Math.abs(positions[i + 1] - elevation),
-              Math.abs(positions[i + 2] + (point.y - origin.y) * metres));
-            relief = Math.max(relief, Math.abs(elevation));
-            vertices++;
-          }
+        const { position, uv } = mesh.geometry.attributes;
+        grids.add(mesh.geometry.attributes);
+        divisionLevels.add(divisions);
+        if (position.count !== (divisions + 1) ** 2) { wrongVertexCount++; continue; }
+        for (let i = 0; i < position.count; i++) {
+          if (position.data[i * 3 + 1] !== 0) raisedGrid++;
+          vertices.push({ mesh, coords, divisions, u: uv.data[i * 2], v: uv.data[i * 2 + 1] });
         }
+      }
+      const module = device.createShaderModule({ code: `
+        @group(0) @binding(0) var dem: texture_2d<f32>;
+        @group(0) @binding(1) var<storage, read> terrains: array<vec4<f32>>;
+        @group(0) @binding(2) var<storage, read> uvs: array<vec2<f32>>;
+        @group(0) @binding(3) var<storage, read_write> heights: array<f32>;
+        ${L.TerrainLayer.elevationWGSL}
+        @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+          if (id.x >= arrayLength(&heights)) { return; }
+          let t = terrains[id.x];
+          heights[id.x] = elevation(t.xy + uvs[id.x] * t.z, t.w) - t.w;
+        }
+      ` });
+      const layout = device.createBindGroupLayout({ entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ] });
+      const pipeline = device.createComputePipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        compute: { module, entryPoint: 'main' },
+      });
+      const storage = data => {
+        const buffer = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        device.queue.writeBuffer(buffer, 0, data);
+        return buffer;
+      };
+      const terrains = storage(new Float32Array(vertices.flatMap(({ mesh }) => mesh.terrain)));
+      const uvs = storage(new Float32Array(vertices.flatMap(({ u, v }) => [u, v])));
+      const heights = device.createBuffer({ size: vertices.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+      const readback = device.createBuffer({ size: vertices.length * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, device.createBindGroup({ layout, entries: [
+        { binding: 0, resource: terrain._dem.texture.createView() },
+        { binding: 1, resource: { buffer: terrains } },
+        { binding: 2, resource: { buffer: uvs } },
+        { binding: 3, resource: { buffer: heights } },
+      ] }));
+      pass.dispatchWorkgroups(Math.ceil(vertices.length / 64));
+      pass.end();
+      encoder.copyBufferToBuffer(heights, 0, readback, 0, vertices.length * 4);
+      device.queue.submit([encoder.finish()]);
+      await readback.mapAsync(GPUMapMode.READ);
+      const gpuHeights = new Float32Array(readback.getMappedRange()).slice();
+      for (const buffer of [terrains, uvs, heights, readback]) buffer.destroy();
+      // Reference: geographic round trip per vertex, as the grid was built before the linear shortcut.
+      let maxError = 0, relief = 0;
+      for (const [i, { mesh, coords, divisions, u, v }] of vertices.entries()) {
+        const latlng = map.unproject([(coords.x + u) * 256, (coords.y + v) * 256], coords.z);
+        const point = crs.project(latlng);
+        const elevation = (terrain._getElevation(latlng) ?? base) - base;
+        maxError = Math.max(maxError,
+          Math.abs(mesh.position[0] + mesh.scale[0] * u - (point.x - origin.x) * metres),
+          Math.abs(gpuHeights[i] - elevation),
+          Math.abs(mesh.position[2] + mesh.scale[2] * v + (point.y - origin.y) * metres));
+        relief = Math.max(relief, Math.abs(elevation));
       }
       await device.queue.onSubmittedWorkDone();
       return {
-        meshes: terrain._rasterTiles.size, vertices, maxError, relief,
-        missingCoords, wrongVertexCount, notUploaded, wrongSize,
+        meshes: terrain._rasterTiles.size, vertices: vertices.length, maxError, relief,
+        missingCoords, wrongVertexCount, notUploaded, wrongSize, raisedGrid,
+        grids: grids.size, divisionLevels: divisionLevels.size,
         terrainUploadsDuringRender: renderUploads.filter(source => terrain._rasterTiles.has(source)).length,
       };
     });
@@ -2865,7 +2934,10 @@ Then('terrain tiles are uploaded before rendering and match the projected DEM gr
   assert.equal(result.notUploaded, 0, details);
   assert.equal(result.wrongSize, 0, details);
   assert.equal(result.terrainUploadsDuringRender, 0, details);
-  // Float32 vertex storage: about 1 mm over a few kilometres from the scene origin.
+  // Elevation lives in the vertex shader: tiles share one flat grid per subdivision level.
+  assert.equal(result.raisedGrid, 0, details);
+  assert.equal(result.grids, result.divisionLevels, details);
+  // Float32 GPU elevation and DEM pixel coordinates: about 1 mm.
   assert.ok(result.maxError < 0.01, details);
   assert.deepEqual(result.pageErrors, [], details);
 });
@@ -3032,9 +3104,7 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
       clientX: rect.left + (x + 1) * rect.width / 2,
       clientY: rect.top + (1 - y) * rect.height / 2
     };
-    const before = Array.from(
-      buildings.group.children[0].geometry.attributes.color.data.slice(range.vertexStart * 3, range.vertexStart * 3 + 3)
-    );
+    const before = buildings.group.children[0].highlight ?? null;
     map.getContainer().dispatchEvent(new MouseEvent('mousemove', { ...position, bubbles: true }));
     return {
       position,
@@ -3048,14 +3118,13 @@ Then('the building volumes preserve courtyards and elevated floors', async funct
     let buildings;
     map.eachLayer(layer => { if (layer.group) buildings = layer; });
     return {
-      color: Array.from(
-        buildings.group.children[0].geometry.attributes.color.data.slice(vertexStart * 3, vertexStart * 3 + 3)
-      ),
+      highlight: buildings.group.children[0].highlight,
       highlighted: buildings.highlightedFeature?.vertexStart,
       hovered: buildings.hoveredFeature?.vertexStart
     };
   }, interaction.vertexStart);
-  this.hoverHighlight = highlightedColor.color.some((value, index) => value !== interaction.before[index]);
+  this.hoverHighlight = interaction.before === null &&
+    highlightedColor.highlight?.[0] === interaction.vertexStart;
   const viewBeforeClick = await this.page.evaluate(() => ({
     center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch()
   }));

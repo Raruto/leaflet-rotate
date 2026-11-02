@@ -30,7 +30,7 @@
  * @property {string} [model] GLB/glTF URL relative to the page; loaded before ready.
  * @property {number[]} [rotation] Model Euler rotation [x,y,z] in radians, YXZ order.
  * @property {number[]} [scale] Model scale [x,y,z]; independent of geographic scaling.
- * @property {string} [source] PMTiles URL containing Polygon/MultiPolygon GeoJSON.
+ * @property {string} [source] PMTiles URL containing Polygon/MultiPolygon or tree Point GeoJSON.
  * @property {function(Object): (ExtrusionStyle|null)} [featureStyle] Source styling; null skips.
  * @property {function(PickedFeature): (Node|string)} [tooltipContent] No HTML string evaluation.
  * @property {string} [attribution] Standard Leaflet attribution HTML.
@@ -40,6 +40,11 @@
  * @property {number} top Roof height in metres; must exceed bottom.
  * @property {number} [bottom=0] Nonnegative base height; positive values create an underside.
  * @property {number|string|Object} [color=0xd9b38c] RGB/CSS color, or linear-space {h,s,l}.
+ * @property {number} [trunkRadius] Point trees: trunk radius in metres.
+ * @property {number} [crownRadius] Point trees: maximum crown radius in metres.
+ * @property {number} [crownBottom] Point trees: crown base in metres, between bottom and top.
+ * @property {string} [crownShape='round'] Point trees: 'round' or 'cone' schematic crown.
+ * @property {number|string|Object} [trunkColor=0x72513a] Point trees: bark color.
  *
  * @typedef {Object} PickedFeature
  * @property {string|number} id Source feature id or configured model URL.
@@ -1002,21 +1007,27 @@ L.Layer3D = L.Layer.extend({
     const hasEmissive = Boolean(material.emissiveTexture);
     const hasOcclusion = Boolean(material.occlusionTexture);
     const hasRoof = Boolean(material.roofTexture);
+    const hasTerrain = Boolean(material.terrain);
     const textured = hasBase || hasMetal || hasEmissive || hasOcclusion;
     const vertex = device.createShaderModule({ code: `
-      struct Uniforms {
-        modelViewMatrix: mat4x4<f32>,
-        projectionMatrix: mat4x4<f32>,
-        normalMatrix: mat4x4<f32>,
+      struct Mesh {
         worldMatrix: mat4x4<f32>,
-        roofMatrix: mat4x4<f32>,
         baseColor: vec4<f32>,
-        lightDirection: vec4<f32>,
-        skyDirection: vec4<f32>,
         material: vec4<f32>,
         emissive: vec4<f32>,
+        terrain: vec4<f32>,
+        highlight: vec4<f32>,
       };
-      @group(0) @binding(0) var<uniform> u: Uniforms;
+      struct Frame {
+        viewMatrix: mat4x4<f32>,
+        projectionMatrix: mat4x4<f32>,
+        roofMatrix: mat4x4<f32>,
+        lightDirection: vec4<f32>,
+        skyDirection: vec4<f32>,
+      };
+      @group(0) @binding(0) var<uniform> u: Mesh;
+      @group(0) @binding(1) var<uniform> frame: Frame;
+      ${hasTerrain ? `@group(0) @binding(2) var dem: texture_2d<f32>;${L.TerrainLayer.elevationWGSL}` : ''}
       struct VertexInput {
         @location(0) position: vec3<f32>,
         @location(1) normal: vec3<f32>,
@@ -1031,23 +1042,33 @@ L.Layer3D = L.Layer.extend({
         ${textured ? '@location(3) uv: vec2<f32>,' : ''}
         ${hasRoof ? '@location(4) roofUv: vec2<f32>, @location(5) roof: f32,' : ''}
       };
-      @vertex fn vertexMain(input: VertexInput) -> VertexOutput {
+      @vertex fn vertexMain(input: VertexInput, @builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
         var output: VertexOutput;
-        output.color = ${material.vertexColors ? 'input.color' : 'u.baseColor.rgb'};
-        output.normal = (u.normalMatrix * vec4<f32>(input.normal, 0.0)).xyz;
-        let viewPosition = u.modelViewMatrix * vec4<f32>(input.position, 1.0);
+        var position = input.position;
+        ${hasTerrain ? 'position.y = elevation(u.terrain.xy + input.uv * u.terrain.z, u.terrain.w) - u.terrain.w;' : ''}
+        let highlighted = f32(vertexIndex) >= u.highlight.x && f32(vertexIndex) < u.highlight.y;
+        output.color = ${material.vertexColors
+          ? 'select(input.color, vec3<f32>(72.0 / 255.0, 217.0 / 255.0, 1.0), highlighted)'
+          : 'u.baseColor.rgb'};
+        // Inverse-transpose from cofactors; the camera view matrix is orthonormal.
+        let m = mat3x3<f32>(u.worldMatrix[0].xyz, u.worldMatrix[1].xyz, u.worldMatrix[2].xyz);
+        let normal = (cross(m[1], m[2]) * input.normal.x + cross(m[2], m[0]) * input.normal.y +
+          cross(m[0], m[1]) * input.normal.z) / determinant(m);
+        output.normal = (frame.viewMatrix * vec4<f32>(normal, 0.0)).xyz;
+        let world = u.worldMatrix * vec4<f32>(position, 1.0);
+        let viewPosition = frame.viewMatrix * world;
         output.viewPosition = viewPosition.xyz;
         ${textured ? 'output.uv = input.uv;' : ''}
         ${hasRoof ? `
-          output.roofUv = (u.roofMatrix * u.worldMatrix * vec4<f32>(input.position, 1.0)).xz;
-          output.roof = select(0.0, 1.0, input.normal.y >= 0.5);
+          output.roofUv = (frame.roofMatrix * world).xz;
+          output.roof = select(0.0, 1.0, input.normal.y >= 0.5 && !highlighted);
         ` : ''}
-        output.position = u.projectionMatrix * viewPosition;
+        output.position = frame.projectionMatrix * viewPosition;
         return output;
       }
     ` });
     const bindings = [];
-    let binding = 1;
+    let binding = 3;
     const textureBinding = (name, enabled) => {
       if (!enabled) return '';
       bindings.push({ name, texture: binding, sampler: binding + 1 });
@@ -1062,19 +1083,23 @@ L.Layer3D = L.Layer.extend({
     const occlusionBinding = textureBinding('occlusionTexture', hasOcclusion);
     const roofBinding = textureBinding('roofTexture', hasRoof);
     const fragment = device.createShaderModule({ code: `
-      struct Uniforms {
-        modelViewMatrix: mat4x4<f32>,
-        projectionMatrix: mat4x4<f32>,
-        normalMatrix: mat4x4<f32>,
+      struct Mesh {
         worldMatrix: mat4x4<f32>,
-        roofMatrix: mat4x4<f32>,
         baseColor: vec4<f32>,
-        lightDirection: vec4<f32>,
-        skyDirection: vec4<f32>,
         material: vec4<f32>,
         emissive: vec4<f32>,
+        terrain: vec4<f32>,
+        highlight: vec4<f32>,
       };
-      @group(0) @binding(0) var<uniform> u: Uniforms;
+      struct Frame {
+        viewMatrix: mat4x4<f32>,
+        projectionMatrix: mat4x4<f32>,
+        roofMatrix: mat4x4<f32>,
+        lightDirection: vec4<f32>,
+        skyDirection: vec4<f32>,
+      };
+      @group(0) @binding(0) var<uniform> u: Mesh;
+      @group(0) @binding(1) var<uniform> frame: Frame;
       ${baseBinding}${metalBinding}${emissiveBinding}${occlusionBinding}${roofBinding}
       struct FragmentInput {
         @location(0) color: vec3<f32>,
@@ -1106,8 +1131,7 @@ L.Layer3D = L.Layer.extend({
           ${material.baseTexture?.srgb ? 'texel.rgb' : 'toLinear(texel.rgb)'};
         ${hasRoof ? `
           if (input.roof > 0.5 && all(input.roofUv >= vec2<f32>(0.0)) &&
-            all(input.roofUv <= vec2<f32>(1.0)) &&
-            distance(input.color, vec3<f32>(72.0 / 255.0, 217.0 / 255.0, 1.0)) > 0.001) {
+            all(input.roofUv <= vec2<f32>(1.0))) {
             let roof = textureSampleLevel(roofTexture, roofTextureSampler, input.roofUv, 0.0);
             base = mix(base, toLinear(roof.rgb), roof.a);
           }
@@ -1116,8 +1140,8 @@ L.Layer3D = L.Layer.extend({
         let metal = clamp(u.material.x * mr.b, 0.0, 1.0);
         let rough = clamp(u.material.y * mr.g, 0.08, 1.0);
         let view = normalize(-input.viewPosition);
-        let halfVector = normalize(view + u.lightDirection.xyz);
-        let nl = max(dot(normal, u.lightDirection.xyz), 0.0);
+        let halfVector = normalize(view + frame.lightDirection.xyz);
+        let nl = max(dot(normal, frame.lightDirection.xyz), 0.0);
         let nv = max(dot(normal, view), 0.001);
         let nh = max(dot(normal, halfVector), 0.0);
         let vh = max(dot(view, halfVector), 0.0);
@@ -1130,7 +1154,7 @@ L.Layer3D = L.Layer.extend({
         let fresnel = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
         let specular = d * visibility * fresnel;
         let diffuse = (1.0 - metal) * base / PI;
-        let sky = dot(normal, u.skyDirection.xyz) * 0.5 + 0.5;
+        let sky = dot(normal, frame.skyDirection.xyz) * 0.5 + 0.5;
         let ambient = mix(toLinear(vec3<f32>(0.455, 0.412, 0.322)), vec3<f32>(1.0), sky) * (2.0 / PI);
         let ao = ${hasOcclusion ? 'mix(1.0, textureSample(occlusionTexture, occlusionTextureSampler, input.uv).r, u.emissive.w)' : '1.0'};
         let glow = u.emissive.rgb * ${
@@ -1169,7 +1193,18 @@ L.Layer3D = L.Layer.extend({
       binding: 0,
       visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
       buffer: { type: 'uniform', hasDynamicOffset: true },
+    }, {
+      binding: 1,
+      visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+      buffer: { type: 'uniform' },
     }];
+    if (hasTerrain) {
+      bindGroupEntries.push({
+        binding: 2,
+        visibility: GPUShaderStage.VERTEX,
+        texture: { sampleType: 'unfilterable-float', viewDimension: '2d' },
+      });
+    }
     for (const texture of bindings) {
       bindGroupEntries.push({
         binding: texture.texture,
@@ -1196,15 +1231,9 @@ L.Layer3D = L.Layer.extend({
       cullMode: material.doubleSided ? 'none' : 'back',
       transparent: material.alphaMode === 'BLEND',
       depthWrite: material.alphaMode !== 'BLEND',
+      terrain: material.terrain,
       uniforms: {
-        modelViewMatrix: { value: null },
-        projectionMatrix: { value: null },
-        normalMatrix: { value: null },
-        worldMatrix: { value: null },
-        roofMatrix: { value: null },
         baseColor: { value: material.color || [1, 1, 1] },
-        lightDirection: { value: [0, 0, 0] },
-        skyDirection: { value: [0, 0, 0] },
         metallic: { value: material.metallic ?? 0 },
         roughness: { value: material.roughness ?? 0.85 },
         opacity: { value: material.opacity ?? 1 },
@@ -1217,7 +1246,6 @@ L.Layer3D = L.Layer.extend({
         ...(hasOcclusion ? { occlusionTexture: { value: material.occlusionTexture } } : {}),
         ...(hasRoof ? { roofTexture: { value: null } } : {}),
       },
-      identityMatrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
       _layerMaterial: material,
     };
   },
@@ -1418,7 +1446,7 @@ L.Layer3D = L.Layer.extend({
     this.raycaster.direction[1] /= rayLength;
     this.raycaster.direction[2] /= rayLength;
     const meshes = [],
-            hits = []
+            hits = [],
                a = [0, 0, 0],
                b = [0, 0, 0],
                c = [0, 0, 0],
@@ -1540,6 +1568,47 @@ L.Layer3D = L.Layer.extend({
     this._updateArea();
   },
 
+  /** Low-poly tree, sharing the source block's buffers, picking and terrain offset. */
+  _treeGeometry(point, style, addTriangle) {
+    const { top, bottom = 0, trunkRadius, crownRadius, crownBottom, crownShape = 'round' } = style;
+    if (![trunkRadius, crownRadius, crownBottom].every(Number.isFinite) ||
+      trunkRadius <= 0 || crownRadius < trunkRadius || crownBottom <= bottom || crownBottom >= top ||
+      !['round', 'cone'].includes(crownShape)) throw new Error('Invalid tree dimensions or crown shape');
+    const trunk = this.color(style.trunkColor ?? 0x72513a);
+    const crown = this.color(style.color ?? 0x4f823b);
+    const ring = radius => Array.from({ length: 8 }, (_, i) => ({
+      x: point.x + Math.cos(i * Math.PI / 4) * radius,
+      y: point.y + Math.sin(i * Math.PI / 4) * radius,
+      ground: point.ground,
+    }));
+    const surface = (lowRadius, low, highRadius, high, color) => {
+      const lower = ring(lowRadius), upper = ring(highRadius);
+      for (let i = 0; i < 8; i++) {
+        const next = (i + 1) % 8;
+        const angle = (i + 0.5) * Math.PI / 4;
+        const slope = (lowRadius - highRadius) / (high - low);
+        const length = Math.hypot(1, slope);
+        const nx = Math.cos(angle) / length, ny = slope / length, nz = -Math.sin(angle) / length;
+        if (lowRadius) addTriangle(lower[i], low, lower[next], low, upper[next], high, nx, ny, nz, color);
+        if (highRadius) addTriangle(lower[i], low, upper[next], high, upper[i], high, nx, ny, nz, color);
+      }
+    };
+    surface(trunkRadius, bottom, trunkRadius, crownBottom + (top - crownBottom) * 0.25, trunk);
+    if (crownShape === 'cone') {
+      const base = ring(crownRadius);
+      for (let i = 0; i < 8; i++) addTriangle(point, crownBottom, base[i], crownBottom,
+        base[(i + 1) % 8], crownBottom, 0, -1, 0, crown);
+      surface(crownRadius, crownBottom, 0, top, crown);
+    } else {
+      const profile = [[0, 0], [0.35, 0.8], [0.6, 1], [0.85, 0.7], [1, 0]];
+      for (let i = 1; i < profile.length; i++) {
+        const [low, lr] = profile[i - 1], [high, hr] = profile[i];
+        surface(lr * crownRadius, crownBottom + low * (top - crownBottom),
+          hr * crownRadius, crownBottom + high * (top - crownBottom), crown);
+      }
+    }
+  },
+
   /** Cover the visible ground bounds and one bordering block, clipped to the archive. */
   _updateArea() {
     if (!this._map || !this.header) return;
@@ -1619,9 +1688,10 @@ L.Layer3D = L.Layer.extend({
               deadline = performance.now() + 8;
             }
             const geometry = feature.geometry;
+            const isTree = geometry?.type === 'Point';
             const polygons = geometry?.type === 'Polygon' ? [geometry.coordinates] : geometry?.type === 'MultiPolygon' ? geometry.coordinates : null;
-            if (!polygons) throw new Error('Unsupported GeoJSON geometry');
-            const [lon, lat] = polygons[0]?.[0]?.[0] ?? [];
+            if (!polygons && !isTree) throw new Error('Unsupported GeoJSON geometry');
+            const [lon, lat] = (isTree ? geometry.coordinates : polygons[0]?.[0]?.[0]) ?? [];
             if (!Number.isFinite(lon) || !Number.isFinite(lat)) throw new Error('Invalid GeoJSON coordinates');
             const anchor = map.project(new L.LatLng(lat, lon), coords.z);
             // Overlapping archive blocks may contain the same polygon; its first vertex owns it.
@@ -1638,7 +1708,16 @@ L.Layer3D = L.Layer.extend({
             }
             const baseColor = this.color(color);
             const vertexStart = positions.length / 3;
-            for (const rings of polygons) {
+            if (isTree) {
+              const point = crs.project(new L.LatLng(lat, lon));
+              const elevation = map._terrain3D?._getElevation([lat, lon]);
+              this._treeGeometry({
+                x: (point.x - origin.x) * metres, y: (point.y - origin.y) * metres,
+                ground: Number.isFinite(elevation) && Number.isFinite(this.root.position[1])
+                  ? elevation - this.root.position[1] : 0,
+              }, style, addTriangle);
+            }
+            for (const rings of polygons || []) {
               if (!rings.length) throw new Error('Empty GeoJSON polygon');
               const paths = rings.map(ring => {
                 if (ring.length < 4) throw new Error('Invalid GeoJSON polygon ring');
@@ -1795,20 +1874,15 @@ L.Layer3D = L.Layer.extend({
     return null;
   },
 
-  /** Restore the previous source RGB range before painting another; models are untouched. */
+  /** Highlight a source vertex range in the shader; vertex colors stay untouched. */
   _setHighlight(feature) {
     if (feature?.model) feature = null;
     if (this.highlightedFeature?.mesh === feature?.mesh &&
       this.highlightedFeature?.vertexStart === feature?.vertexStart) return;
-    if (this.highlightedFeature) {
-      const { mesh, vertexStart, vertexEnd, baseColor } = this.highlightedFeature;
-      this.setVertexColor(mesh, vertexStart, vertexEnd, baseColor);
-    }
+    if (this.highlightedFeature) this.highlightedFeature.mesh.highlight = null;
     this.highlightedFeature = feature;
-    if (feature) {
-      this.setVertexColor(feature.mesh, feature.vertexStart, feature.vertexEnd,
-        this.color(0x48d9ff));
-    }
+    if (feature) feature.mesh.highlight = [feature.vertexStart, feature.vertexEnd];
+    this.update();
   },
 
   /** Update tooltip content/position and arbitrate cursor ownership across shared layers. */
@@ -2047,14 +2121,6 @@ L.Layer3D = L.Layer.extend({
           frustum[5][0] * x + frustum[5][1] * y + frustum[5][2] * z + frustum[5][3] >= -radius * frustumLengths[5];
         if (!mesh._visibleInFrame) return;
       }
-      if (mesh.program?.uniforms.lightDirection) {
-        const value = mesh.program.uniforms.lightDirection.value;
-        value[0] = light[0]; value[1] = light[1]; value[2] = light[2];
-      }
-      if (mesh.program?.uniforms.skyDirection) {
-        const value = mesh.program.uniforms.skyDirection.value;
-        value[0] = sky[0]; value[1] = sky[1]; value[2] = sky[2];
-      }
       if (mesh.program?.transparent) {
         if (!mesh.geometry.bounds) this._computeBounds(mesh.geometry);
         const center = mesh.geometry.bounds.center, world = mesh.worldMatrix;
@@ -2246,16 +2312,24 @@ L.Layer3D = L.Layer.extend({
     const encoder = renderer.device.createCommandEncoder();
     const pendingRasterTiles = [];
     // One uniform upload per frame: per-mesh writeBuffer calls dominate Firefox's GPU process.
-    // 512-byte slots satisfy the 256-byte dynamic offset alignment; double-sided meshes use two.
-    if (!renderer.uniformBuffer || renderer.uniformBuffer.size < meshes.length * 2 * 512) {
+    // Slot 0 holds the camera; 256-byte mesh slots follow (double-sided meshes use two).
+    if (!renderer.uniformBuffer || renderer.uniformBuffer.size < (meshes.length * 2 + 1) * 256) {
       if (renderer.uniformBuffer) this._destroyTexture(renderer.uniformBuffer);
       renderer.uniformBuffer = renderer.device.createBuffer({
-        size: Math.max(64, meshes.length * 4) * 512,
+        size: Math.max(64, meshes.length * 4) * 256,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       renderer.uniformData = new Float32Array(renderer.uniformBuffer.size / 4);
     }
-    renderer.uniformSlot = 0;
+    const frameData = renderer.uniformData;
+    frameData.set(camera.viewMatrix, 0);
+    frameData.set(camera.projectionMatrix, 16);
+    frameData.set(this._roofRaster?.matrix || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 32);
+    frameData.set(light, 48);
+    frameData[51] = 0;
+    frameData.set(sky, 52);
+    frameData[55] = 0;
+    renderer.uniformSlot = 1;
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: renderer.context.getCurrentTexture().createView(),
@@ -2273,56 +2347,19 @@ L.Layer3D = L.Layer.extend({
     pass.setViewport(0, 0, renderer.canvas.width, renderer.canvas.height, 0, 1);
     for (const mesh of meshes) {
       if (mesh.tile && mesh.tile.style.visibility !== 'hidden') pendingRasterTiles.push(mesh.tile);
-      const view = camera.viewMatrix;
       const world = mesh.worldMatrix;
-      const modelView = mesh.modelViewMatrix ||= new Float64Array(16);
-      for (let column = 0; column < 4; column++) {
-        const offset = column * 4;
-        const x = world[offset], y = world[offset + 1], z = world[offset + 2], w = world[offset + 3];
-        modelView[offset]     = view[0] * x + view[4] * y + view[8] * z + view[12] * w;
-        modelView[offset + 1] = view[1] * x + view[5] * y + view[9] * z + view[13] * w;
-        modelView[offset + 2] = view[2] * x + view[6] * y + view[10] * z + view[14] * w;
-        modelView[offset + 3] = view[3] * x + view[7] * y + view[11] * z + view[15] * w;
-      }
       if (mesh.texture) {
         mesh.program.uniforms.baseTexture.value = mesh.texture;
         mesh.program.uniforms.opacity.value = mesh.opacity;
       }
-      const a = modelView[0], b = modelView[4], c = modelView[8];
-      const d = modelView[1], e = modelView[5], f = modelView[9];
-      const g = modelView[2], h = modelView[6], i = modelView[10];
-      const cofactor00 = e * i - f * h, cofactor01 = f * g - d * i, cofactor02 = d * h - e * g;
-      const cofactor10 = c * h - b * i, cofactor11 = a * i - c * g, cofactor12 = b * g - a * h;
-      const cofactor20 = b * f - c * e, cofactor21 = c * d - a * f, cofactor22 = a * e - b * d;
-      const modelViewDeterminant = a * cofactor00 + b * cofactor01 + c * cofactor02;
-      if (!Number.isFinite(modelViewDeterminant) || modelViewDeterminant === 0) {
-        throw new Error('Singular 3D transform');
-      }
-      const normalMatrix = mesh.normalMatrix ||= new Float64Array(16);
-      normalMatrix[0] = cofactor00 / modelViewDeterminant;
-      normalMatrix[1] = cofactor10 / modelViewDeterminant;
-      normalMatrix[2] = cofactor20 / modelViewDeterminant;
-      normalMatrix[3] = 0;
-      normalMatrix[4] = cofactor01 / modelViewDeterminant;
-      normalMatrix[5] = cofactor11 / modelViewDeterminant;
-      normalMatrix[6] = cofactor21 / modelViewDeterminant;
-      normalMatrix[7] = 0;
-      normalMatrix[8] = cofactor02 / modelViewDeterminant;
-      normalMatrix[9] = cofactor12 / modelViewDeterminant;
-      normalMatrix[10] = cofactor22 / modelViewDeterminant;
-      normalMatrix[11] = 0;
-      normalMatrix[12] = normalMatrix[13] = normalMatrix[14] = 0;
-      normalMatrix[15] = 1;
       const uniforms = mesh.program.uniforms;
-      uniforms.modelViewMatrix.value = modelView;
-      uniforms.projectionMatrix.value = camera.projectionMatrix;
-      uniforms.normalMatrix.value = normalMatrix;
-      uniforms.worldMatrix.value = world;
-      uniforms.roofMatrix.value = this._roofRaster?.matrix || mesh.program.identityMatrix;
       if (uniforms.roofTexture) uniforms.roofTexture.value = this._roofRaster?.texture || renderer.roofFallbackTexture;
       const determinant = world[0] * (world[5] * world[10] - world[6] * world[9]) -
         world[4] * (world[1] * world[10] - world[2] * world[9]) +
         world[8] * (world[1] * world[6] - world[2] * world[5]);
+      if (!Number.isFinite(determinant) || determinant === 0) {
+        throw new Error('Singular 3D transform');
+      }
       const frontFace = determinant < 0 ? 'cw' : 'ccw';
       const program = mesh.program;
       if (program.transparent && program._layerMaterial.doubleSided) {
@@ -2333,7 +2370,7 @@ L.Layer3D = L.Layer.extend({
       }
     }
     pass.end();
-    renderer.device.queue.writeBuffer(renderer.uniformBuffer, 0, renderer.uniformData, 0, renderer.uniformSlot * 128);
+    renderer.device.queue.writeBuffer(renderer.uniformBuffer, 0, renderer.uniformData, 0, renderer.uniformSlot * 64);
     renderer.device.queue.submit([encoder.finish()]);
     if (pendingRasterTiles.length) {
       renderer.device.queue.onSubmittedWorkDone().then(() => {
@@ -2500,33 +2537,26 @@ L.Layer3D = L.Layer.extend({
     }
 
     const uniforms = program.uniforms;
-    if (!mesh.uniformData) {
-      mesh.uniformData = new Float32Array(100);
-      const data = mesh.uniformData;
-      data[63] = 1;
-      data[79] = 1;
-    }
-    const data = mesh.uniformData;
-    data.set(uniforms.modelViewMatrix.value, 0);
-    data.set(uniforms.projectionMatrix.value, 16);
-    data.set(uniforms.normalMatrix.value, 32);
-    data.set(uniforms.worldMatrix.value, 48);
-    data.set(uniforms.roofMatrix.value, 64);
-    data.set(uniforms.baseColor.value, 80);
-    data[83] = 1;
-    data.set(uniforms.lightDirection.value, 84);
-    data[87] = 0;
-    data.set(uniforms.skyDirection.value, 88);
-    data[91] = 0;
-    data[92] = uniforms.metallic.value;
-    data[93] = uniforms.roughness.value;
-    data[94] = uniforms.opacity.value;
-    data[95] = uniforms.alphaCutoff.value;
-    data.set(uniforms.emissive.value, 96);
-    data[99] = uniforms.occlusionStrength.value;
     const renderer = this.renderer;
-    const offset = renderer.uniformSlot++ * 512;
-    renderer.uniformData.set(data, offset / 4);
+    const offset = renderer.uniformSlot++ * 256;
+    const data = renderer.uniformData, base = offset / 4;
+    data.set(mesh.worldMatrix, base);
+    data.set(uniforms.baseColor.value, base + 16);
+    data[base + 19] = 1;
+    data[base + 20] = uniforms.metallic.value;
+    data[base + 21] = uniforms.roughness.value;
+    data[base + 22] = uniforms.opacity.value;
+    data[base + 23] = uniforms.alphaCutoff.value;
+    data.set(uniforms.emissive.value, base + 24);
+    data[base + 27] = uniforms.occlusionStrength.value;
+    data[base + 28] = mesh.terrain?.[0] ?? 0;
+    data[base + 29] = mesh.terrain?.[1] ?? 0;
+    data[base + 30] = mesh.terrain?.[2] ?? 0;
+    data[base + 31] = mesh.terrain?.[3] ?? 0;
+    data[base + 32] = mesh.highlight?.[0] ?? 0;
+    data[base + 33] = mesh.highlight?.[1] ?? 0;
+    data[base + 34] = 0;
+    data[base + 35] = 0;
 
     const textures = mesh._textures ||= [];
     textures.length = 0;
@@ -2550,7 +2580,11 @@ L.Layer3D = L.Layer.extend({
         textures[i].sampler !== mesh.boundTextures[i][1]) bindingsChanged = true;
     }
     if (bindingsChanged) {
-      const entries = [{ binding: 0, resource: { buffer: renderer.uniformBuffer, size: 400 } }];
+      const entries = [
+        { binding: 0, resource: { buffer: renderer.uniformBuffer, size: 144 } },
+        { binding: 1, resource: { buffer: renderer.uniformBuffer, size: 224 } },
+      ];
+      if (program.terrain) entries.push({ binding: 2, resource: program.terrain.texture.createView() });
       mesh.boundBuffer = renderer.uniformBuffer;
       const boundTextures = mesh.boundTextures ||= [];
       boundTextures.length = textures.length;
@@ -2630,6 +2664,12 @@ L.TerrainLayer = L.Layer3D.extend({
     this._terrainPromise = null;
     if (this._rasterProgram) this._removeProgram(this._rasterProgram);
     this._rasterProgram = null;
+    if (this._dem) this._destroyTexture(this._dem.texture);
+    this._dem = null;
+    for (const grid of this._terrainGrids?.values() || []) {
+      for (const attribute of Object.values(grid)) this._destroyTexture(attribute.buffer);
+    }
+    this._terrainGrids = null;
     L.Layer3D.prototype.onRemove.call(this, map);
   },
 
@@ -2650,6 +2690,7 @@ L.TerrainLayer = L.Layer3D.extend({
       const map = this._map;
       const northwest = map.project([header.maxLat, header.minLon], this._terrainZoom).divideBy(256).floor();
       const southeast = map.project([header.minLat, header.maxLon], this._terrainZoom).divideBy(256).floor();
+      this._terrainBounds = new L.Bounds(northwest, southeast);
       const tiles = [];
       for (let x = northwest.x; x <= southeast.x; x++) {
         for (let y = northwest.y; y <= southeast.y; y++) tiles.push({ z: this._terrainZoom, x, y });
@@ -2713,27 +2754,12 @@ L.TerrainLayer = L.Layer3D.extend({
     }
     // Match DEM pixel spacing, capped at 64 subdivisions per tile.
     const divisions = Math.max(1, Math.min(64, 256 / 2 ** (coords.z - this._terrainZoom)));
-    const positions = [], normals = [], uvs = [], indices = [];
     const map = this._map, crs = map.options.crs;
     const origin = crs.project(this.location), metres = Math.cos(this.location.lat * Math.PI / 180);
-    // Tile pixels map linearly to projected metres and DEM pixels: no per-vertex trigonometry.
+    // Tile pixels map linearly to projected metres: one scaled unit grid per tile, elevation in the vertex shader.
     const scale = crs.scale(coords.z), terrainScale = 2 ** (this._terrainZoom - coords.z);
-    for (let row = 0; row <= divisions; row++) {
-      for (let column = 0; column <= divisions; column++) {
-        const pixel = new L.Point((coords.x + column / divisions) * 256, (coords.y + row / divisions) * 256);
-        const point = crs.transformation.untransform(pixel, scale);
-        positions.push((point.x - origin.x) * metres,
-          (this._getElevation(pixel.multiplyBy(terrainScale)) ?? this._terrainOriginElevation) - this._terrainOriginElevation,
-          -(point.y - origin.y) * metres);
-        normals.push(0, 1, 0);
-        uvs.push(column / divisions, row / divisions);
-        if (row < divisions && column < divisions) {
-          const a = row * (divisions + 1) + column;
-          const b = a + 1, c = a + divisions + 1, d = c + 1;
-          indices.push(a, c, b, b, c, d);
-        }
-      }
-    }
+    const corner = crs.transformation.untransform(new L.Point(coords.x * 256, coords.y * 256), scale);
+    const opposite = crs.transformation.untransform(new L.Point((coords.x + 1) * 256, (coords.y + 1) * 256), scale);
     const device = this.renderer.device;
     const texture = {
       device,
@@ -2749,39 +2775,97 @@ L.TerrainLayer = L.Layer3D.extend({
     device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: texture.texture }, [tile.width, tile.height]);
     bitmap.close();
     if (!this._rasterProgram || this._rasterProgram.device !== device) {
+      // DEM atlas over the archive's tile grid; invalid or missing samples become -1e9 (the shader's no-data).
+      // ponytail: one texture, capped by maxTextureDimension2D (32×32 DEM tiles at 8192 px); split it for larger archives.
+      const bounds = this._terrainBounds, columns = bounds.max.x - bounds.min.x + 1, rows = bounds.max.y - bounds.min.y + 1;
+      const elevations = new Float32Array(columns * rows * 65536).fill(-1e9);
+      let low = Infinity, high = -Infinity;
+      for (const [key, values] of this._terrainTiles) {
+        const [x, y] = key.split('/').map(Number);
+        const start = (y - bounds.min.y) * 256 * columns * 256 + (x - bounds.min.x) * 256;
+        for (let row = 0; row < 256; row++) {
+          for (let column = 0; column < 256; column++) {
+            const value = values[row * 256 + column];
+            if (!Number.isFinite(value) || value <= -1000) continue;
+            elevations[start + row * columns * 256 + column] = value;
+            low = Math.min(low, value);
+            high = Math.max(high, value);
+          }
+        }
+      }
+      if (this._dem) this._destroyTexture(this._dem.texture);
+      this._dem = {
+        texture: device.createTexture({
+          size: [columns * 256, rows * 256],
+          format: 'r32float',
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        }),
+        low: Number.isFinite(low) ? low : this._terrainOriginElevation,
+        high: Number.isFinite(high) ? high : this._terrainOriginElevation,
+      };
+      device.queue.writeTexture({ texture: this._dem.texture }, elevations,
+        { bytesPerRow: columns * 1024 }, [columns * 256, rows * 256]);
+      this._terrainGrids = new Map();
       this._rasterProgram = this._createProgram({
         baseTexture: texture,
         unlit: true,
         alphaMode: 'BLEND',
+        terrain: this._dem,
       });
     }
-    const attributes = {
-      position: { size: 3, data: new Float32Array(positions) },
-      normal:   { size: 3, data: new Float32Array(normals) },
-      uv:       { size: 2, data: new Float32Array(uvs) },
-      index:    { data: new Uint16Array(indices) },
-    };
-    for (const [name, attribute] of Object.entries(attributes)) {
-      attribute.size ||= 1;
-      attribute.count = attribute.data.length / attribute.size;
-      attribute.indexFormat = attribute.data instanceof Uint32Array ? 'uint32' : 'uint16';
-      attribute.buffer = device.createBuffer({
-        size: Math.max(4, attribute.data.byteLength),
-        usage: name === 'index'
-          ? GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
-          : GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      });
-      device.queue.writeBuffer(attribute.buffer, 0, attribute.data);
+    let attributes = this._terrainGrids.get(divisions);
+    if (!attributes) {
+      const positions = [], normals = [], uvs = [], indices = [];
+      for (let row = 0; row <= divisions; row++) {
+        for (let column = 0; column <= divisions; column++) {
+          positions.push(column / divisions, 0, row / divisions);
+          normals.push(0, 1, 0);
+          uvs.push(column / divisions, row / divisions);
+          if (row < divisions && column < divisions) {
+            const a = row * (divisions + 1) + column;
+            const b = a + 1, c = a + divisions + 1, d = c + 1;
+            indices.push(a, c, b, b, c, d);
+          }
+        }
+      }
+      attributes = {
+        position: { size: 3, data: new Float32Array(positions) },
+        normal:   { size: 3, data: new Float32Array(normals) },
+        uv:       { size: 2, data: new Float32Array(uvs) },
+        index:    { data: new Uint16Array(indices) },
+      };
+      for (const [name, attribute] of Object.entries(attributes)) {
+        attribute.size ||= 1;
+        attribute.count = attribute.data.length / attribute.size;
+        attribute.indexFormat = 'uint16';
+        attribute.buffer = device.createBuffer({
+          size: Math.max(4, attribute.data.byteLength),
+          usage: name === 'index'
+            ? GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+            : GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(attribute.buffer, 0, attribute.data);
+      }
+      this._terrainGrids.set(divisions, attributes);
     }
+    const base = this._terrainOriginElevation;
+    const bottom = Math.min(this._dem.low, base) - base, top = Math.max(this._dem.high, base) - base;
+    const sizeX = (opposite.x - corner.x) * metres, sizeZ = -(opposite.y - corner.y) * metres;
+    // ponytail: ray picking sees the flat unit grid; read the DEM back if terrain must be pickable.
     const geometry = {
       device,
       attributes,
-      drawRange: { start: 0, count: attributes.index?.count || attributes.position.count },
+      drawRange: { start: 0, count: attributes.index.count },
+      // Local bounds whose radius, scaled by the largest axis, still covers the displaced tile.
+      bounds: {
+        min: [0, bottom, 0], max: [1, top, 1], center: [0.5, (bottom + top) / 2, 0.5],
+        radius: Math.hypot(sizeX, top - bottom, sizeZ) / 2 / Math.max(sizeX, 1, sizeZ),
+      },
     };
     const mesh = {
-      position:    [0, 0, 0],
+      position:    [(corner.x - origin.x) * metres, 0, -(corner.y - origin.y) * metres],
       rotation:    [0, 0, 0],
-      scale:       [1, 1, 1],
+      scale:       [sizeX, 1, sizeZ],
       worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
       children:    [],
       visible:     true,
@@ -2789,6 +2873,13 @@ L.TerrainLayer = L.Layer3D.extend({
       geometry,
       program:      this._rasterProgram,
       texture,
+      // DEM pixel of the tile's corner, DEM pixels per tile, and the elevation at the layer origin.
+      terrain:      [
+        coords.x * 256 * terrainScale - this._terrainBounds.min.x * 256,
+        coords.y * 256 * terrainScale - this._terrainBounds.min.y * 256,
+        256 * terrainScale,
+        base,
+      ],
       tile,
       opacity:      layer.options.opacity ?? 1,
       id:           L.Layer3D._nextId++,
@@ -2804,10 +2895,37 @@ L.TerrainLayer = L.Layer3D.extend({
     const mesh = this._rasterTiles.get(tile);
     if (!mesh) return;
     this.remove(mesh);
-    for (const attribute of Object.values(mesh.geometry.attributes)) attribute.buffer.destroy();
     this._destroyTexture(mesh.texture.texture);
     this._rasterTiles.delete(tile);
     tile.style.visibility = tile._terrainVisibility;
     delete tile._terrainVisibility;
   },
 });
+
+/**
+ * WGSL twin of _getElevation for the vertex shader: bilinear DEM pixels, or the first valid
+ * neighbour near no-data (stored as -1e9), else `base`. Expects `dem: texture_2d<f32>`.
+ */
+L.TerrainLayer.elevationWGSL = `
+  fn demSample(pixel: vec2<i32>) -> f32 {
+    if (any(pixel < vec2<i32>(0)) || any(pixel >= vec2<i32>(textureDimensions(dem)))) { return -1e9; }
+    return textureLoad(dem, pixel, 0).r;
+  }
+  fn elevation(pixel: vec2<f32>, base: f32) -> f32 {
+    let p = pixel - vec2<f32>(0.5);
+    let f = fract(p);
+    let i = vec2<i32>(floor(p));
+    let v00 = demSample(i);
+    let v10 = demSample(i + vec2<i32>(1, 0));
+    let v01 = demSample(i + vec2<i32>(0, 1));
+    let v11 = demSample(i + vec2<i32>(1, 1));
+    if (v00 > -1000.0 && v10 > -1000.0 && v01 > -1000.0 && v11 > -1000.0) {
+      return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+    }
+    if (v00 > -1000.0) { return v00; }
+    if (v10 > -1000.0) { return v10; }
+    if (v01 > -1000.0) { return v01; }
+    if (v11 > -1000.0) { return v11; }
+    return base;
+  }
+`;
