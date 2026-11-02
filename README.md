@@ -129,7 +129,7 @@ After that you can start developing inside the `src` and `test` folders (eg. ope
 
 #### Offline Paris 3D example
 
-The [3D example](examples/leaflet-rotate-3d-layer.html) loads local archives from `examples/data/`.
+The [3D example](examples/leaflet-rotate-3d.html) loads local archives from `examples/data/`.
 Build all archives with `node build/pmtiles.js`, or just the tree inventory with:
 
 ```shell

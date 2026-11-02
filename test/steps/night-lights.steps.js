@@ -21,7 +21,7 @@ Then('streetlights and the Eiffel Tower emit light only during simulated night',
         [...layer._areas.values()].every(area => area.done || area.error)));
   }, null, { timeout: 60000 });
   const result = await this.page.evaluate(async () => {
-    const { lampStyle, lampTooltip } = await import('../examples/night-lights.js');
+    const { featureStyle: lampStyle, tooltipContent: lampTooltip } = streetlights.options;
     const layer = streetlights, owner = L.Layer.types['3d']._renderers.get(map);
     const { device, context, canvas, format } = owner.renderer;
     const gpuErrors = [];
@@ -160,7 +160,7 @@ Then('streetlights and the Eiffel Tower emit light only during simulated night',
   assert.ok(result.objectPixels > 50, `Lamp illumination on 3D objects, excluding terrain and sprites: ${result.objectPixels}`);
   assert.ok(result.dayLampPixels > 50, `Solid poles must remain visible in daylight: ${JSON.stringify(result)}`);
   assert.deepEqual(result.gpuErrors, []);
-  const control = this.page.getByRole('checkbox', { name: 'Paris streetlights (night)', exact: true });
+  const control = this.page.getByRole('checkbox', { name: 'Streetlights', exact: true });
   await control.uncheck();
   assert.equal(await this.page.evaluate(() => !streetlights._map && streetlights._areas.size === 0), true);
   await control.check();

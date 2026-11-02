@@ -14,7 +14,6 @@
 				margin: 0;
 				padding: 0;
 			}
-			.night-lights-error { position: absolute; bottom: 50px; left: 10px; z-index: 1000; background: #fff; color: #a00; padding: 8px; }
 			.leaflet-pitch-sky { overflow: hidden; }
 		</style>
 	</head>
@@ -33,11 +32,6 @@
 				touchRotate: true,
 				touchPitch: true
 			});
-			let sunlightOverlay, cruiseBoats;
-			const positive = (value, maximum) => {
-				const number = Number(value);
-				return Number.isFinite(number) && number > 0 && number <= maximum ? number : null;
-			}
 			const layers = new L.Control.Layers({
 				'Empty': new L.TileLayer(''),
 				// Offline archive built by `node build/pmtiles.js`.
@@ -157,6 +151,10 @@
 						url: 'data/paris-streetlights.pmtiles',
 						nightLight: true,
 						featureStyle({ properties: p }) {
+							const positive = (value, maximum) => {
+								const number = Number(value);
+								return Number.isFinite(number) && number > 0 && number <= maximum ? number : null;
+							};
 						const category = String(p.lib_ouvrag || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 						const location = String(p.voie_libelle || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 						if (/galerie|poste et/.test(category) || /\b(souterrain|tunnel|sous[- ]?sol|sous[- ]?passage)\b/.test(location) ||
@@ -180,9 +178,13 @@
 							b: (a[1][2] + (b[1][2] - a[1][2]) * fraction) / 255 },
 						};
 						},
-						tooltipContentfunction({ properties: p }) {
+						tooltipContent({ properties: p }) {
 							const content = document.createElement('div');
 							content.style.whiteSpace = 'pre-line';
+							const positive = (value, maximum) => {
+								const number = Number(value);
+								return Number.isFinite(number) && number > 0 && number <= maximum ? number : null;
+							};
 							const recorded = (field, maximum, unit, fallback) => {
 								const value = positive(p[field], maximum);
 								return value === null ? `${fallback} (assumed)` : `${value} ${unit} (recorded)`;
@@ -205,15 +207,15 @@
 					},
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/eclairage-public/">Streetlights: Ville de Paris / Cielis</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 				}).addTo(map),
-				'Bateaux-Mouches': (cruiseBoats = new L.Layer({
+				'Bateaux-Mouches': new L.Layer({
 					source: {
 						type: 'cruises',
 					},
 					attribution: '<a href="https://www.bateaux-mouches.fr/fr/croisiere/informations">Cruise timetable: Bateaux-Mouches</a> · estimated positions',
-				})).addTo(map),
-				'Shadows': (sunlightOverlay = new L.Layer({ source: {
+				}).addTo(map),
+				'Shadows': new L.Layer({ source: {
 					type: 'sunlight'
-				} })).addTo(map),
+				} }).addTo(map),
 			}, { collapsed: false }).addTo(map);
 		</script>
 	</body>

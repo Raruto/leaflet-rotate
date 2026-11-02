@@ -1,4 +1,4 @@
-// Builds the offline PMTiles archives used by examples/leaflet-rotate-3d-layer.html.
+// Builds the offline PMTiles archives used by examples/leaflet-rotate-3d.html.
 // Usage: node build/pmtiles.js [--bbox=west,south,east,north] [--minzoom=11] [--maxzoom=17] [--only=buildings,trees,streetlights,orthophotos,plan-ign,terrain]
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, open, rename, rm, stat } from 'node:fs/promises';

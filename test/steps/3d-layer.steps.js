@@ -2112,12 +2112,17 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
 
 const openEiffelExample = async function () {
   await this.page.setViewportSize({ width: 800, height: 600 });
-  await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
+  await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
   await this.page.waitForFunction(() => window.map && typeof window.map.getPitch === 'function');
-  await this.page.waitForFunction(() => sunlightOverlay.control && cruiseBoats &&
-    layers._layers.some(entry => entry.name === 'Streetlights'));
+  await this.page.waitForFunction(() => layers._layers.some(entry => entry.name === 'Shadows'));
   await this.page.evaluate(() => Promise.all(layers._layers.map(({ layer }) => layer.ready)));
+  // Test-only shortcuts; the example keeps its layers inside the layers control.
+  await this.page.evaluate(() => {
+    const named = name => layers._layers.find(entry => entry.name === name).layer;
+    Object.assign(window, { sunlightOverlay: named('Shadows'), cruiseBoats: named('Bateaux-Mouches'), streetlights: named('Streetlights') });
+  });
+  await this.page.waitForFunction(() => sunlightOverlay.control);
   await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
     !(layer instanceof L.Layer.types['3d']) || (layer.root && (!layer.modelUrl || layer.model) &&
       (!layer.url || layer.header))));
@@ -3154,7 +3159,7 @@ Given('the Paris buildings example is open with sample volumes', { timeout: 6000
     }
   });
   await this.page.setViewportSize({ width: 800, height: 600 });
-  await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
+  await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
   await this.page.evaluate(() => Promise.all(layers._layers.map(({ layer }) => layer.ready)));
   await this.page.waitForFunction(() => layers._layers.every(({ layer }) =>
