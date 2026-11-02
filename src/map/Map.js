@@ -986,12 +986,26 @@ L.Map.include({
         return this.unproject(centerPoint.add(offset), zoom);
     },
 
+    /**
+     * Reapply configured maximum bounds after a map transform.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     _panInsideMaxBounds() {
         if (this.options.maxBounds) {
             return mapProto._panInsideMaxBounds.apply(this, arguments);
         }
     },
 
+    /**
+     * Keep the visible ground footprint inside the given bounds.
+     *
+     * @param {L.LatLngBounds|Array} bounds Geographic bounds.
+     * @param {Object} [options] Pan options passed to Leaflet.
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     panInsideBounds(bounds, options) {
         if (this._rotate) {
             bounds = bounds instanceof L.LatLngBounds ? bounds : new L.LatLngBounds(bounds);
@@ -1033,6 +1047,15 @@ L.Map.include({
         return anchor.subtract(this.layerPointToContainerPoint(layerAnchor.add(shift).subtract(correction)));
     },
 
+    /**
+     * Pan by a screen-pixel offset, constraining large immediate pans to maxBounds.
+     *
+     * @param {L.Point|number[]} offset Pan offset in pixels.
+     * @param {Object} [options] Pan options passed to Leaflet.
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     panBy(offset, options) {
         offset = toPoint(offset);
         if (this._rotate && this._loaded && !this.getSize().contains(offset) && !(options && options.animate)) {

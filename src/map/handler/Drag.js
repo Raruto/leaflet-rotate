@@ -5,6 +5,9 @@ const dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L
 
 L.Map.Drag.include({
 
+    /**
+     * Capture the ground footprint and pointer anchor before a constrained drag.
+     */
     _onDragStart() {
         dragProto._onDragStart.apply(this, arguments);
         const map = this._map;
@@ -26,6 +29,9 @@ L.Map.Drag.include({
         };
     },
 
+    /**
+     * Apply max-bounds viscosity in ground coordinates during a rotated drag.
+     */
     _onPreDragLimit() {
         const limit = this._rotateLimit;
         if (!this._map._rotate || !limit) {

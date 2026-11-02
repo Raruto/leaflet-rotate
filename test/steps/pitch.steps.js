@@ -2,7 +2,28 @@ import assert from 'node:assert/strict';
 import { Given, Then } from '@cucumber/cucumber';
 
 Given('a standalone pitched map is open', async function () {
-  await this.page.goto(`${this.baseUrl}/test/fixtures/pitch.html`);
+  const leaflet = process.env.LEAFLET_VERSION === '2'
+    ? '<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script><script>globalThis.L = globalThis.leaflet;</script>'
+    : '<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>';
+  await this.page.goto(`${this.baseUrl}/test/index.html`);
+  await this.page.setContent(`<!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <base href="${this.baseUrl}/">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@${process.env.LEAFLET_VERSION === '2' ? '2.0.0-alpha.1' : '1.9'}/dist/leaflet.css">
+        ${leaflet}
+        <script src="dist/leaflet-rotate-src.js"></script>
+      </head>
+      <body>
+        <div id="first" style="width:400px;height:300px"></div>
+        <script>
+          window.testPitch = { map: new L.Map('first', {
+            center: [48.8582601, 2.29449985], zoom: 17, rotate: true, pitch: 45, bearing: 30,
+          }) };
+        </script>
+      </body>
+    </html>`);
   await this.page.waitForFunction(() => window.testPitch);
   assert.equal(await this.page.evaluate(() => L.Layer.types), undefined);
 });

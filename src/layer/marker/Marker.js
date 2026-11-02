@@ -223,7 +223,7 @@ L.Marker.include({
      *
      * @returns {number} Angle in radians.
      *
-     * @since leaflet-rotate (0.6.0)
+     * @since leaflet-rotate (0.5.3)
      */
     _getIconBearing() {
         let bearing = this.options.rotation || 0;

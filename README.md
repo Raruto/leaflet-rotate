@@ -26,7 +26,7 @@ Load Leaflet first, then the plugin. For example, using the published CDN build:
 ```html
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet-rotate@0.5.2/dist/leaflet-rotate.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.5.3/dist/leaflet-rotate.js"></script>
 ```
 
 Or if you want to test it with [`2.0.0-alpha.1`](https://github.com/Leaflet/Leaflet/releases/tag/v2.0.0-alpha.1):
@@ -35,7 +35,7 @@ Or if you want to test it with [`2.0.0-alpha.1`](https://github.com/Leaflet/Leaf
 <link rel="stylesheet" href="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script>
 <script>globalThis.L = globalThis.leaflet;</script>
-<script src="https://unpkg.com/leaflet-rotate@0.5.2/dist/leaflet-rotate.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.5.3/dist/leaflet-rotate.js"></script>
 ```
 
 Now, you can enable rotation in the map options. Bearing and pitch values are in degrees:
@@ -80,8 +80,6 @@ console.log(map.getBearing(), map.getPitch());
 | `map.resetNorthPitch(options?)` | Animates both bearing and pitch back to `0`. |
 | `rotate` event | Fired when the bearing changes. |
 | `pitch` event | Fired when the pitch changes. |
-
-Pitched pans retain their final ground transform. When `setView` resets the map pane (including non-animated zooms), perspective is rebuilt before calculating the new pixel origin, preserving the camera and horizon.
 
 #### Rotation control
 

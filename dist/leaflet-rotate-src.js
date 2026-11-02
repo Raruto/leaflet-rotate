@@ -493,7 +493,7 @@ var leafletRotate = (() => {
      *
      * @returns {number} Angle in radians.
      *
-     * @since leaflet-rotate (0.6.0)
+     * @since leaflet-rotate (0.5.3)
      */
     _getIconBearing() {
       let bearing = this.options.rotation || 0;
@@ -552,6 +552,11 @@ var leafletRotate = (() => {
       }
       return events;
     },
+    /**
+     * Preserve the 3D context on tile containers without making individual tile levels 3D.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     _initContainer() {
       gridLayerProto._initContainer.apply(this, arguments);
       if (!this._map._rotate || !this._container) {
@@ -1605,11 +1610,25 @@ var leafletRotate = (() => {
       }
       return this.unproject(centerPoint.add(offset), zoom);
     },
+    /**
+     * Reapply configured maximum bounds after a map transform.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     _panInsideMaxBounds() {
       if (this.options.maxBounds) {
         return mapProto._panInsideMaxBounds.apply(this, arguments);
       }
     },
+    /**
+     * Keep the visible ground footprint inside the given bounds.
+     *
+     * @param {L.LatLngBounds|Array} bounds Geographic bounds.
+     * @param {Object} [options] Pan options passed to Leaflet.
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     panInsideBounds(bounds, options) {
       if (this._rotate) {
         bounds = bounds instanceof L.LatLngBounds ? bounds : new L.LatLngBounds(bounds);
@@ -1638,6 +1657,15 @@ var leafletRotate = (() => {
       ), bounds);
       return anchor.subtract(this.layerPointToContainerPoint(layerAnchor.add(shift).subtract(correction)));
     },
+    /**
+     * Pan by a screen-pixel offset, constraining large immediate pans to maxBounds.
+     *
+     * @param {L.Point|number[]} offset Pan offset in pixels.
+     * @param {Object} [options] Pan options passed to Leaflet.
+     * @returns {L.Map} This map instance.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     panBy(offset, options) {
       offset = toPoint(offset);
       if (this._rotate && this._loaded && !this.getSize().contains(offset) && !(options && options.animate)) {
@@ -2012,6 +2040,9 @@ var leafletRotate = (() => {
   // src/map/handler/Drag.js
   var dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.Drag.prototype));
   L.Map.Drag.include({
+    /**
+     * Capture the ground footprint and pointer anchor before a constrained drag.
+     */
     _onDragStart() {
       dragProto._onDragStart.apply(this, arguments);
       const map = this._map;
@@ -2033,6 +2064,9 @@ var leafletRotate = (() => {
         bearing: map._bearing
       };
     },
+    /**
+     * Apply max-bounds viscosity in ground coordinates during a rotated drag.
+     */
     _onPreDragLimit() {
       const limit = this._rotateLimit;
       if (!this._map._rotate || !limit) {

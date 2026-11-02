@@ -32,6 +32,11 @@ L.GridLayer.include({
         return events;
     },
 
+    /**
+     * Preserve the 3D context on tile containers without making individual tile levels 3D.
+     *
+     * @since leaflet-rotate (0.5.3)
+     */
     _initContainer() {
         gridLayerProto._initContainer.apply(this, arguments);
         if (!this._map._rotate || !this._container) { return; }
