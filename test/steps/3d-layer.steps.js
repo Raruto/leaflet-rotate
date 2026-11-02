@@ -567,7 +567,7 @@ Then('the Paris example keeps navigation inside the building archive', async fun
   assert.equal(result.viscosity, 1);
 });
 
-Then('raster zoom transitions stay paused between WebGL frames and resume on removal', async function () {
+Then('raster zoom transitions stay paused between WebGPU frames and resume on removal', async function () {
   const result = await this.page.evaluate(async () => {
     const map = test3d.map;
     const tiles = new L.TileLayer('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=').addTo(map);
@@ -582,7 +582,7 @@ Then('raster zoom transitions stay paused between WebGL frames and resume on rem
       const time = animation.currentTime;
       const before = getComputedStyle(animation.effect.target).transform;
       const deadline = performance.now() + 40;
-      while (performance.now() < deadline) { /* Simulate a slow WebGL frame. */ }
+      while (performance.now() < deadline) { /* Simulate a slow WebGPU frame. */ }
       frozen &&= animation.currentTime === time && animation.playState === 'paused' &&
         getComputedStyle(animation.effect.target).transform === before;
       samples++;
@@ -1802,7 +1802,6 @@ When('I add and remove independent 3D layers', { timeout: 60000 }, async functio
     const sceneOrigin = first.location;
     const matrix = [...first.camera.projectionViewMatrix];
     first.update();
-    first._animateZoom();
     first.remove();
     await new Promise(requestAnimationFrame);
     const retained = second.renderer === renderer && renderer.gl.canvas.isConnected && disposals === 0 &&
@@ -1858,20 +1857,26 @@ Then('3D groups retain their geographic origins and share resources only on the 
   assert.deepEqual(this.oglRequests, []);
 });
 
-Then('an unavailable WebGL context emits an error without leaving a canvas', async function () {
+Then('an unavailable WebGPU adapter emits an error without leaving a canvas', async function () {
   const result = await this.page.evaluate(async () => {
-    const getContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (type, ...args) {
-      return type === 'webgl2' ? null : getContext.call(this, type, ...args);
-    };
-    const layer = new test3d.Layer3D().addTo(test3d.map);
-    let emitted;
-    layer.on('error', event => { emitted = event.error; });
-    const error = await nativeChecks.ready(layer).then(() => null, error => error);
-    HTMLCanvasElement.prototype.getContext = getContext;
-    layer.remove();
-    return { rejected: error instanceof Error, emitted: error === emitted,
-      removed: !test3d.map.hasLayer(layer), noCanvas: !document.querySelector('.leaflet-3d') };
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'gpu');
+    Object.defineProperty(navigator, 'gpu', {
+      configurable: true,
+      value: { requestAdapter: async () => null },
+    });
+    try {
+      const layer = new test3d.Layer3D().addTo(test3d.map);
+      let emitted;
+      layer.on('error', event => { emitted = event.error; });
+      const error = await nativeChecks.ready(layer).then(() => null, error => error);
+      layer.remove();
+      return { rejected: error instanceof Error, unavailable: error?.message === 'Unable to acquire a WebGPU adapter',
+        emitted: error === emitted, removed: !test3d.map.hasLayer(layer),
+        noCanvas: !document.querySelector('.leaflet-3d') };
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, 'gpu', descriptor);
+      else delete navigator.gpu;
+    }
   });
 
   for (const [name, value] of Object.entries(result)) assert.equal(value, true, name);
@@ -1956,7 +1961,7 @@ Then('PMTiles layers own archive initialization and native zoom selection', asyn
 });
 
 
-Given('the Eiffel Tower example page is open', { timeout: 60000 }, async function () {
+const openEiffelExample = async function () {
   await this.page.setViewportSize({ width: 800, height: 600 });
   await this.page.goto(`${this.baseUrl}/examples/leaflet-rotate-3d-layer.html`, { waitUntil: 'domcontentloaded' });
   await prepare3DChecks(this.page);
@@ -1989,6 +1994,15 @@ Given('the Eiffel Tower example page is open', { timeout: 60000 }, async functio
   assert.deepEqual(layout.backgrounds, ['Empty', 'Plan IGN', 'Orthophoto IGN']);
   assert.deepEqual(layout.activeBackgrounds, ['Orthophoto IGN']);
   assert.match(layout.orthophotoUrl, /\/examples\/data\/paris-orthophotos\.pmtiles$/);
+};
+
+Given('the Eiffel Tower example page is open', { timeout: 60000 }, openEiffelExample);
+
+// Real offline archives: terrain and orthophoto tiles exercise the GPU upload paths.
+Given('the Eiffel Tower example page is open with its offline archives', { timeout: 60000 }, async function () {
+  await this.context.unroute('**/misc/3DLayer.js');
+  await this.context.unroute('**/misc/PMTilesLayer.js');
+  await openEiffelExample.call(this);
 });
 
 When('I load a configured 3D model with {string}', async function (failure) {
@@ -2405,6 +2419,455 @@ Then('the tower is rendered at its geographic position through camera changes', 
   assert.equal(result.removed, true);
   assert.equal(result.sharedCanvasRemains, true);
   assert.equal(result.restored, true);
+});
+
+When('I pan the shared WebGPU renderer', async function () {
+  const pageErrors = [];
+  const onPageError = error => pageErrors.push(error.message);
+  this.page.on('pageerror', onPageError);
+  try {
+    this.webgpuPan = await this.page.evaluate(async () => {
+      const modelLayer = layers._layers.find(({ layer }) => layer.options.model)?.layer;
+      const owner = modelLayer?._shared;
+      if (!owner?.renderer?.device) throw new Error('The WebGPU model renderer is not ready');
+      owner._render();
+      await owner.renderer.device.queue.onSubmittedWorkDone();
+      let probe;
+      let sortProbe;
+      modelLayer.traverse(modelLayer.model, mesh => {
+        if (!probe && mesh.geometry && mesh.program.bindings.length && mesh._visibleInFrame) probe = mesh;
+        if (!sortProbe && mesh.geometry && mesh.program.transparent && mesh._visibleInFrame) sortProbe = mesh;
+      });
+      if (!probe) throw new Error('The model has no textured geometry to inspect');
+      if (!sortProbe) throw new Error('The scene has no transparent geometry to inspect');
+      const sortedPoint = new DOMPoint(...sortProbe.geometry.bounds.center, 1)
+        .matrixTransform(new DOMMatrix(sortProbe.worldMatrix))
+        .matrixTransform(new DOMMatrix(owner.camera.projectionViewMatrix));
+      const sortDepthError = Math.abs(sortProbe._sortDepth - sortedPoint.z / sortedPoint.w);
+      const canvas = owner.renderer.canvas;
+      const device = owner.renderer.device;
+      const renderer = owner.renderer;
+      const matrices = [probe.modelViewMatrix, probe.normalMatrix];
+      const worldMatrix = probe.worldMatrix;
+      const beforeWorldMatrix = Array.from(worldMatrix);
+      const bindGroup = probe.bindGroup;
+      const uniformData = probe.uniformData;
+      const uniformBuffer = renderer.uniformBuffer;
+      const beforeData = Array.from(uniformData);
+      const measure = () => {
+        const modelView = new DOMMatrix(owner.camera.viewMatrix)
+          .multiply(new DOMMatrix(probe.worldMatrix)).toFloat64Array();
+        const inverse = new DOMMatrix(modelView).inverse().toFloat64Array();
+        const normal = [
+          inverse[0], inverse[4], inverse[8], 0,
+          inverse[1], inverse[5], inverse[9], 0,
+          inverse[2], inverse[6], inverse[10], 0,
+          0, 0, 0, 1,
+        ];
+        return {
+          modelView: Math.max(...modelView.map((value, i) => Math.abs(value - probe.modelViewMatrix[i]))),
+          normal: Math.max(...normal.map((value, i) => Math.abs(value - probe.normalMatrix[i]))),
+        };
+      };
+      const firstErrors = measure();
+      map.panBy([32, -20], { animate: false });
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      await renderer.device.queue.onSubmittedWorkDone();
+      const secondErrors = measure();
+      let meshes = 0, visibleMeshes = 0;
+      owner.traverse(owner.scene, mesh => {
+        if (!mesh.geometry) return;
+        meshes++;
+        if (mesh._visibleInFrame) visibleMeshes++;
+      });
+      const worldMatrixReused = worldMatrix === probe.worldMatrix &&
+        beforeWorldMatrix.every((value, i) => value === worldMatrix[i]);
+      const originalX = probe.position[0];
+      probe.position[0] += 1;
+      owner._updateWorldMatrix(owner.scene);
+      const transformInvalidated = beforeWorldMatrix.some((value, i) => value !== worldMatrix[i]);
+      probe.position[0] = originalX + 1000000;
+      owner._render();
+      const probeCulled = !probe._visibleInFrame;
+      probe.position[0] = originalX;
+      owner._updateWorldMatrix(owner.scene);
+      return {
+        firstErrors, secondErrors, meshes, visibleMeshes, probeCulled, sortDepthError,
+        canvasReused: canvas === owner.renderer.canvas,
+        deviceReused: device === owner.renderer.device,
+        matrixBuffersReused: matrices[0] === probe.modelViewMatrix && matrices[1] === probe.normalMatrix,
+        worldMatrixReused, transformInvalidated,
+        uniformDataReused: uniformData === probe.uniformData,
+        gpuUniformBufferReused: uniformBuffer === renderer.uniformBuffer,
+        uniformValuesChanged: beforeData.some((value, i) => value !== uniformData[i]),
+        bindGroupReused: bindGroup === probe.bindGroup,
+      };
+    });
+  } finally {
+    this.page.off('pageerror', onPageError);
+  }
+  this.webgpuPan.pageErrors = pageErrors;
+});
+
+Then('WebGPU matrices match DOMMatrix and frame resources are reused', function () {
+  const result = this.webgpuPan;
+  assert.ok(result.visibleMeshes > 0, JSON.stringify(result));
+  assert.ok(result.sortDepthError < 1e-6, JSON.stringify(result));
+  assert.equal(result.probeCulled, true);
+  assert.ok(result.firstErrors.modelView < 1e-5 && result.firstErrors.normal < 1e-5, JSON.stringify(result.firstErrors));
+  assert.ok(result.secondErrors.modelView < 1e-5 && result.secondErrors.normal < 1e-5, JSON.stringify(result.secondErrors));
+  assert.equal(result.canvasReused, true);
+  assert.equal(result.deviceReused, true);
+  assert.equal(result.matrixBuffersReused, true);
+  assert.equal(result.worldMatrixReused, true);
+  assert.equal(result.transformInvalidated, true);
+  assert.equal(result.uniformDataReused, true);
+  assert.equal(result.gpuUniformBufferReused, true);
+  assert.equal(result.uniformValuesChanged, true);
+  assert.equal(result.bindGroupReused, true);
+  assert.deepEqual(result.pageErrors, []);
+});
+
+// Settled scene: terrain meshes exist, the roof atlas was built and no raster layer is still loading.
+const waitForWebGPUScene = page => page.waitForFunction(() => {
+  const owner = L.Layer3D._renderers.get(map);
+  return owner?.renderer?.device && owner._roofRaster && map._terrain3D?._rasterTiles.size > 0 &&
+    !Object.values(map._layers).some(layer => layer.isLoading?.());
+}, null, { timeout: 50000 });
+
+When('I drive the shared WebGPU renderer with map events', { timeout: 60000 }, async function () {
+  const pageErrors = [];
+  const onPageError = error => pageErrors.push(error.message);
+  this.page.on('pageerror', onPageError);
+  try {
+    await waitForWebGPUScene(this.page);
+    this.webgpuPacing = await this.page.evaluate(async () => {
+      const owner = L.Layer3D._renderers.get(map);
+      const { device } = owner.renderer;
+      const frame = () => new Promise(requestAnimationFrame);
+      const gpuErrors = [];
+      const onGpuError = event => gpuErrors.push(event.error.message);
+      device.addEventListener('uncapturederror', onGpuError);
+      let renders = 0, uniformWrites = 0;
+      const render = owner._render;
+      owner._render = function () {
+        renders++;
+        return render.apply(this, arguments);
+      };
+      const writeBuffer = device.queue.writeBuffer;
+      device.queue.writeBuffer = function (buffer) {
+        if (buffer === owner.renderer.uniformBuffer) uniformWrites++;
+        return writeBuffer.apply(this, arguments);
+      };
+      try {
+        await frame();
+        // Same-tick map events: one render before the next frame, after Leaflet's synchronous handlers.
+        renders = 0;
+        map.fire('move');
+        map.fire('rotate');
+        map.fire('pitch');
+        map.fire('move');
+        const synchronousRenders = renders;
+        await Promise.resolve();
+        const sameTickRenders = renders;
+
+        // Content updates from every shared layer coalesce into the owner's next animation frame.
+        await frame();
+        renders = 0;
+        for (let i = 0; i < 5; i++) owner.update();
+        for (const layer of owner._layers) layer.update();
+        const deferredRenders = renders;
+        await frame();
+        const frameRenders = renders;
+
+        // Continuous panning: every frame renders immediately (no GPU completion gate) and uploads uniforms once.
+        await frame();
+        renders = 0;
+        uniformWrites = 0;
+        const panRenders = [];
+        for (let i = 0; i < 20; i++) {
+          const before = renders;
+          map.panBy([6, -3], { animate: false });
+          await Promise.resolve();
+          panRenders.push(renders - before);
+          await frame();
+        }
+        const panTotals = { renders, uniformWrites };
+
+        let drawn = 0, sharedBindings = 0, ownBuffers = 0;
+        owner.traverse(owner.scene, mesh => {
+          if (!mesh.geometry) return;
+          if (mesh.uniformBuffer) ownBuffers++;
+          if (!mesh._visibleInFrame) return;
+          drawn++;
+          if (mesh.boundBuffer === owner.renderer.uniformBuffer) sharedBindings++;
+        });
+        const uniformSlots = owner.renderer.uniformSlot;
+        const uniformCapacity = owner.renderer.uniformBuffer.size / 512;
+
+        // During zoom animations map events wait for the frame that also advances the CSS transitions.
+        await frame();
+        const zoomEnd = new Promise(resolve => map.once('zoomend', resolve));
+        const zoomAnim = new Promise(resolve => map.once('zoomanim', resolve));
+        map.setZoom(map.getZoom() - 1);
+        await zoomAnim;
+        const animating = map._animatingZoom;
+        renders = 0;
+        map.fire('move');
+        await Promise.resolve();
+        const zoomTickRenders = renders;
+        await frame();
+        const zoomFrameRenders = renders;
+        await zoomEnd;
+        await frame();
+        await device.queue.onSubmittedWorkDone();
+        return {
+          synchronousRenders, sameTickRenders, deferredRenders, frameRenders, panRenders, panTotals,
+          drawn, sharedBindings, ownBuffers, uniformSlots, uniformCapacity,
+          animating, zoomTickRenders, zoomFrameRenders, gpuErrors,
+        };
+      } finally {
+        delete owner._render;
+        delete device.queue.writeBuffer;
+        device.removeEventListener('uncapturederror', onGpuError);
+      }
+    });
+  } finally {
+    this.page.off('pageerror', onPageError);
+  }
+  this.webgpuPacing.pageErrors = pageErrors;
+});
+
+Then('map events render in the same tick, updates share one animation frame and each frame writes uniforms once', function () {
+  const result = this.webgpuPacing;
+  const details = JSON.stringify(result);
+  assert.equal(result.synchronousRenders, 0, details);
+  assert.equal(result.sameTickRenders, 1, details);
+  assert.equal(result.deferredRenders, 0, details);
+  assert.equal(result.frameRenders, 1, details);
+  assert.deepEqual(result.panRenders, Array(20).fill(1), details);
+  assert.equal(result.panTotals.uniformWrites, result.panTotals.renders, details);
+  assert.ok(result.drawn > 1, details);
+  assert.equal(result.sharedBindings, result.drawn, details);
+  assert.equal(result.ownBuffers, 0, details);
+  assert.ok(result.uniformSlots >= result.drawn && result.uniformSlots <= result.uniformCapacity, details);
+  assert.equal(result.animating, true, details);
+  assert.equal(result.zoomTickRenders, 0, details);
+  assert.equal(result.zoomFrameRenders, 1, details);
+  assert.deepEqual(result.gpuErrors, [], details);
+  assert.deepEqual(result.pageErrors, [], details);
+});
+
+When('I rebuild the WebGPU roof atlas', { timeout: 60000 }, async function () {
+  const pageErrors = [];
+  const onPageError = error => pageErrors.push(error.message);
+  this.page.on('pageerror', onPageError);
+  try {
+    await waitForWebGPUScene(this.page);
+    this.webgpuAtlas = await this.page.evaluate(async () => {
+      const owner = L.Layer3D._renderers.get(map);
+      const terrain = map._terrain3D;
+      const { device } = owner.renderer;
+      const gpuErrors = [];
+      const onGpuError = event => gpuErrors.push(event.error.message);
+      device.addEventListener('uncapturederror', onGpuError);
+      const uploads = [];
+      const copyExternal = device.queue.copyExternalImageToTexture;
+      device.queue.copyExternalImageToTexture = function (source, destination, size) {
+        uploads.push({ type: source.source.constructor.name, width: size[0] ?? size.width, height: size[1] ?? size.height });
+        return copyExternal.apply(this, arguments);
+      };
+      // Readable atlas: the renderer only needs sampling and render-attachment usage.
+      const createTexture = device.createTexture;
+      device.createTexture = function (descriptor) {
+        return createTexture.call(this, { ...descriptor, usage: descriptor.usage | GPUTextureUsage.COPY_SRC });
+      };
+      try {
+        owner._destroyTexture(owner._roofRaster.texture.texture);
+        owner._roofRaster = null;
+        owner._render();
+      } finally {
+        delete device.createTexture;
+        delete device.queue.copyExternalImageToTexture;
+      }
+      const atlas = owner._roofRaster.texture;
+      const tiles = Object.values(map._layers)
+        .filter(layer => layer instanceof L.PMTilesLayer && layer._tiles && layer.options.opacity > 0)
+        .flatMap(layer => Object.values(layer._tiles)
+          .filter(tile => tile.el.done && !tile.el.request.signal.aborted && tile.el.isConnected)
+          .map(tile => ({ ...tile, layer })));
+      const zoom = Math.max(...tiles.map(tile => tile.coords.z));
+      const bounds = new L.Bounds();
+      for (const { coords, layer } of tiles) {
+        const size = layer.getTileSize().multiplyBy(map.getZoomScale(zoom, coords.z));
+        bounds.extend(new L.Point(coords.x, coords.y).scaleBy(size));
+        bounds.extend(new L.Point(coords.x + 1, coords.y + 1).scaleBy(size));
+      }
+      const size = bounds.getSize();
+      const scaleX = atlas.width / size.x, scaleY = atlas.height / size.y;
+
+      // Compare quadrant means: catches flips, offsets and missing tiles at any atlas scale.
+      const quadrants = (pixels, width, height, stride, inset) => {
+        const sums = Array.from({ length: 4 }, () => [0, 0, 0, 0]);
+        for (let y = inset; y < height - inset; y++) {
+          for (let x = inset; x < width - inset; x++) {
+            const sum = sums[(y < height / 2 ? 0 : 2) + (x < width / 2 ? 0 : 1)];
+            const i = y * stride + x * 4;
+            sum[0] += pixels[i]; sum[1] += pixels[i + 1]; sum[2] += pixels[i + 2]; sum[3]++;
+          }
+        }
+        return sums.map(([r, g, b, n]) => [r / n, g / n, b / n]);
+      };
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      let best;
+      for (const tile of tiles.filter(tile => tile.coords.z === zoom && tile.layer.options.opacity === 1)) {
+        canvas.width = tile.el.naturalWidth;
+        canvas.height = tile.el.naturalHeight;
+        context.drawImage(tile.el, 0, 0);
+        const expected = quadrants(context.getImageData(0, 0, canvas.width, canvas.height).data,
+          canvas.width, canvas.height, canvas.width * 4, 4);
+        const contrast = Math.max(...expected.flatMap(a => expected.map(b => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]))));
+        if (!best || contrast > best.contrast) best = { tile, expected, contrast };
+      }
+      const tileSize = best.tile.layer.getTileSize();
+      const offset = new L.Point(best.tile.coords.x, best.tile.coords.y).scaleBy(tileSize).subtract(bounds.min);
+      const x = Math.ceil(offset.x * scaleX), y = Math.ceil(offset.y * scaleY);
+      const width = Math.floor((offset.x + tileSize.x) * scaleX) - x;
+      const height = Math.floor((offset.y + tileSize.y) * scaleY) - y;
+      const bytesPerRow = Math.ceil(width * 4 / 256) * 256;
+      const buffer = device.createBuffer({ size: bytesPerRow * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const encoder = device.createCommandEncoder();
+      encoder.copyTextureToBuffer({ texture: atlas.texture, origin: [x, y] }, { buffer, bytesPerRow }, [width, height]);
+      device.queue.submit([encoder.finish()]);
+      await buffer.mapAsync(GPUMapMode.READ);
+      const pixels = new Uint8Array(buffer.getMappedRange()).slice();
+      buffer.destroy();
+      const actual = quadrants(pixels, width, height, bytesPerRow, 2);
+      let alpha = 255;
+      for (let row = 0; row < height; row++) {
+        for (let column = 0; column < width; column++) alpha = Math.min(alpha, pixels[row * bytesPerRow + column * 4 + 3]);
+      }
+      await device.queue.onSubmittedWorkDone();
+      device.removeEventListener('uncapturederror', onGpuError);
+      const terrainTiles = tiles.filter(tile => terrain._rasterTiles.has(tile.el));
+      return {
+        image: atlas.image,
+        atlasSize: [atlas.width, atlas.height],
+        uploads,
+        tiles: tiles.length,
+        terrainTiles: terrainTiles.length,
+        duplicatedTerrainTiles: terrainTiles.filter(tile => owner._roofTiles.has(tile.el)).length,
+        roofTiles: owner._roofTiles.size,
+        contrast: best.contrast,
+        colorError: Math.max(...actual.flatMap((quadrant, i) => quadrant.map((value, c) => Math.abs(value - best.expected[i][c])))),
+        alpha,
+        gpuErrors,
+      };
+    });
+  } finally {
+    this.page.off('pageerror', onPageError);
+  }
+  this.webgpuAtlas.pageErrors = pageErrors;
+});
+
+Then('the roof atlas matches its raster tiles without uploading a canvas', function () {
+  const result = this.webgpuAtlas;
+  const details = JSON.stringify(result);
+  assert.equal(result.image, null, details);
+  assert.ok(result.atlasSize.every(size => size >= 1 && size <= 4096), details);
+  assert.ok(result.uploads.every(upload => upload.type !== 'HTMLCanvasElement' && upload.width <= 512 && upload.height <= 512), details);
+  assert.ok(result.terrainTiles > 0, details);
+  assert.equal(result.duplicatedTerrainTiles, 0, details);
+  assert.ok(result.uploads.length <= result.roofTiles, details);
+  assert.ok(result.contrast > 10, details);
+  assert.ok(result.colorError < 6, details);
+  assert.equal(result.alpha, 255, details);
+  assert.deepEqual(result.gpuErrors, [], details);
+  assert.deepEqual(result.pageErrors, [], details);
+});
+
+When('I inspect the WebGPU terrain tiles', { timeout: 60000 }, async function () {
+  const pageErrors = [];
+  const onPageError = error => pageErrors.push(error.message);
+  this.page.on('pageerror', onPageError);
+  try {
+    await waitForWebGPUScene(this.page);
+    this.webgpuTerrain = await this.page.evaluate(async () => {
+      const owner = L.Layer3D._renderers.get(map);
+      const terrain = map._terrain3D;
+      const { device } = owner.renderer;
+      const crs = map.options.crs;
+      const coordsByTile = new Map();
+      for (const layer of Object.values(map._layers)) {
+        for (const tile of Object.values(layer._tiles || {})) coordsByTile.set(tile.el, tile.coords);
+      }
+      const renderUploads = [];
+      const copyExternal = device.queue.copyExternalImageToTexture;
+      device.queue.copyExternalImageToTexture = function (source) {
+        renderUploads.push(source.source);
+        return copyExternal.apply(this, arguments);
+      };
+      try {
+        owner._render();
+      } finally {
+        delete device.queue.copyExternalImageToTexture;
+      }
+      const origin = crs.project(terrain.location);
+      const metres = Math.cos(terrain.location.lat * Math.PI / 180);
+      const base = terrain._terrainOriginElevation;
+      let maxError = 0, vertices = 0, wrongVertexCount = 0, notUploaded = 0, wrongSize = 0, missingCoords = 0, relief = 0;
+      for (const [tile, mesh] of terrain._rasterTiles) {
+        const coords = coordsByTile.get(tile);
+        if (!coords) { missingCoords++; continue; }
+        if (mesh.texture.uploaded !== tile) notUploaded++;
+        if (mesh.texture.texture.width !== tile.width || mesh.texture.texture.height !== tile.height) wrongSize++;
+        const divisions = Math.max(1, Math.min(64, 256 / 2 ** (coords.z - terrain._terrainZoom)));
+        const positions = mesh.geometry.attributes.position.data;
+        if (positions.length !== (divisions + 1) ** 2 * 3) { wrongVertexCount++; continue; }
+        // Reference: geographic round trip per vertex, as the grid was built before the linear shortcut.
+        for (let row = 0; row <= divisions; row++) {
+          for (let column = 0; column <= divisions; column++) {
+            const latlng = map.unproject([(coords.x + column / divisions) * 256, (coords.y + row / divisions) * 256], coords.z);
+            const point = crs.project(latlng);
+            const elevation = (terrain._getElevation(latlng) ?? base) - base;
+            const i = (row * (divisions + 1) + column) * 3;
+            maxError = Math.max(maxError,
+              Math.abs(positions[i] - (point.x - origin.x) * metres),
+              Math.abs(positions[i + 1] - elevation),
+              Math.abs(positions[i + 2] + (point.y - origin.y) * metres));
+            relief = Math.max(relief, Math.abs(elevation));
+            vertices++;
+          }
+        }
+      }
+      await device.queue.onSubmittedWorkDone();
+      return {
+        meshes: terrain._rasterTiles.size, vertices, maxError, relief,
+        missingCoords, wrongVertexCount, notUploaded, wrongSize,
+        terrainUploadsDuringRender: renderUploads.filter(source => terrain._rasterTiles.has(source)).length,
+      };
+    });
+  } finally {
+    this.page.off('pageerror', onPageError);
+  }
+  this.webgpuTerrain.pageErrors = pageErrors;
+});
+
+Then('terrain tiles are uploaded before rendering and match the projected DEM grid', function () {
+  const result = this.webgpuTerrain;
+  const details = JSON.stringify(result);
+  assert.ok(result.meshes > 0 && result.vertices > 0, details);
+  assert.ok(result.relief > 1, details);
+  assert.equal(result.missingCoords, 0, details);
+  assert.equal(result.wrongVertexCount, 0, details);
+  assert.equal(result.notUploaded, 0, details);
+  assert.equal(result.wrongSize, 0, details);
+  assert.equal(result.terrainUploadsDuringRender, 0, details);
+  // Float32 vertex storage: about 1 mm over a few kilometres from the scene origin.
+  assert.ok(result.maxError < 0.01, details);
+  assert.deepEqual(result.pageErrors, [], details);
 });
 
 const ring = (west, south, size = 0.0004) => [

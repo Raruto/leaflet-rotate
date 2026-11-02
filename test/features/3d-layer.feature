@@ -29,9 +29,9 @@ Feature: Reusable 3D layers
     Given the Eiffel Tower example page is open
     Then the Paris example keeps navigation inside the building archive
 
-  Scenario: Raster zoom transitions advance only with shared WebGL frames
+  Scenario: Raster zoom transitions advance only with shared WebGPU frames
     Given a map with the standalone 3D module and no dependency import map
-    Then raster zoom transitions stay paused between WebGL frames and resume on removal
+    Then raster zoom transitions stay paused between WebGPU frames and resume on removal
 
   Scenario: PMTiles layer methods handle range archives without external libraries
     Given a map with the standalone 3D module and no dependency import map
@@ -84,7 +84,7 @@ Feature: Reusable 3D layers
 
   Scenario: Dependency loading errors are reported to the caller
     Given a map with the standalone 3D module and no dependency import map
-    Then an unavailable WebGL context emits an error without leaving a canvas
+    Then an unavailable WebGPU adapter emits an error without leaving a canvas
 
   Scenario: Native geometry and model decoding preserve holes and accessor layouts
     Given a map with the standalone 3D module and no dependency import map
@@ -169,3 +169,27 @@ Feature: Reusable 3D layers
     Given the Eiffel Tower example page is open
     When I visit and inspect the Eiffel Tower 3D model
     Then the tower is rendered at its geographic position through camera changes
+
+  @webgpu
+  Scenario: Panning reuses WebGPU frame resources and keeps frustum culling
+    Given the Eiffel Tower example page is open
+    When I pan the shared WebGPU renderer
+    Then WebGPU matrices match DOMMatrix and frame resources are reused
+
+  @webgpu
+  Scenario: Map events render once per tick and upload uniforms once per frame
+    Given the Eiffel Tower example page is open with its offline archives
+    When I drive the shared WebGPU renderer with map events
+    Then map events render in the same tick, updates share one animation frame and each frame writes uniforms once
+
+  @webgpu
+  Scenario: The roof atlas is composed on the GPU from raster tile textures
+    Given the Eiffel Tower example page is open with its offline archives
+    When I rebuild the WebGPU roof atlas
+    Then the roof atlas matches its raster tiles without uploading a canvas
+
+  @webgpu
+  Scenario: Terrain tiles are uploaded on arrival and follow the projected DEM grid
+    Given the Eiffel Tower example page is open with its offline archives
+    When I inspect the WebGPU terrain tiles
+    Then terrain tiles are uploaded before rendering and match the projected DEM grid

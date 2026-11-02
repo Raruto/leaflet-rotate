@@ -12,7 +12,16 @@ let baseUrl;
 BeforeAll(async () => {
   server = await startServer(0);
   baseUrl = `http://127.0.0.1:${server.address().port}`;
-  browser = await (process.env.TEST_BROWSER === 'firefox' ? firefox : chromium).launch();
+  const testBrowser = process.env.TEST_BROWSER;
+  browser = testBrowser === 'firefox'
+    ? await firefox.launch({
+      headless: false,
+      // Windows throttles requestAnimationFrame in windows it considers occluded.
+      firefoxUserPrefs: { 'widget.windows.window_occlusion_tracking.enabled': false },
+    })
+    : testBrowser === 'chrome' || testBrowser === 'msedge'
+      ? await chromium.launch({ channel: testBrowser, headless: false })
+      : await chromium.launch();
 });
 
 AfterAll({ timeout: 30000 }, async () => {
@@ -69,6 +78,14 @@ Before(async function () {
 
 After(async function () {
   await this.context.close();
+});
+
+// Firefox may take several seconds to create its first WebGPU adapter.
+Before({ tags: '@3d-layer', timeout: 30000 }, async function () {
+  await this.page.goto(baseUrl);
+  const supported = await this.page.evaluate(async () =>
+    Boolean(navigator.gpu && await navigator.gpu.requestAdapter()));
+  if (!supported) return 'skipped';
 });
 
 Given('the example page is open', async function () {
