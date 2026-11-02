@@ -67,12 +67,10 @@ Then('sky and terrain change from day to night and celestial bodies follow the c
     const moonMoved = moon.style.left !== moonPosition[0] || moon.style.top !== moonPosition[1];
     map.setPitch(0);
     const hiddenAtZeroPitch = sun.hidden && moon.hidden;
-    const checkbox = sunlightOverlay.control.getContainer().querySelector('input[type=checkbox]');
-    checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
+    map.removeLayer(sunlightOverlay);
     owner._render();
     const restored = Array.from(owner.renderer.uniformData.slice(56, 59));
     const skyRestored = !map.getContainer().style.getPropertyValue('--leaflet-sky-background');
-    map.removeLayer(sunlightOverlay);
     return { day, night, daySky, nightSky, nightTint, sunVisible, sunMoved, sunBehind,
       moonVisible, moonMoved, hiddenAtZeroPitch, restored, skyRestored, skyApplied,
       removed: !map.getContainer().querySelector('.sunlight-sun, .sunlight-moon') };
@@ -94,14 +92,14 @@ Then('the solar control starts at current time and its slider controls the sunli
     date: sunlightOverlay.control.getContainer().querySelector('input[type=date]').value,
     minute: Number(sunlightOverlay.control.getContainer().querySelector('input[type=range]').value),
     time: sunlightOverlay.control.time.toISOString(),
-    topLeft: document.querySelector('.leaflet-top.leaflet-left').firstElementChild === sunlightOverlay.control.getContainer(),
+    inLayers: layers.getContainer().contains(sunlightOverlay.control.getContainer()),
     overlays: layers._layers.filter(e => e.overlay).map(e => e.name),
   }));
   assert.equal(initial.current, true);
   assert.equal(initial.date, initial.time.slice(0, 10));
   assert.equal(initial.minute, Number(initial.time.slice(11, 13)) * 60 + Number(initial.time.slice(14, 16)));
-  assert.equal(initial.topLeft, true);
-  assert.deepEqual(initial.overlays, ['Terrain (3D)', 'Buildings', 'Trees', 'Eiffel Tower', 'Streetlights', 'Shadows', 'Bateaux-Mouches']);
+  assert.equal(initial.inLayers, true);
+  assert.deepEqual(initial.overlays, ['Terrain (3D)', 'Buildings', 'Trees', 'Eiffel Tower', 'Streetlights', 'Bateaux-Mouches', 'Shadows']);
   await this.page.getByLabel('Solar date (UTC)').fill('2026-06-21');
   const slider = this.page.getByRole('slider', { name: 'Time of day (UTC)' });
   await slider.focus();

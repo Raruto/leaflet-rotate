@@ -1,8 +1,13 @@
 import './3d.js';
 import { cruiseDistance, cruisePosition, cruiseRoute, lengths, radians, scheduledCruises } from '../utils/seine.js';
 
-function installCruiseBoats(layer, options) {
-  const clock = () => options.clock?.control || {};
+function installCruiseBoats(layer) {
+  // The 'sunlight' layer on the same map drives the simulation time.
+  const clock = () => {
+    let control = {};
+    layer._map?.eachLayer(other => { if (other.control?.time) control = other.control; });
+    return control;
+  };
   const L = globalThis.L;
   const status = L.DomUtil.create('small', 'cruise-status');
   status.style.display = 'block';
@@ -140,7 +145,7 @@ function installCruiseBoats(layer, options) {
   const start = () => {
     layer._map.off('simulationtimechange terrainchange', update);
     layer._map.on('simulationtimechange terrainchange', update);
-    clock().getContainer?.()?.append(status);
+    layer._map.getContainer().querySelector('.leaflet-control-layers-list')?.append(status);
     // Re-adding after the last GPU owner was removed can attach asynchronously.
     if (!layer.renderer && !timer) timer = setInterval(update, 250);
     update();
@@ -158,7 +163,7 @@ function installCruiseBoats(layer, options) {
   });
 }
 
-// Scheduled Bateaux-Mouches boats on the Seine; `source.clock` is the 'sunlight' layer driving the time.
+// Scheduled Bateaux-Mouches boats on the Seine, timed by the map's 'sunlight' layer.
 L.Layer.types.cruises = L.Layer.types['3d'].extend({
   statics: { cruiseDistance, cruisePosition, cruiseRoute, scheduledCruises },
   initialize(options) {
@@ -172,6 +177,6 @@ L.Layer.types.cruises = L.Layer.types['3d'].extend({
       },
       ...options,
     });
-    installCruiseBoats(this, options);
+    installCruiseBoats(this);
   },
 });

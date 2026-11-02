@@ -40,10 +40,6 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     const tooltip = layer.options.tooltipContent({ properties: properties[0] }).textContent;
     const shared = layer.renderer === streetlights.renderer;
     const noDuplicateNodes = new Set(boatMeshes().map(mesh => mesh.id)).size === twoTrips;
-    const checkbox = sunlightOverlay.control.getContainer().querySelector('input[type=checkbox]');
-    checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
-    const independentOfLighting = boatMeshes().length === twoTrips;
-    checkbox.checked = true; checkbox.dispatchEvent(new Event('change'));
     select('2026-06-21', 600);
     const firstSummer = boatMeshes()[0];
     // Exercise live ticking with a deterministic clock in an operating interval.
@@ -122,14 +118,14 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     window.previousBoatBuffers = layer.root.children.flatMap(mesh => Object.values(mesh.geometry.attributes).map(a => a.buffer));
     await owner.renderer.device.queue.onSubmittedWorkDone();
     return { nightCount, moved, frozen, twoTrips, properties, heights, finite, tooltip, shared,
-      noDuplicateNodes, independentOfLighting, liveMoved, closed, gpuErrors, routeAtNight,
+      noDuplicateNodes, liveMoved, closed, gpuErrors, routeAtNight,
       invalidClears, recovered, clearedHighlight, boatPixels, routePixels, riverCoverage, overviewRoutePixels };
   });
   assert.equal(result.nightCount, 0);
   assert.equal(result.twoTrips, 2);
   assert.deepEqual(result.properties.map(trip => trip.departure), ['10:15', '11:00']);
   assert.ok(result.heights.every(height => Math.abs(height - 27.15) < 1e-8));
-  for (const key of ['moved', 'frozen', 'finite', 'shared', 'noDuplicateNodes', 'independentOfLighting', 'liveMoved',
+  for (const key of ['moved', 'frozen', 'finite', 'shared', 'noDuplicateNodes', 'liveMoved',
     'closed', 'routeAtNight', 'invalidClears', 'recovered', 'clearedHighlight']) {
     assert.equal(result[key], true, key);
   }

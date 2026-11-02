@@ -121,11 +121,10 @@ Then('streetlights and the Eiffel Tower emit light only during simulated night',
     layer.root.visible = true;
     const dayLampPixels = brighter(dayLit, dayWithoutLamps) + brighter(dayWithoutLamps, dayLit);
     select(0);
-    const checkbox = sunlightOverlay.control.getContainer().querySelector('input[type=checkbox]');
-    checkbox.checked = false; checkbox.dispatchEvent(new Event('change'));
+    map.removeLayer(sunlightOverlay);
     owner._render();
     const disabledStrength = owner.renderer.uniformData[55];
-    checkbox.checked = true; checkbox.dispatchEvent(new Event('change'));
+    map.addLayer(sunlightOverlay);
     owner._render();
     window.oldLightMeshes = [...layer.root.children];
     return {

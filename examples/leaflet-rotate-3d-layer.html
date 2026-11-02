@@ -14,33 +14,8 @@
 				margin: 0;
 				padding: 0;
 			}
-			.sunlight-control {
-				background: #fff;
-				color: #222;
-				border-radius: 4px;
-				padding: 8px;
-				width: min(230px, calc(100vw - 40px));
-				font: 12px/1.4 sans-serif;
-			}
-			.sunlight-control label { display: block; font-weight: bold; margin-bottom: 6px; }
-			.sunlight-control input[type=date], .sunlight-control input[type=range] { width: 100%; box-sizing: border-box; }
-			.sunlight-control input[type=range] { margin: 10px 0 4px; cursor: pointer; }
-			.sunlight-time { display: flex; justify-content: space-between; align-items: center; }
-			.sunlight-time output { font-weight: bold; font-variant-numeric: tabular-nums; }
-			.sunlight-status { margin-top: 5px; }
-			.sunlight-control small { color: #555; }
 			.night-lights-error { position: absolute; bottom: 50px; left: 10px; z-index: 1000; background: #fff; color: #a00; padding: 8px; }
 			.leaflet-pitch-sky { overflow: hidden; }
-			.sunlight-sun, .sunlight-moon {
-				position: absolute;
-				width: 18px;
-				height: 18px;
-				border-radius: 50%;
-				transform: translate(-50%, -50%);
-				pointer-events: none;
-			}
-			.sunlight-sun { background: #fff3bd; box-shadow: 0 0 18px 7px #ffd27699; }
-			.sunlight-moon { background: #dce5f2; box-shadow: 0 0 10px 2px #cbdcff55; }
 		</style>
 	</head>
 	<body>
@@ -230,16 +205,15 @@
 					},
 					attribution: '<a href="https://opendata.paris.fr/explore/dataset/eclairage-public/">Streetlights: Ville de Paris / Cielis</a> (<a href="https://opendatacommons.org/licenses/odbl/">ODbL</a>)',
 				}).addTo(map),
-				'Shadows': (sunlightOverlay = new L.Layer({ source: {
-					type: 'sunlight'
-				} })).addTo(map),
 				'Bateaux-Mouches': (cruiseBoats = new L.Layer({
 					source: {
 						type: 'cruises',
-						clock: sunlightOverlay
 					},
 					attribution: '<a href="https://www.bateaux-mouches.fr/fr/croisiere/informations">Cruise timetable: Bateaux-Mouches</a> · estimated positions',
 				})).addTo(map),
+				'Shadows': (sunlightOverlay = new L.Layer({ source: {
+					type: 'sunlight'
+				} })).addTo(map),
 			}, { collapsed: false }).addTo(map);
 		</script>
 	</body>

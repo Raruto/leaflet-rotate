@@ -9,19 +9,26 @@ let server;
 let browser;
 let baseUrl;
 
-BeforeAll(async () => {
+BeforeAll({ timeout: 60000 }, async () => {
   server = await startServer(0);
   baseUrl = `http://127.0.0.1:${server.address().port}`;
   const testBrowser = process.env.TEST_BROWSER;
-  browser = testBrowser === 'firefox'
-    ? await firefox.launch({
-      headless: false,
-      // Windows throttles requestAnimationFrame in windows it considers occluded.
-      firefoxUserPrefs: { 'widget.windows.window_occlusion_tracking.enabled': false },
-    })
-    : testBrowser === 'chrome' || testBrowser === 'msedge'
-      ? await chromium.launch({ channel: testBrowser, headless: false })
-      : await chromium.launch();
+  const [engine, options] = testBrowser === 'firefox'
+    // Windows throttles requestAnimationFrame in windows it considers occluded.
+    ? [firefox, { firefoxUserPrefs: { 'widget.windows.window_occlusion_tracking.enabled': false } }]
+    : [chromium, testBrowser === 'chrome' || testBrowser === 'msedge' ? { channel: testBrowser } : {}];
+  browser = await engine.launch(options);
+  // Headless Firefox (and some GPUs/drivers) expose no WebGPU adapter: retry with a window when one can open.
+  // Without any adapter the @3d-layer scenarios fail instead of being skipped.
+  const page = await browser.newPage();
+  await page.goto(baseUrl);
+  const webgpu = await page.evaluate(async () => Boolean(await navigator.gpu?.requestAdapter()));
+  if (webgpu) return page.close();
+  const headed = await engine.launch({ ...options, headless: false }).catch(() => null);
+  if (headed) {
+    await browser.close();
+    browser = headed;
+  }
 });
 
 AfterAll({ timeout: 30000 }, async () => {
@@ -84,7 +91,7 @@ Before({ tags: '@3d-layer', timeout: 30000 }, async function () {
   await this.page.goto(baseUrl);
   const supported = await this.page.evaluate(async () =>
     Boolean(navigator.gpu && await navigator.gpu.requestAdapter()));
-  if (!supported) return 'skipped';
+  assert.ok(supported, 'WebGPU adapter unavailable: 3D scenarios need a GPU-backed browser');
 });
 
 Given('the example page is open', async function () {

@@ -4,10 +4,13 @@ function installSunlight(map) {
   const L = globalThis.L;
   const control = new L.Control({ position: 'bottomright' });
   control.live = true;
-  let date, slider, output, enabled, status, timer;
+  let date, slider, output, status, timer;
   const originalSky = map.getContainer().style.getPropertyValue('--leaflet-sky-background');
+  const disc = 'position:absolute;width:18px;height:18px;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;';
   const sunDisc = L.DomUtil.create('div', 'sunlight-sun');
   const moonDisc = L.DomUtil.create('div', 'sunlight-moon');
+  sunDisc.style.cssText = disc + 'background:#fff3bd;box-shadow:0 0 18px 7px #ffd27699;';
+  moonDisc.style.cssText = disc + 'background:#dce5f2;box-shadow:0 0 10px 2px #cbdcff55;';
   sunDisc.setAttribute('role', 'img'); sunDisc.setAttribute('aria-label', 'Sun');
   moonDisc.setAttribute('role', 'img'); moonDisc.setAttribute('aria-label', 'Moon');
   const updateSky = () => {
@@ -39,17 +42,12 @@ function installSunlight(map) {
       date.value = time.slice(0, 10);
       slider.value = String(control.time.getUTCHours() * 60 + control.time.getUTCMinutes());
       output.textContent = `${time.slice(11, 16)} UTC${control.live ? ' · now' : ''}`;
-      if (!enabled.checked) {
-        delete map._sunlight;
-        status.textContent = 'Simulation off';
-      } else {
-        const center = map.getCenter();
-        const sun = map._sunlight = solarPosition(control.time, center.lat, center.lng);
-        Object.assign(sun, atmosphere(sun.altitude));
-        sun.moon = moonPosition(control.time, center.lat, center.lng);
-        status.textContent = sun.altitude <= 0 ? 'Night · no direct sunlight' :
-          sun.altitude < 3 ? 'Low sun · shadows paused' : `Sun altitude ${sun.altitude.toFixed(1)}°`;
-      }
+      const center = map.getCenter();
+      const sun = map._sunlight = solarPosition(control.time, center.lat, center.lng);
+      Object.assign(sun, atmosphere(sun.altitude));
+      sun.moon = moonPosition(control.time, center.lat, center.lng);
+      status.textContent = sun.altitude <= 0 ? 'Night · no direct sunlight' :
+        sun.altitude < 3 ? 'Low sun · shadows paused' : `Sun altitude ${sun.altitude.toFixed(1)}°`;
       map.fire('simulationtimechange', { time: new Date(control.time), live: control.live });
       updateSky(); render();
     } catch (error) {
@@ -76,36 +74,37 @@ function installSunlight(map) {
     update();
   };
   control.onAdd = () => {
-    const container = L.DomUtil.create('div', 'sunlight-control leaflet-bar');
-    const heading = document.createElement('label');
-    enabled = document.createElement('input');
-    enabled.type = 'checkbox';
-    enabled.checked = true;
-    heading.append(enabled, document.createTextNode(' Shadows'));
+    const container = L.DomUtil.create('div', 'sunlight-control');
+    container.style.cssText = 'color:#222;width:min(200px,calc(100vw - 60px));font:12px/1.4 sans-serif;';
     date = document.createElement('input');
     date.type = 'date';
+    date.style.cssText = 'width:100%;box-sizing:border-box;';
     date.setAttribute('aria-label', 'Solar date (UTC)');
     slider = document.createElement('input');
     slider.type = 'range';
+    slider.style.cssText = 'width:100%;box-sizing:border-box;margin:10px 0 4px;cursor:pointer;';
     slider.min = '0'; slider.max = '1439'; slider.step = '1';
     slider.setAttribute('aria-label', 'Time of day (UTC)');
     output = document.createElement('output');
+    output.style.cssText = 'font-weight:bold;font-variant-numeric:tabular-nums;';
     output.setAttribute('aria-live', 'off');
     const now = document.createElement('button');
     now.type = 'button'; now.textContent = 'Now';
     now.onclick = () => { control.live = true; update(); };
     const timeRow = document.createElement('div');
     timeRow.className = 'sunlight-time';
+    timeRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
     timeRow.append(output, now);
     status = document.createElement('div');
     status.className = 'sunlight-status';
+    status.style.marginTop = '5px';
     status.setAttribute('role', 'status');
     const note = document.createElement('small');
+    note.style.color = '#555';
     note.textContent = 'Indicative · loaded geometry only. Streetlight illumination is estimated, not measured lux.';
-    container.append(heading, date, slider, timeRow, status, note);
+    container.append(date, slider, timeRow, status, note);
     slider.oninput = selectTime;
     date.onchange = selectTime;
-    enabled.onchange = update;
     L.DomEvent.disableClickPropagation(container);
     L.DomEvent.disableScrollPropagation(container);
     update();
@@ -124,9 +123,6 @@ function installSunlight(map) {
     sunDisc.remove(); moonDisc.remove();
     render();
   };
-  control.addTo(map);
-  const container = control.getContainer();
-  container.parentNode.insertBefore(container, container.parentNode.firstChild);
   return control;
 }
 
@@ -135,6 +131,14 @@ L.Layer.types.sunlight = L.Layer.extend({
   onAdd(map) {
     this.control = this.control || installSunlight(map);
     if (!this.control._map) this.control.addTo(map);
+    // Shown inside the layers control, toggled by this layer's entry; a standalone control without one.
+    const list = map.getContainer().querySelector('.leaflet-control-layers-list');
+    const container = this.control.getContainer();
+    if (list) list.append(container);
+    container.classList.toggle('leaflet-bar', !list);
+    Object.assign(container.style, list
+      ? { background: '', padding: '6px 0 0', marginTop: '6px', borderTop: '1px solid #ddd' }
+      : { background: '#fff', padding: '8px', marginTop: '', borderTop: '' });
   },
   onRemove() {
     this.control.remove();
