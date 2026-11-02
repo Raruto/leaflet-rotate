@@ -156,7 +156,7 @@ import{emptyNode as _}from"./empty-node.js";var B={async _attach(e){let t=L.Laye
         let alpha = u.material.z * texel.a;
         ${e.alphaMode==="MASK"?"if (alpha < u.material.w) { discard; }":""}
         ${e.alphaMode==="BLEND"?"if (alpha < 0.01) { discard; }":""}
-        var base = ${e.vertexColors?"toLinear(input.color)":"input.color"} *
+        var base = ${e.vertexColors?"toLinear(min(input.color, vec3<f32>(1.0)))":"input.color"} *
           ${e.baseTexture?.srgb?"texel.rgb":"toLinear(texel.rgb)"};
         ${i?`
           if (input.roof > 0.5 && all(input.roofUv >= vec2<f32>(0.0)) &&
@@ -190,7 +190,8 @@ import{emptyNode as _}from"./empty-node.js";var B={async _attach(e){let t=L.Laye
           let lattice = (fract(input.localPosition / 2.5) - 0.5) * 2.5;
           let pointGlow = (1.0 - smoothstep(0.16, 0.42, length(lattice))) * u.highlight.z;
         `:""}
-        let glow = ${o?"vec3<f32>(3.0, 2.6, 1.8) * pointGlow +":""} u.emissive.rgb * ${l?e.emissiveTexture.srgb?"textureSample(emissiveTexture, emissiveTextureSampler, input.uv).rgb":"toLinear(textureSample(emissiveTexture, emissiveTextureSampler, input.uv).rgb)":"vec3<f32>(1.0)"};
+        // Vertex colour components above 1 are self-lit (e.g. vehicle lamps): dim by day, bright at night.
+        let glow = ${o?"vec3<f32>(3.0, 2.6, 1.8) * pointGlow +":""}${e.vertexColors?" max(input.color - vec3<f32>(1.0), vec3<f32>(0.0)) * (0.3 + 5.0 * frame.skyDirection.w) +":""} u.emissive.rgb * ${l?e.emissiveTexture.srgb?"textureSample(emissiveTexture, emissiveTextureSampler, input.uv).rgb":"toLinear(textureSample(emissiveTexture, emissiveTextureSampler, input.uv).rgb)":"vec3<f32>(1.0)"};
         var color = ambient * base * (1.0 - metal) * ao +
           (diffuse + specular) * nl * toLinear(vec3<f32>(1.0, 0.937, 0.835)) * 3.0 + glow;
         ${e.vertexColors?"color = base * (ambient + toLinear(vec3<f32>(1.0, 0.937, 0.835)) * (3.0 / PI) * nl) + glow;":""}

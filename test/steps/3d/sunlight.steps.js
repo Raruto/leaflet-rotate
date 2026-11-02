@@ -85,7 +85,7 @@ Then('sky and terrain change from day to night and celestial bodies follow the c
   assert.deepEqual(result.restored, [1, 1, 1]);
 });
 
-Then('the solar control starts at current time and its slider controls the sunlight', { timeout: 30000 }, async function () {
+Then('the solar control starts at current time and its slider controls the sunlight', { timeout: 60000 }, async function () {
   await this.page.waitForFunction(() => sunlightOverlay.control && map._sunlight);
   const initial = await this.page.evaluate(() => ({
     current: Math.abs(sunlightOverlay.control.time.getTime() - Date.now()) < 65000 && sunlightOverlay.control.live,

@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../src/3d/utils/control.js"],
+  "sourcesContent": ["/**\r\n * Keeps `element` right under `layer`'s entry in the map's layers control while the layer is on the map.\r\n * Returns false when no layers control lists the layer.\r\n */\r\nexport function underEntry(layer, element) {\r\n  const map = layer._map;\r\n  const place = () => {\r\n    const input = [...map.getContainer().querySelectorAll('.leaflet-control-layers-selector')]\r\n      .find(input => input.layerId === globalThis.L.Util.stamp(layer));\r\n    input?.closest('label').after(element);\r\n    return Boolean(input);\r\n  };\r\n  // Leaflet rebuilds the list after 'layeradd'/'layerremove' (on the layer's own 'add'/'remove'): re-place afterwards.\r\n  const replace = () => queueMicrotask(() => map.hasLayer(layer) && place());\r\n  map.on('layeradd layerremove', replace);\r\n  layer.once('remove', () => { map.off('layeradd layerremove', replace); element.remove(); });\r\n  return place();\r\n}\r\n"],
+  "mappings": "AAIO,SAASA,EAAWC,EAAOC,EAAS,CACzC,MAAMC,EAAMF,EAAM,KACZG,EAAQ,IAAM,CAClB,MAAMC,EAAQ,CAAC,GAAGF,EAAI,aAAa,EAAE,iBAAiB,kCAAkC,CAAC,EACtF,KAAKE,GAASA,EAAM,UAAY,WAAW,EAAE,KAAK,MAAMJ,CAAK,CAAC,EACjE,OAAAI,GAAO,QAAQ,OAAO,EAAE,MAAMH,CAAO,EAC9B,EAAQG,CACjB,EAEMC,EAAU,IAAM,eAAe,IAAMH,EAAI,SAASF,CAAK,GAAKG,EAAM,CAAC,EACzE,OAAAD,EAAI,GAAG,uBAAwBG,CAAO,EACtCL,EAAM,KAAK,SAAU,IAAM,CAAEE,EAAI,IAAI,uBAAwBG,CAAO,EAAGJ,EAAQ,OAAO,CAAG,CAAC,EACnFE,EAAM,CACf",
+  "names": ["underEntry", "layer", "element", "map", "place", "input", "replace"]
+}

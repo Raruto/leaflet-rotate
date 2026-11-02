@@ -380,7 +380,7 @@ export default {
         let alpha = u.material.z * texel.a;
         ${material.alphaMode === 'MASK' ? 'if (alpha < u.material.w) { discard; }' : ''}
         ${material.alphaMode === 'BLEND' ? 'if (alpha < 0.01) { discard; }' : ''}
-        var base = ${material.vertexColors ? 'toLinear(input.color)' : 'input.color'} *
+        var base = ${material.vertexColors ? 'toLinear(min(input.color, vec3<f32>(1.0)))' : 'input.color'} *
           ${material.baseTexture?.srgb ? 'texel.rgb' : 'toLinear(texel.rgb)'};
         ${hasRoof ? `
           if (input.roof > 0.5 && all(input.roofUv >= vec2<f32>(0.0)) &&
@@ -414,7 +414,9 @@ export default {
           let lattice = (fract(input.localPosition / 2.5) - 0.5) * 2.5;
           let pointGlow = (1.0 - smoothstep(0.16, 0.42, length(lattice))) * u.highlight.z;
         ` : ''}
-        let glow = ${sparkle ? 'vec3<f32>(3.0, 2.6, 1.8) * pointGlow +' : ''} u.emissive.rgb * ${
+        // Vertex colour components above 1 are self-lit (e.g. vehicle lamps): dim by day, bright at night.
+        let glow = ${sparkle ? 'vec3<f32>(3.0, 2.6, 1.8) * pointGlow +' : ''}${material.vertexColors
+          ? ' max(input.color - vec3<f32>(1.0), vec3<f32>(0.0)) * (0.3 + 5.0 * frame.skyDirection.w) +' : ''} u.emissive.rgb * ${
           hasEmissive
           ? material.emissiveTexture.srgb
             ? 'textureSample(emissiveTexture, emissiveTextureSampler, input.uv).rgb'

@@ -51,51 +51,56 @@ export default {
         if (mesh.extras?.lights) meshes.push(mesh);
       });
     }
-    if (sun.lightMeshes?.length === meshes.length && meshes.every((mesh, i) =>
-      sun.lightMeshes[i].mesh === mesh && mesh.worldMatrix.every((v, j) => v === sun.lightMeshes[i].matrix[j]))) return;
-    const lights = [];
-    for (const mesh of meshes) {
-      const matrix = new DOMMatrix(mesh.worldMatrix);
-      for (const light of mesh.extras.lights) {
-        const point = new DOMPoint(...light.position, 1).matrixTransform(matrix);
-        lights.push({ ...light, position: [point.x / point.w, point.y / point.w, point.z / point.w] });
-      }
-    }
-    const cellSize = 32;
+    if (sun.lightMeshes?.length === meshes.length && meshes.every((mesh, i) => sun.lightMeshes[i].mesh === mesh &&
+      sun.lightMeshes[i].lights === mesh.extras.lights && mesh.worldMatrix.every((v, j) => v === sun.lightMeshes[i].matrix[j]))) return;
+    // Per mesh, world-space [x, y, z, radius, r, g, b, intensity] per light: re-packed only when its lights or matrix change.
+    const packed = meshes.map(mesh => {
+      const cache = mesh._worldLights, m = mesh.worldMatrix, lights = mesh.extras.lights;
+      if (cache?.lights === lights && m.every((v, j) => v === cache.matrix[j])) return cache.data;
+      const values = new Float32Array(lights.length * 8);
+      lights.forEach(({ position: [x, y, z], radius, color, flux }, i) => {
+        const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+        values.set([(m[0] * x + m[4] * y + m[8] * z + m[12]) / w, (m[1] * x + m[5] * y + m[9] * z + m[13]) / w,
+          (m[2] * x + m[6] * y + m[10] * z + m[14]) / w, radius, ...color, flux / (4 * Math.PI) * 0.03], i * 8);
+      });
+      mesh._worldLights = { lights, matrix: [...m], data: values };
+      return values;
+    });
+    const count = packed.reduce((sum, values) => sum + values.length / 8, 0), cellSize = 32;
     let data = new Float32Array(8);
-    if (lights.length) {
-      const min = [Infinity, Infinity], max = [-Infinity, -Infinity];
-      for (const light of lights) for (let axis = 0; axis < 2; axis++) {
-        const coordinate = light.position[axis * 2];
-        min[axis] = Math.min(min[axis], coordinate - light.radius);
-        max[axis] = Math.max(max[axis], coordinate + light.radius);
+    if (count) {
+      let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+      for (const values of packed) for (let i = 0; i < values.length; i += 8) {
+        minX = Math.min(minX, values[i] - values[i + 3]); maxX = Math.max(maxX, values[i] + values[i + 3]);
+        minZ = Math.min(minZ, values[i + 2] - values[i + 3]); maxZ = Math.max(maxZ, values[i + 2] + values[i + 3]);
       }
-      const columns = Math.ceil((max[0] - min[0]) / cellSize) + 1;
-      const rows = Math.ceil((max[1] - min[1]) / cellSize) + 1;
-      const cells = new Map();
-      for (const light of lights) {
-        const [x, , z] = light.position, radius = light.radius;
-        for (let y = Math.floor((z - radius - min[1]) / cellSize); y <= Math.floor((z + radius - min[1]) / cellSize); y++) {
-          for (let i = Math.floor((x - radius - min[0]) / cellSize); i <= Math.floor((x + radius - min[0]) / cellSize); i++) {
-            const key = y * columns + i;
-            if (!cells.has(key)) cells.set(key, []);
-            cells.get(key).push(light);
+      const columns = Math.ceil((maxX - minX) / cellSize) + 1, rows = Math.ceil((maxZ - minZ) / cellSize) + 1;
+      const each = callback => {
+        for (const values of packed) for (let i = 0; i < values.length; i += 8) {
+          const radius = values[i + 3], x = values[i] - minX, z = values[i + 2] - minZ;
+          for (let y = Math.floor((z - radius) / cellSize); y <= Math.floor((z + radius) / cellSize); y++) {
+            for (let c = Math.floor((x - radius) / cellSize); c <= Math.floor((x + radius) / cellSize); c++) callback(y * columns + c, values, i);
           }
         }
-      }
-      const entries = [...cells.values()].reduce((sum, cell) => sum + cell.length, 0);
+      };
+      // Counting sort: count the lights of each cell, then fill each cell's slice.
+      const counts = new Uint32Array(columns * rows), next = new Uint32Array(columns * rows);
+      each(key => counts[key]++);
+      const entries = counts.reduce((sum, value) => sum + value, 0);
       const length = (2 + columns * rows + entries * 2) * 4;
       if (length * 4 > device.limits.maxStorageBufferBindingSize) throw new Error('Streetlight grid exceeds GPU storage limit');
       data = new Float32Array(length);
-      data.set([min[0], min[1], cellSize, columns, rows, lights.length, 0, 0]);
+      data.set([minX, minZ, cellSize, columns, rows, count, 0, 0]);
       let offset = 2 + columns * rows;
-      for (const [key, cell] of cells) {
-        data.set([offset, cell.length, 0, 0], (2 + key) * 4);
-        for (const light of cell) {
-          data.set([...light.position, light.radius, ...light.color, light.flux / (4 * Math.PI) * 0.03], offset * 4);
-          offset += 2;
-        }
+      for (let key = 0; key < counts.length; key++) if (counts[key]) {
+        data[(2 + key) * 4] = next[key] = offset;
+        data[(2 + key) * 4 + 1] = counts[key];
+        offset += counts[key] * 2;
       }
+      each((key, values, i) => {
+        for (let j = 0, o = next[key] * 4; j < 8; j++) data[o + j] = values[i + j];
+        next[key] += 2;
+      });
     }
     if (sun.lights.size < data.byteLength) {
       this._destroyTexture(sun.lights);
@@ -103,8 +108,8 @@ export default {
       this._bindSunlight();
     }
     device.queue.writeBuffer(sun.lights, 0, data);
-    sun.lightCount = lights.length;
-    sun.lightMeshes = meshes.map(mesh => ({ mesh, matrix: [...mesh.worldMatrix] }));
+    sun.lightCount = count;
+    sun.lightMeshes = meshes.map(mesh => ({ mesh, lights: mesh.extras.lights, matrix: [...mesh.worldMatrix] }));
   },
 
   /** One shared directional depth map. Off-screen but loaded geometry can cast shadows. */

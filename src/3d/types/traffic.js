@@ -1,6 +1,7 @@
 import './3d.js';
 import { along, scheduledTrips, speed, vehicleOffsets } from '../utils/traffic.js';
 import { build, vehicles } from '../utils/vehicles.js';
+import { underEntry } from '../utils/control.js';
 
 // GeoJSON (Multi)LineStrings become lanes ({latlngs, properties, elevation?}); prepare() adds `points` ([x, z, ground]),
 // `lengths` and `length` in layer-local metres.
@@ -29,7 +30,7 @@ const tooltip = ({ properties: p }) => {
   return content;
 };
 
-function installTraffic(layer, { url, model, side, outline, label, velocity }) {
+function installTraffic(layer, { url, model, lights, side, outline, velocity }) {
   const L = globalThis.L;
   // The 'sunlight' layer on the same map drives the simulation time; without one, vehicles run live.
   const now = () => {
@@ -38,9 +39,9 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
     return { live: control.live, time: control.live ? new Date() : control.time };
   };
   const status = L.DomUtil.create('small', 'traffic-status');
-  status.style.display = 'block';
+  status.style.cssText = 'display:block;max-width:200px;margin:0 0 4px 20px;color:#555;';
   const template = build(model(0)), stride = template.position.length, vertices = stride / 3;
-  let ready = false, frame, request, lanes = [], tripsKey, mesh, route;
+  let ready = false, frame, request, lanes = [], tripsKey, mesh, route, deck, litAt = -Infinity;
   // Vehicles move on the GPU: `trips` are rebased at most once per second, a compute pass places them every frame.
   let trips = [], rebasedAt = 0, nextCheck = -Infinity, elapsed = 0, gpu = null, lanesDirty = true, stale = false;
   const params = new ArrayBuffer(16), paramFloats = new Float32Array(params), paramInts = new Uint32Array(params);
@@ -75,15 +76,16 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
     layer._removeProgram(object.program);
   };
   const fail = error => {
-    status.textContent = `${label} error: ${error.message}`;
+    status.textContent = `Error: ${error.message}`;
     status.setAttribute('role', 'alert');
-    console.error(label, error);
+    console.error('Traffic layer', error);
   };
 
   const ground = () => {
+    const terrain = layer._map._terrain3D?._terrainReady && layer._map._terrain3D, base = layer.root.position[1];
     for (const lane of lanes) lane.points.forEach((point, i) => {
-      const elevation = lane.elevation ?? layer._map._terrain3D?._getElevation(lane.latlngs[i]);
-      point[2] = Number.isFinite(elevation) && Number.isFinite(layer.root.position[1]) ? elevation - layer.root.position[1] : 0;
+      const elevation = terrain && (lane.elevation ?? terrain._getElevation(lane.latlngs[i]));
+      point[2] = Number.isFinite(elevation) && Number.isFinite(base) ? elevation - base : 0;
     });
     lanesDirty = true;
     nextCheck = -Infinity;
@@ -103,11 +105,11 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
       lane.length = lane.lengths.at(-1);
     }
     ground();
-    dispose(route); route = null;
+    dispose(route); dispose(deck); route = deck = null;
     tripsKey = null;
   };
 
-  // Dashed lane outline, drawn over the terrain.
+  // Dashed lane outline, just above the lanes.
   const drawRoute = () => {
     const position = [], normal = [], color = [];
     for (const { points, lengths } of lanes) for (let i = 1; i < points.length; i++) {
@@ -119,15 +121,43 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
         const start = Math.max(0, (distance - lengths[i - 1]) / length);
         const end = Math.min(1, (distance + 18 - lengths[i - 1]) / length);
         if (end <= start) continue;
-        const p = [a[0] + dx * start, a[1] + dz * start], q = [a[0] + dx * end, a[1] + dz * end], y = a[2] + 0.03;
+        const p = [a[0] + dx * start, a[1] + dz * start], q = [a[0] + dx * end, a[1] + dz * end], y = a[2] + 0.4;
         for (const point of [[p[0] - x, p[1] - z], [p[0] + x, p[1] + z], [q[0] + x, q[1] + z],
           [p[0] - x, p[1] - z], [q[0] + x, q[1] + z], [q[0] - x, q[1] - z]]) {
           position.push(point[0], y, point[1]); normal.push(0, 1, 0); color.push(0.08, 0.7, 0.85);
         }
       }
     }
-    route = createMesh({ position, normal, color }, [], { emissive: [0.03, 0.25, 0.3], alphaMode: 'BLEND', depthTest: false });
+    route = createMesh({ position, normal, color }, [], { emissive: [0.03, 0.25, 0.3], alphaMode: 'BLEND' });
     route.renderOrder = 1000;
+  };
+  // Bare-earth DEMs drop bridge decks: where a lane runs 2 m or more above the terrain, draw a 10 m wide, 1.2 m thick deck.
+  const drawDeck = () => {
+    const terrain = layer._map._terrain3D, base = layer.root.position[1], position = [], normal = [], color = [];
+    deck = false;
+    if (!terrain?._terrainReady) return;
+    const quad = (corners, n) => {
+      for (const i of [0, 1, 2, 0, 2, 3]) { position.push(...corners[i]); normal.push(...n); color.push(0.6, 0.58, 0.54); }
+    };
+    for (const { points, lengths, latlngs } of lanes) for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i], length = lengths[i] - lengths[i - 1];
+      if (!length) continue;
+      const ux = (b[0] - a[0]) / length, uz = (b[1] - a[1]) / length, steps = Math.ceil(length / 4);
+      const at = t => [a[0] + (b[0] - a[0]) * t - uz * side, a[2] + (b[2] - a[2]) * t - 0.02, a[1] + (b[1] - a[1]) * t + ux * side];
+      for (let k = 0; k < steps; k++) {
+        const t = (k + 0.5) / steps, lat = latlngs[i - 1][0] + (latlngs[i][0] - latlngs[i - 1][0]) * t;
+        const elevation = terrain._getElevation([lat, latlngs[i - 1][1] + (latlngs[i][1] - latlngs[i - 1][1]) * t]);
+        if (!Number.isFinite(elevation) || a[2] + (b[2] - a[2]) * t - (elevation - base) < 2) continue;
+        const p = at(k / steps), q = at((k + 1) / steps), x = -uz * 5, z = ux * 5;
+        const [pl, pr, ql, qr] = [[p, -1], [p, 1], [q, -1], [q, 1]].map(([[px, py, pz], s]) => [px + x * s, py, pz + z * s]);
+        const below = c => [c[0], c[1] - 1.2, c[2]];
+        quad([pl, pr, qr, ql], [0, 1, 0]);
+        quad([below(pl), below(ql), below(qr), below(pr)], [0, -1, 0]);
+        quad([pr, below(pr), below(qr), qr], [-uz, 0, ux]);
+        quad([pl, ql, below(ql), below(pl)], [uz, 0, -ux]);
+      }
+    }
+    if (position.length) deck = createMesh({ position, normal, color }, []);
   };
 
   // One batched mesh, `vertices` per vehicle; the compute pass writes its position/normal buffers (STORAGE).
@@ -256,17 +286,21 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
     device.queue.submit([encoder.finish()]);
     stale = true;
   };
-  // CPU twin of the compute pass, run lazily before picking.
+  // CPU twin of the compute pass: the centre of `trip` and its heading.
+  const locate = trip => {
+    const { points, lengths, length } = trip.lane;
+    let distance = trip.distance + elapsed * trip.speed;
+    distance -= length * Math.floor(distance / length);
+    const { x, y, z, dx, dz } = along(points, lengths, distance);
+    return { x: x - dz * side, y, z: z + dx * side, dx, dz };
+  };
+  // Run lazily before picking.
   const place = () => {
     if (!mesh || !stale) return;
     stale = false;
     const { position, normal } = mesh.geometry.attributes;
     trips.forEach((trip, i) => {
-      const { points, lengths, length } = trip.lane;
-      let distance = trip.distance + elapsed * trip.speed;
-      distance -= length * Math.floor(distance / length);
-      const { x, y, z, dx, dz } = along(points, lengths, distance);
-      const cx = x - dz * side, cz = z + dx * side;
+      const { x: cx, y, z: cz, dx, dz } = locate(trip);
       for (let k = 0, o = i * stride; k < stride; k += 3, o += 3) {
         const lx = template.position[k], lz = template.position[k + 2], nx = template.normal[k], nz = template.normal[k + 2];
         position.data[o] = cx - lx * dz - lz * dx;
@@ -298,20 +332,30 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
       let text;
       try {
         trips = valid ? tripsAt(time, lanes, velocity) : [];
-        text = !valid ? `${label}: select a valid simulation date` : !loaded ? `${label}: loading…` :
-          `${label}: ${trips.length} vehicles${loaded.note ? ` · ${loaded.note}` : ''}`;
+        text = !valid ? 'Select a valid simulation date' : !loaded ? 'Loading…' :
+          `${trips.length} vehicle${trips.length === 1 ? '' : 's'}${loaded.note ? ` · ${loaded.note}` : ''}`;
       } catch (error) { return fail(error); }
       rebasedAt = ms;
       nextCheck = ms + 1000;
       const key = trips.map(trip => trip.id).join();
       changed = key !== tripsKey || (outline && !route && lanes.length);
       if (outline && !route && lanes.length) drawRoute();
+      if (deck == null && lanes.length) { drawDeck(); changed ||= Boolean(deck); }
       if (key !== tripsKey) { rebuild(); tripsKey = key; }
       if (mesh) rebase();
       if (status.textContent !== text) status.textContent = text;
       status.removeAttribute('role');
     }
     if (mesh) move((ms - rebasedAt) / 1000);
+    // ponytail: night point lights follow the vehicles at 10 Hz via the shared CPU light grid (~5 ms with thousands of lamps);
+    // bin the lights in a compute pass if it shows up in profiles.
+    if (mesh && lights && (!live || !(performance.now() - litAt < 100))) {
+      litAt = performance.now();
+      mesh.extras.lights = trips.flatMap(trip => {
+        const { x, y, z, dx, dz } = locate(trip);
+        return lights.map(({ position: [lx, ly, lz], ...light }) => ({ ...light, position: [x - lx * dz - lz * dx, y + ly, z + lx * dx - lz * dz] }));
+      });
+    }
     if (mesh || changed) layer.update();
     if (live && valid) frame = requestAnimationFrame(tick);
   };
@@ -350,14 +394,14 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
   const terrain = () => {
     if (!lanes.length) return;
     ground();
-    dispose(route); route = null;
+    dispose(route); dispose(deck); route = deck = null;
     if (mesh) bounds();
     if (!frame) tick();
   };
   const start = () => {
     layer._map.off('simulationtimechange layerremove', update).on('simulationtimechange layerremove', update);
     layer._map.off('terrainchange', terrain).on('terrainchange', terrain);
-    layer._map.getContainer().querySelector('.leaflet-control-layers-list')?.append(status);
+    underEntry(layer, status);
     update();
   };
   layer.on('ready', () => { ready = true; if (layer._map) start(); });
@@ -366,10 +410,9 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
     request?.abort();
     cancelAnimationFrame(frame); frame = undefined;
     layer._map.off('simulationtimechange layerremove', update).off('terrainchange', terrain);
-    dispose(mesh); dispose(route); mesh = route = null;
+    dispose(mesh); dispose(route); dispose(deck); mesh = route = deck = null;
     destroyGpu();
     lanes = []; trips = []; tripsKey = loaded = null;
-    status.textContent = `${label}: layer off`;
   });
 }
 
@@ -378,16 +421,16 @@ function installTraffic(layer, { url, model, side, outline, label, velocity }) {
  * Source options:
  * - `url`: GeoJSON (Multi)LineStrings, or a JS module whose default export `(time, layer, signal)` returns them (time-dependent data);
  * - `vehicle`: 'car' (default) or 'boat'; `side`: offset right of the lane centreline in metres (vehicle default);
- * - `speed`: m/s of `flow` lanes; `outline`: draw the lanes; `label`: status line prefix in the layers control.
+ * - `speed`: m/s of `flow` lanes; `outline`: draw the lanes.
  * Lane properties: `flow` (vehicles/h) or `timetable` (see scheduledTrips in utils/traffic.js), optional fixed `elevation`
- * in metres, `name`/`description` for the default tooltip. A FeatureCollection `note` is appended to the status line.
+ * in metres, `name`/`description` for the default tooltip. The status line (vehicle count, then the FeatureCollection `note`) sits under the layer's entry in the layers control.
  * The 'sunlight' layer on the same map drives the time; without one, vehicles run live.
  */
 L.Layer.types.traffic = L.Layer.types['3d'].extend({
-  initialize({ url, vehicle = 'car', side, outline = false, label = 'Traffic', speed: velocity = speed, ...options } = {}) {
+  initialize({ url, vehicle = 'car', side, outline = false, speed: velocity = speed, ...options } = {}) {
     if (!url) throw new Error('Traffic needs a source url');
     if (!vehicles[vehicle]) throw new Error(`Unknown vehicle: ${vehicle}`);
-    L.Layer.types['3d'].prototype.initialize.call(this, { tooltipContent: tooltip, ...options });
-    installTraffic(this, { url, model: vehicles[vehicle].model, side: side ?? vehicles[vehicle].side, outline, label, velocity });
+    L.Layer.types['3d'].prototype.initialize.call(this, { tooltipContent: tooltip, nightLight: Boolean(vehicles[vehicle].lights), ...options });
+    installTraffic(this, { url, ...vehicles[vehicle], side: side ?? vehicles[vehicle].side, outline, velocity });
   },
 });

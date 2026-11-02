@@ -1,4 +1,5 @@
 import { atmosphere, moonPosition, solarPosition } from '../utils/sun.js';
+import { underEntry } from '../utils/control.js';
 
 function installSunlight(map) {
   const L = globalThis.L;
@@ -131,14 +132,13 @@ L.Layer.types.sunlight = L.Layer.extend({
   onAdd(map) {
     this.control = this.control || installSunlight(map);
     if (!this.control._map) this.control.addTo(map);
-    // Shown inside the layers control, toggled by this layer's entry; a standalone control without one.
-    const list = map.getContainer().querySelector('.leaflet-control-layers-list');
-    const container = this.control.getContainer();
-    if (list) list.append(container);
-    container.classList.toggle('leaflet-bar', !list);
-    Object.assign(container.style, list
-      ? { background: '', padding: '6px 0 0', marginTop: '6px', borderTop: '1px solid #ddd' }
-      : { background: '#fff', padding: '8px', marginTop: '', borderTop: '' });
+    // Shown under this layer's entry in the layers control; a standalone control without one.
+    const container = this.control.getContainer(), nested = underEntry(this, container);
+    container.classList.toggle('leaflet-control', !nested);
+    container.classList.toggle('leaflet-bar', !nested);
+    Object.assign(container.style, nested
+      ? { background: '', padding: '2px 0 6px 20px', margin: '0' }
+      : { background: '#fff', padding: '8px', margin: '' });
   },
   onRemove() {
     this.control.remove();

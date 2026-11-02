@@ -72,7 +72,7 @@ Then('the cruise route stays between latitudes {float} and {float} and longitude
 Then('cruise boats move along the river on scheduled trips and clean up when disabled', { timeout: 90000 }, async function () {
   const errors = [];
   this.page.on('pageerror', error => errors.push(error.message));
-  await this.page.waitForFunction(() => cruiseBoats?.renderer);
+  await this.page.waitForFunction(() => cruiseBoats?.renderer && map._terrain3D?._terrainReady);
   const result = await this.page.evaluate(async () => {
     const layer = cruiseBoats, owner = L.Layer.types['3d']._renderers.get(map);
     const { along, scheduledTrips } = await import(new URL('../dist/3d/utils/traffic.js', location.href));
@@ -112,7 +112,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     const nightCount = boatCount();
     const route = layer.root.children[0];
     const routeAtNight = route.geometry.drawRange.count > 100 && route.visible && route.extras.featureFaces.length === 0 &&
-      route.program.depthTest === false && route.program.depthWrite === false;
+      route.program.depthTest && route.program.depthWrite === false;
     select('2026-11-02', 555); // 09:15 UTC = first winter departure 10:15 Paris.
     const firstPosition = await firstBoat();
     select('2026-11-02', 565);
@@ -123,9 +123,9 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
     select('2026-11-02', 600);
     const twoTrips = boatCount();
     const properties = boats().extras.featureFaces.map(face => face.properties);
-    // The hull's first vertex sits 0.1 m above the water surface.
+    // The hull's first vertex sits on the water surface.
     const positions = await gpuPositions();
-    const heights = boats().extras.featureFaces.map(face => positions[face.vertexStart * 3 + 1] - 0.1 + layer.root.position[1]);
+    const heights = boats().extras.featureFaces.map(face => positions[face.vertexStart * 3 + 1] + layer.root.position[1]);
     // The CPU copy used for picking must match the compute pass.
     layer.raycast({ clientX: 0, clientY: 0 });
     const cpuMatchesGpu = boats().geometry.attributes.position.data.every((value, i) => Math.abs(value - positions[i]) < 1e-3);
@@ -229,7 +229,7 @@ Then('cruise boats move along the river on scheduled trips and clean up when dis
   const control = this.page.getByRole('checkbox', { name: 'Bateaux-Mouches', exact: true });
   await control.uncheck();
   assert.equal(await this.page.evaluate(() => !cruiseBoats._map && !cruiseBoats.root.children.length &&
-    [...document.querySelectorAll('.traffic-status')].some(status => status.textContent === 'Cruises: layer off')), true);
+    ![...document.querySelectorAll('.traffic-status')].some(status => status.textContent.includes('estimated, not live GPS'))), true);
   await control.check();
   await this.page.waitForFunction(() => cruiseBoats.root.children.length === 2);
   assert.equal(await this.page.evaluate(() => cruiseBoats.root.children.every(mesh =>
