@@ -3,6 +3,7 @@ Feature: Navigation limits on rotated and pitched maps
   Background:
     Given a standalone map with navigation limits is open
 
+  @issue-75
   Scenario Outline: Zoom and programmatic navigation respect the transformed viewport
     When navigation rotation is <enabled> with bearing <bearing> and pitch <pitch>
     Then minimum zoom 14 applies to view changes, wheel zoom and pinch zoom
@@ -16,6 +17,7 @@ Feature: Navigation limits on rotated and pitched maps
       | true    | 135     | 45    |
       | true    | 270     | 85    |
 
+  @issue-75
   Scenario Outline: Viscosity limits the geographic footprint during dragging
     When navigation rotation is <enabled> with bearing <bearing> and pitch <pitch>
     Then viscosity 1 prevents crossing maximum bounds during a mouse drag
