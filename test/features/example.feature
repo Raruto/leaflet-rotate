@@ -51,6 +51,11 @@ Feature: Rotating a Leaflet map
     When I inspect debugger geometry after resizing and moving the map
     Then the debugger reports the current map geometry
 
+  @debugger @issue-76
+  Scenario: Debugger overlays do not intercept marker clicks
+    When I place the debugger overlays over a marker
+    Then the marker receives the pointer events
+
   @example-ui
   Scenario: Example base-layer radios select one layer
     When I switch between the example base layers

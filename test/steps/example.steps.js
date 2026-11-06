@@ -59,6 +59,24 @@ Then('every debugger rotation control matches the map bearing', function () {
   });
 });
 
+When('I place the debugger overlays over a marker', async function () {
+  this.markerHit = await this.page.evaluate(() => {
+    map.setView(markers[0].getLatLng(), 6, { animate: false });
+    map.setBearing(0);
+    const icon = markers[0]._icon;
+    const box = icon.getBoundingClientRect();
+    const mapBox = map._mapPane.getBoundingClientRect();
+    const x = box.left + box.width / 2, y = box.top + box.height / 2;
+    map.___rotatePivotDot.style.left = `${x - mapBox.left - 5}px`;
+    map.___rotatePivotDot.style.top = `${y - mapBox.top - 5}px`;
+    return document.elementFromPoint(x, y) === icon;
+  });
+});
+
+Then('the marker receives the pointer events', function () {
+  assert.equal(this.markerHit, true);
+});
+
 When('I rotate a map with the default rotate control', async function () {
   this.rotateControlVisibility = await this.page.evaluate(() => {
     const container = document.createElement('div');
