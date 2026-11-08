@@ -32,7 +32,7 @@ AfterAll({ timeout: 30000 }, async () => {
 Before({ tags: 'not @unit' }, async function () {
   this.baseUrl = baseUrl;
   this.context = await browser.newContext();
-  await this.context.route(/.html$/, async route => {
+  await this.context.route(/\.html(?:\?|$)/, async route => {
     const response = await route.fetch();
     const version = process.env.LEAFLET_VERSION;
     let body = (await response.text())
