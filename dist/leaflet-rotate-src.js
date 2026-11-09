@@ -84,11 +84,25 @@ var leafletRotate = (() => {
   });
 
   // src/dom/Draggable.js
+  var draggableProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Draggable.prototype));
   L.Draggable.include({
-    /** @TODO */
-    // updateMapBearing(mapBearing) {
-    //     this._mapBearing = mapBearing;
-    // },
+    _onMove(e) {
+      const pointer = e.touches ? e.touches[0] : e;
+      if (this._enabled && this._moving && (!e.touches || e.touches.length === 1)) {
+        const offset = new L.Point(pointer.clientX, pointer.clientY).subtract(this._startPoint);
+        if (!offset.x && !offset.y || Math.abs(offset.x) + Math.abs(offset.y) < this.options.clickTolerance) {
+          L.DomEvent.preventDefault(e);
+          this._newPos = this._startPos.add(new L.Point(
+            offset.x / this._parentScale.x,
+            offset.y / this._parentScale.y
+          ));
+          this._lastEvent = e;
+          this._updatePosition();
+          return;
+        }
+      }
+      return draggableProto._onMove.apply(this, arguments);
+    }
   });
 
   // src/geometry/Point.js
@@ -1577,7 +1591,7 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1.4)
      */
     panInside(latlng, options) {
-      if (!this._rotate || !this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1) {
+      if (!this._rotate) {
         return mapProto.panInside.apply(this, arguments);
       }
       options = options || {};
@@ -1758,7 +1772,7 @@ var leafletRotate = (() => {
         const center = this.getSize().divideBy(2), layerCenter = this.containerPointToLayerPoint(center), opposite = layerCenter.multiplyBy(2).subtract(this.project(latlng).subtract(this._pixelOrigin));
         return center.subtract(this.layerPointToContainerPoint(opposite));
       }
-      return this.latLngToContainerPoint(latlng)._subtract(this.getSize()._divideBy(2));
+      return this.layerPointToContainerPoint(this.project(latlng).subtract(this._pixelOrigin))._subtract(this.getSize()._divideBy(2));
     },
     /**
      * Return the current position of the rotated pane.
@@ -1788,7 +1802,7 @@ var leafletRotate = (() => {
       if (!this._rotate) {
         return mapProto._getNewPixelOrigin.apply(this, arguments);
       }
-      return this.project(center, zoom)._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)))._round();
+      return this.project(center, zoom)._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)));
     },
     /**
      * Calculate the pixel bounds needed to cover the transformed viewport.

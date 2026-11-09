@@ -47,6 +47,22 @@ Feature: Rotating a Leaflet map
     When I focus a marker near the edge of a rotated map
     Then the map center remains unchanged
 
+  @issue-76
+  Scenario: Marker popups still work after dragging and resetting the bearing
+    When I drag between city markers and reset north before clicking Trondheim
+    Then the Trondheim popup opens without jumping back to London
+
+  Scenario Outline: PanInside preserves visibility and minimal movement near bearing zero
+    When I keep padded points visible with rotation <rotate> and bearing <bearing>
+    Then panInside moves only enough to reach the padded viewport
+
+    Examples:
+      | rotate | bearing |
+      | false  | 0       |
+      | true   | 0       |
+      | true   | 2.8     |
+      | true   | 2.9     |
+
   @issue-51
   Scenario: Opening an edge popup pans only enough to keep it visible
     When I open a popup near the edge of a rotated map

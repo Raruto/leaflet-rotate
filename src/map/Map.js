@@ -932,10 +932,11 @@ L.Map.include({
      * @since leaflet-rotate (v0.1.4)
      */
     panInside(latlng, options) {
-        if (!this._rotate || (!this._pitch && Math.abs(this._bearing).toFixed(1) < 0.1)) {
+        if (!this._rotate) {
             return mapProto.panInside.apply(this, arguments);
         }
 
+        // The rotate pane can retain an offset after returning to bearing zero.
         options = options || {};
 
         const paddingTL = toPoint(options.paddingTopLeft || options.padding || [0, 0]),
@@ -1179,7 +1180,8 @@ L.Map.include({
                 opposite = layerCenter.multiplyBy(2).subtract(this.project(latlng).subtract(this._pixelOrigin));
             return center.subtract(this.layerPointToContainerPoint(opposite));
         }
-        return this.latLngToContainerPoint(latlng)._subtract(this.getSize()._divideBy(2));
+        return this.layerPointToContainerPoint(this.project(latlng).subtract(this._pixelOrigin))
+            ._subtract(this.getSize()._divideBy(2));
     },
 
     /**
@@ -1215,9 +1217,9 @@ L.Map.include({
         }
         // the layer point under the view center doesn't depend on zoom (pane transforms only rotate/pitch around the pivot),
         // so this matches `_setBearing` also when the pivot is no longer the view center (eg. after panning)
+        // Keep subpixel centers exact: wheel bursts magnify rounding from earlier zooms.
         return this.project(center, zoom)
-            ._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)))
-            ._round();
+            ._subtract(this.containerPointToLayerPoint(this.getSize()._divideBy(2)));
     },
 
     /**
