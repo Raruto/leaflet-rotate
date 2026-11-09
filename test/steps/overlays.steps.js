@@ -178,6 +178,148 @@ When('I focus a marker near the edge of a rotated map', async function () {
   });
 });
 
+When('I drag between city markers and reset north before clicking Trondheim', { timeout: 30000 }, async function () {
+  await this.page.evaluate(() => {
+    map.options.inertia = false;
+    map.setBearing(0);
+    map.setView(places.Kyiv, 6, { animate: false });
+    markers.forEach((marker, index) => { marker.getElement().id = `city-marker-${index}`; });
+  });
+  const rect = await this.page.locator('#map').boundingBox();
+  await this.page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2 - 20);
+  await this.page.keyboard.down('Control');
+  await this.page.mouse.down();
+  await this.page.mouse.move(rect.x + rect.width / 2 + 75, rect.y + rect.height / 2 - 20, { steps: 8 });
+  await this.page.mouse.up();
+  await this.page.keyboard.up('Control');
+  assert.ok(await this.page.evaluate(() => map.getBearing() > 1 && map.getPitch() === 0));
+
+  const waitForPan = () => this.page.waitForFunction(() => !map._panAnim || !map._panAnim._inProgress);
+  const dragTo = async name => {
+    for (let i = 0; i < 30; i++) {
+      const point = await this.page.evaluate(name => {
+        const point = map.latLngToContainerPoint(places[name]);
+        return { x: point.x, y: point.y };
+      }, name);
+      const dx = Math.max(-rect.width / 4, Math.min(rect.width / 4, rect.width * 0.6 - point.x));
+      const dy = Math.max(-rect.height / 4, Math.min(rect.height / 4, rect.height * 0.65 - point.y));
+      if (Math.hypot(dx, dy) < 2) return;
+      await this.page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      await this.page.mouse.down();
+      await this.page.mouse.move(rect.x + rect.width / 2 + dx, rect.y + rect.height / 2 + dy, { steps: 4 });
+      await this.page.mouse.up();
+    }
+    throw new Error(`Could not drag to ${name}`);
+  };
+  for (const [index, name] of [[0, 'Kyiv'], [1, 'London']]) {
+    await dragTo(name);
+    await this.page.locator(`#city-marker-${index}`).click();
+    await waitForPan();
+    await this.page.locator('.leaflet-popup-close-button').click();
+  }
+  const resetCenter = await this.page.evaluate(() => map.project(map.getCenter()));
+  await this.page.locator('.leaflet-control-rotate-toggle').click();
+  await this.page.waitForFunction(() => map.getBearing() === 0 && !map._bearingAnimationFrame);
+  this.cityPopup = await this.page.evaluate(before => ({
+    resetMovement: map.project(map.getCenter()).distanceTo(new L.Point(before.x, before.y)),
+  }), resetCenter);
+  await dragTo('Trondheim');
+  const before = await this.page.evaluate(() => map.project(map.getCenter()));
+  // Use the pointer position, so a focus-induced jump cannot make Playwright chase the marker.
+  const icon = await this.page.locator('#city-marker-4').boundingBox();
+  await this.page.locator('#city-marker-4').focus();
+  await waitForPan();
+  this.cityPopup.focusMovement = await this.page.evaluate(before =>
+    map.project(map.getCenter()).distanceTo(new L.Point(before.x, before.y)), before);
+  await this.page.mouse.click(icon.x + icon.width / 2, icon.y + icon.height / 2);
+  await waitForPan();
+  Object.assign(this.cityPopup, await this.page.evaluate(before => {
+    const popup = markers[4].getPopup();
+    const rect = map.getContainer().getBoundingClientRect();
+    const popupRect = popup.getElement()?.getBoundingClientRect();
+    const center = map.project(map.getCenter());
+    const viewportCenter = map.project(map.containerPointToLatLng(map.getSize().divideBy(2)));
+    return {
+      open: markers[4].isPopupOpen(),
+      movement: center.distanceTo(new L.Point(before.x, before.y)),
+      centerError: center.distanceTo(viewportCenter),
+      inside: Boolean(popupRect && popupRect.left >= rect.left - 1 && popupRect.right <= rect.right + 1
+        && popupRect.top >= rect.top - 1 && popupRect.bottom <= rect.bottom + 1),
+      size: Math.max(map.getSize().x, map.getSize().y),
+    };
+  }, before));
+});
+
+Then('the Trondheim popup opens without jumping back to London', function () {
+  assert.ok(this.cityPopup.resetMovement < 1, JSON.stringify(this.cityPopup));
+  assert.ok(this.cityPopup.focusMovement < 1, JSON.stringify(this.cityPopup));
+  assert.equal(this.cityPopup.open, true, JSON.stringify(this.cityPopup));
+  assert.equal(this.cityPopup.inside, true, JSON.stringify(this.cityPopup));
+  assert.ok(this.cityPopup.movement < this.cityPopup.size / 2, JSON.stringify(this.cityPopup));
+  assert.ok(this.cityPopup.centerError < 1, JSON.stringify(this.cityPopup));
+});
+
+When('I keep padded points visible with rotation {word} and bearing {float}', async function (rotate, bearing) {
+  this.paddedPans = await this.page.evaluate(({ rotate, bearing }) => {
+    const element = document.createElement('div');
+    element.style.cssText = 'width: 400px; height: 300px; margin-left: 100px';
+    document.body.append(element);
+    const testMap = new L.Map(element, {
+      center: [55, 10], zoom: 6, rotate: rotate === 'true', bearing, rotateControl: false,
+    });
+    const results = [];
+    for (const padding of [
+      {},
+      { padding: [20, 30] },
+      { paddingTopLeft: new L.Point(35, 45), paddingBottomRight: new L.Point(25, 15) },
+    ]) {
+      const tl = padding.paddingTopLeft || new L.Point(...(padding.padding || [0, 0]));
+      const br = padding.paddingBottomRight || new L.Point(...(padding.padding || [0, 0]));
+      const min = tl, max = testMap.getSize().subtract(br);
+      for (const point of [
+        min.add([1, 1]), max.subtract([1, 1]),
+        new L.Point(min.x - 80, 150), new L.Point(max.x + 80, 150),
+        new L.Point(200, min.y - 80), new L.Point(200, max.y + 80),
+        min.subtract([80, 80]), max.add([80, 80]),
+      ]) {
+        testMap.setView([55, 10], 6, { reset: true, animate: false });
+        const latlng = testMap.containerPointToLatLng(point);
+        // Measure the rendered center, avoiding the cached setView center before pixel rounding.
+        const center = testMap.getSize().divideBy(2);
+        const before = testMap.project(testMap.containerPointToLatLng(center));
+        const expected = new L.Point(
+          Math.max(min.x, Math.min(max.x, point.x)),
+          Math.max(min.y, Math.min(max.y, point.y)),
+        );
+        const returnedMap = testMap.panInside(latlng, { ...padding, animate: false });
+        const actual = testMap.latLngToContainerPoint(latlng);
+        const after = testMap.project(testMap.containerPointToLatLng(center));
+        results.push({
+          point, expected, actual, rotate, bearing,
+          chainable: returnedMap === testMap,
+          movement: before.distanceTo(after),
+          expectedMovement: point.distanceTo(expected),
+          error: actual.distanceTo(expected),
+        });
+      }
+    }
+    testMap.remove();
+    element.remove();
+    return results;
+  }, { rotate, bearing });
+});
+
+Then('panInside moves only enough to reach the padded viewport', function () {
+  for (const result of this.paddedPans) {
+    assert.equal(result.chainable, true, JSON.stringify(result));
+    assert.ok(result.error < 1.5, JSON.stringify(result));
+    assert.ok(Math.abs(result.movement - result.expectedMovement) < 1.5, JSON.stringify(result));
+    if (result.expectedMovement === 0) {
+      assert.equal(result.movement, 0, JSON.stringify(result));
+    }
+  }
+});
+
 When('I redraw a heat layer after rotating, panning, and zooming', async function () {
   await this.page.evaluate(() => {
     map.setView([55, 10], 6, { animate: false });

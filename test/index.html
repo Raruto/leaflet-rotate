@@ -293,6 +293,11 @@
 
 		const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 		const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+		const clientPoint = (el, fx, fy) => {
+			const r = el.getBoundingClientRect();
+			// MouseEvent client coordinates are integers; anchors must use the same pixels.
+			return { clientX: Math.round(r.left + el.clientLeft + el.clientWidth * fx), clientY: Math.round(r.top + el.clientTop + el.clientHeight * fy) };
+		};
 		/**
 		 * Create synthetic mouse/pointer/wheel input for one renderer.
 		 * Positions are container fractions (0..1 inside, outside values allowed).
@@ -308,8 +313,7 @@
 			let pressed = 0, button = 0;
 			/** Convert fractional container coordinates to viewport client pixels. */
 			const at = (fx, fy) => {
-				const r = el.getBoundingClientRect();
-				return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy };
+				return clientPoint(el, fx, fy);
 			};
 			/** Hit-test layers/markers; use body outside this map so document listeners still run. */
 			const target = ({ clientX, clientY }) => {
@@ -531,14 +535,25 @@
 			}
 			const anchor = scenario.anchor && (() => {
 				const r = m.el.getBoundingClientRect();
-				return scenario.anchor.map(([fx, fy]) => [r.width * fx, r.height * fy]);
+				return scenario.anchor.map(([fx, fy]) => {
+					const p = clientPoint(m.el, fx, fy);
+					return [p.clientX - r.left - m.el.clientLeft, p.clientY - r.top - m.el.clientTop];
+				});
 			})();
-			const latlng = anchor && m.toLatLng(anchor[0]);
+			let latlng = anchor && m.toLatLng(anchor[0]);
+			const input = driver(key), down = input.down;
+			if (anchor) {
+				input.down = async (...args) => {
+					// A composite rotation + pan anchors the point when the plain pan starts.
+					if (!args[2]?.ctrlKey && !args[2]?.button) latlng = m.toLatLng(anchor[0]);
+					await down(...args);
+				};
+			}
 			const inertia = key === 'lf' && scenario.noInertia ? lf.options.inertia : undefined;
 			if (inertia !== undefined) lf.options.inertia = false;
 			try {
 				if (scenario.goTo) await runGoTo(key, scenario.goTo);
-				else await scenario.run(driver(key));
+				else await scenario.run(input);
 				if (key === 'ml' && scenario.noInertia) ml.stop();
 				await sleep(scenario.settle || 900);
 			} finally {
