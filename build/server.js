@@ -18,6 +18,7 @@ const types = {
   '.json': 'application/json; charset=utf-8',
   '.kml': 'application/vnd.google-earth.kml+xml',
   '.map': 'application/json; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',

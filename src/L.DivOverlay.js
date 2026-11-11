@@ -8,7 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
-import { toPoint } from '../geometry/Point';
+import { L } from './L.js';
+import { toPoint } from './L.Point.js';
 
 const divOverlayProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.DivOverlay.prototype));
 

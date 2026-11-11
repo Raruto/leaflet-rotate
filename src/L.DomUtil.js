@@ -4,7 +4,10 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/DomUtil.js
  */
 
+import { L } from './L.js';
+
 const domUtilProto = Object.assign({}, L.DomUtil);
+export const DomUtil = L.DomUtil;
 
 Object.assign(L.DomUtil, {
     /**
@@ -54,7 +57,7 @@ Object.assign(L.DomUtil, {
             return domUtilProto.setPosition(el, point);
         }
 
-        el._leaflet_pos = point;
+        domUtilProto.setPosition(el, point);
         L.DomUtil.setTransform(el, point, scale, bearing, pivot);
     },
 
@@ -68,6 +71,6 @@ Object.assign(L.DomUtil, {
      * @since leaflet-rotate (v0.1.0)
      */
     getPosition(el) {
-        return el._leaflet_pos || domUtilProto.getPosition(el);
+        return domUtilProto.getPosition(el);
     }
 });

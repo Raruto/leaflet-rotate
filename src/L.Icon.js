@@ -8,6 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from './L.js';
+
 const iconProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Icon.prototype));
 
 L.Icon.include({

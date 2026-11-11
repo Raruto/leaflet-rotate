@@ -8,6 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from './L.js';
+
 L.Map.mergeOptions({
 
     /**
@@ -30,22 +32,25 @@ L.Map.mergeOptions({
 
 });
 
-L.Map.ShiftKeyRotate = L.Handler.extend({
+L.Map.ShiftKeyRotate = class extends L.Handler {
 
     /**
      * @param {L.Map} map Map controlled by this handler.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(map) {
-        this._map = map;
+    constructor(map) {
+        super(map);
         this._onMouseDownBound = this._onMouseDown.bind(this);
         this._onMouseMoveBound = this._onMouseMove.bind(this);
         this._onMouseUpBound = this._onMouseUp.bind(this);
         this._onContextMenuBound = this._onContextMenu.bind(this);
+        this._onClickBound = this._onClick.bind(this);
         this._applyBound = this._apply.bind(this);
-    },
+    }
+};
 
+L.Map.ShiftKeyRotate.include({
     /**
      * Attach enabled wheel and pointer/mouse gesture listeners.
      * 
@@ -82,6 +87,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
             : ['mousedown', 'mousemove', 'mouseup'];
         this._map._container.addEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
         this._map._container.addEventListener('contextmenu', this._onContextMenuBound, true);
+        this._map._container.addEventListener('click', this._onClickBound, true);
         this._pitchHooksAdded = true;
     },
 
@@ -94,6 +100,7 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         if (!this._pitchHooksAdded) { return; }
         this._map._container.removeEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
         this._map._container.removeEventListener('contextmenu', this._onContextMenuBound, true);
+        this._map._container.removeEventListener('click', this._onClickBound, true);
         this._onMouseUp();
         delete this._pitchEvents;
         this._pitchHooksAdded = false;
@@ -202,6 +209,13 @@ L.Map.ShiftKeyRotate = L.Handler.extend({
         if (this._dragging || this._moved) {
             e.preventDefault();
             e.stopPropagation();
+        }
+    },
+
+    _onClick(e) {
+        if (this._moved) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
         }
     },
 

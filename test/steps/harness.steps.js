@@ -7,15 +7,13 @@ import { IdGenerator, SourceMediaType } from '@cucumber/messages';
 Given('the interactive regression page is open', { timeout: 30000 }, async function () {
   this.harnessErrors = [];
   this.page.on('pageerror', error => this.harnessErrors.push(error.message));
-  await this.page.route(/server\.arcgisonline\.com|tile\.openstreetmap\.org/, route =>
-    route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"/>' }));
   const version = process.env.LEAFLET_VERSION === '2' ? '2' : '1';
   await this.page.goto(`${this.baseUrl}/test/index.html?leaflet=${version}&maplibre=0&debug=0`, {
     waitUntil: 'domcontentloaded',
   });
   await this.page.waitForFunction(() => window.runScenario && window.scenarios);
   await this.page.evaluate(() => { map.options.inertia = false; });
-  assert.match(await this.page.evaluate(() => L.version), version === '2' ? /^2\.0\.0-alpha/ : /^1\.9/);
+  assert.match(await this.page.evaluate(() => L.version), version === '2' ? /^2\.0\.0-beta/ : /^1\.9/);
 });
 
 Then('every interactive scenario is listed in the BDD examples', async function () {
@@ -61,13 +59,14 @@ Then('active drags return to their starting position without turning clicks into
     await this.page.mouse.move(start.x + 30, start.y + 30, { steps: 3 });
     await this.page.mouse.move(start.x + offset, start.y);
     await this.page.mouse.up();
-    const result = await this.page.evaluate(() => {
+    const result = await this.page.evaluate(offset => {
       const { element, draggable, starts } = returningDrag;
       const position = L.DomUtil.getPosition(element);
       L.DomUtil.setPosition(element, new L.Point(0, 0));
-      return { x: position.x, y: position.y, starts, moving: draggable._moving };
-    });
-    assert.ok(Math.abs(result.x - offset / 2) < 1e-7, JSON.stringify(result));
+      return { x: position.x, y: position.y, starts, moving: draggable._moving,
+        expectedX: L.version.startsWith('2.') ? Math.round(offset / 2 * devicePixelRatio) / devicePixelRatio : offset / 2 };
+    }, offset);
+    assert.ok(Math.abs(result.x - result.expectedX) < 1e-7, JSON.stringify(result));
     assert.equal(result.y, 0, JSON.stringify(result));
     assert.equal(result.starts, offset + 1, JSON.stringify(result));
     assert.equal(result.moving, false, JSON.stringify(result));

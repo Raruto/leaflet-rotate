@@ -9,14 +9,13 @@ Given('a standalone map with navigation limits is open', { timeout: 30000 }, asy
   this.navigationErrors = [];
   this.page.on('pageerror', error => this.navigationErrors.push(error.message));
   await this.page.clock.install();
-  const version = process.env.LEAFLET_VERSION === '2' ? '2.0.0-alpha.1' : '1.9.4';
-  const script = process.env.LEAFLET_VERSION === '2' ? 'leaflet-global-src.js' : 'leaflet-src.js';
+  const version = process.env.LEAFLET_VERSION === '2' ? '2.0.0-beta.3' : '1.9.4';
+  const script = process.env.LEAFLET_VERSION === '2' ? 'leaflet-global.js' : 'leaflet-src.js';
   await this.page.route('**/test/navigation-bounds.html', route => route.fulfill({
     contentType: 'text/html',
     body: `<!DOCTYPE html><html><head>
       <link rel="stylesheet" href="https://unpkg.com/leaflet@${version}/dist/leaflet.css">
       <script src="https://unpkg.com/leaflet@${version}/dist/${script}"></script>
-      <script>globalThis.L = globalThis.leaflet || globalThis.L;</script>
       <script src="../dist/leaflet-rotate-src.js"></script>
       </head><body style="margin:0"><div id="map" style="width:800px;height:600px"></div></body></html>`,
   }));
@@ -30,7 +29,8 @@ When('navigation rotation is {word} with bearing {int} and pitch {int}', async f
       ...options, center: [48.8582601, 2.29449985], zoom: 17,
       minZoom: 14, maxZoom: 20, maxBounds: [[48.8162, 2.2424], [48.9022, 2.416]],
       maxBoundsViscosity: 1, inertia: false, zoomAnimation: false,
-      rotateControl: false, touchZoom: true, touchRotate: false, touchPitch: false,
+      rotateControl: false, [L.version.startsWith('2.') ? 'pinchZoom' : 'touchZoom']: true,
+      touchRotate: false, touchPitch: false,
       bounceAtZoomLimits: false,
     });
     window.navigationSnapshot = () => {
@@ -79,11 +79,10 @@ Then('minimum zoom 14 applies to view changes, wheel zoom and pinch zoom', async
   assert.equal(await this.page.evaluate(() => map.getZoom()), 14);
   const pinch = await this.page.evaluate(async () => {
     const touch = (x, id) => new Touch({ identifier: id, target: map.getContainer(), clientX: x, clientY: 300 });
-    const dispatch = (type, xs) => map.getContainer().dispatchEvent(new TouchEvent(type, {
-      bubbles: true, cancelable: true, touches: xs.map((x, id) => touch(x, id)),
-    }));
+    const dispatch = (type, xs) => dispatchTouches(map.getContainer(), type, xs.map((x, id) => touch(x, id)));
     dispatch('touchstart', [200, 600]);
     dispatch('touchmove', [350, 450]);
+    await new Promise(requestAnimationFrame);
     const during = map.getZoom();
     dispatch('touchend', []);
     await new Promise(requestAnimationFrame);
