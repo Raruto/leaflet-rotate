@@ -1,7 +1,7 @@
 /**
  * Apply maxBoundsViscosity in projected ground coordinates before moving the map pane.
  */
-import { L } from '../../Leaflet.js';
+import { L } from './L.js';
 
 const DragHandler = L.DragHandler || L.Map.Drag;
 const dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(DragHandler.prototype));

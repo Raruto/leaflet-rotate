@@ -12,7 +12,7 @@
  * Mutation Observer support will likely be added by default in next releases.
  */
 
-import { L } from '../../Leaflet.js';
+import { L } from './L.js';
 
 L.Map.mergeOptions({
 

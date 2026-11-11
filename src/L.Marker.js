@@ -16,7 +16,7 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
  */
 
-import { L } from '../../Leaflet.js';
+import { L } from './L.js';
 
 const markerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Marker.prototype));
 
@@ -66,13 +66,6 @@ L.Marker.mergeOptions({
 let markerDragProto; // retrived at runtime (see below: L.Marker::_initInteraction())
 
 const MarkerDrag = {
-
-    // _onDragStart() {
-    //     if (!this._marker._map._rotate) {
-    //         return markerDragProto._onDragStart.apply(this, arguments);
-    //     }
-    //     this._draggable.updateMapBearing(this._marker._map._bearing);
-    // },
 
     /**
      * Update a dragged marker's geographic position from its transformed icon position.
@@ -179,7 +172,6 @@ L.Marker.include({
             markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
             this.dragging.disable();
             Object.assign(this.dragging, {
-                // _onDragStart: MarkerDrag._onDragStart.bind(this.dragging),
                 _onDrag: MarkerDrag._onDrag.bind(this.dragging),
                 _onDragEnd: MarkerDrag._onDragEnd.bind(this.dragging),
             });
@@ -251,13 +243,6 @@ L.Marker.include({
     _getTooltipAnchor() {
         return this.options.icon.options.tooltipAnchor;
     },
-
-    // _updateZIndex(offset) {
-    //     if (!this._map._rotate) {
-    //         return markerProto._updateZIndex.apply(this, arguments);
-    //     }
-    //     this._icon.style.zIndex = Math.round(this._zIndex + offset);
-    // },
 
     /**
      * Set the marker icon's rotation and redraw it.

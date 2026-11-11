@@ -18,7 +18,7 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
-import { L } from '../Leaflet.js';
+import { L } from './L.js';
 
 export class RotateControl extends L.Control {}
 if (L.version.startsWith('1.')) {

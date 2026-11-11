@@ -8,7 +8,7 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
-import { L } from '../../Leaflet.js';
+import { L } from './L.js';
 
 const gridLayerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.GridLayer.prototype));
 

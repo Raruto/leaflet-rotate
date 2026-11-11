@@ -25,14 +25,14 @@ var leafletRotate = (() => {
     toPoint: () => toPoint
   });
 
-  // src/Leaflet.js
+  // src/L.js
   var Leaflet = globalThis.L;
   var L = {
     ...Leaflet,
     DomUtil: Leaflet.version.startsWith("1.") ? Leaflet.DomUtil : { ...Leaflet.DomUtil }
   };
 
-  // src/dom/DomUtil.js
+  // src/L.DomUtil.js
   var domUtilProto = Object.assign({}, L.DomUtil);
   var DomUtil = L.DomUtil;
   Object.assign(L.DomUtil, {
@@ -93,7 +93,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/dom/Draggable.js
+  // src/L.Draggable.js
   var draggableProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Draggable.prototype));
   L.Draggable.include({
     _onMove(e) {
@@ -118,7 +118,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/geometry/Point.js
+  // src/L.Point.js
   Object.assign(L.Point.prototype, {
     /**
      * Rotate around (0,0) by applying the 2D rotation matrix:
@@ -171,7 +171,7 @@ var leafletRotate = (() => {
     return Array.isArray(point) ? new L.Point(point[0], point[1]) : new L.Point(point.x, point.y);
   }
 
-  // src/layer/DivOverlay.js
+  // src/L.DivOverlay.js
   var divOverlayProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.DivOverlay.prototype));
   L.DivOverlay.include({
     /**
@@ -233,7 +233,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/Popup.js
+  // src/L.Popup.js
   var popupProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Popup.prototype));
   L.Popup.include({
     /**
@@ -293,7 +293,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/Tooltip.js
+  // src/L.Tooltip.js
   var tooltipProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Tooltip.prototype));
   L.Tooltip.include({
     /**
@@ -326,7 +326,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/marker/Icon.js
+  // src/L.Icon.js
   var iconProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Icon.prototype));
   L.Icon.include({
     /**
@@ -357,7 +357,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/marker/Marker.js
+  // src/L.Marker.js
   var markerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Marker.prototype));
   L.Marker.mergeOptions({
     /**
@@ -398,12 +398,6 @@ var leafletRotate = (() => {
   });
   var markerDragProto;
   var MarkerDrag = {
-    // _onDragStart() {
-    //     if (!this._marker._map._rotate) {
-    //         return markerDragProto._onDragStart.apply(this, arguments);
-    //     }
-    //     this._draggable.updateMapBearing(this._marker._map._bearing);
-    // },
     /**
      * Update a dragged marker's geographic position from its transformed icon position.
      * 
@@ -486,7 +480,6 @@ var leafletRotate = (() => {
         markerDragProto = markerDragProto || Object.getPrototypeOf(this.dragging);
         this.dragging.disable();
         Object.assign(this.dragging, {
-          // _onDragStart: MarkerDrag._onDragStart.bind(this.dragging),
           _onDrag: MarkerDrag._onDrag.bind(this.dragging),
           _onDragEnd: MarkerDrag._onDragEnd.bind(this.dragging)
         });
@@ -543,12 +536,6 @@ var leafletRotate = (() => {
     _getTooltipAnchor() {
       return this.options.icon.options.tooltipAnchor;
     },
-    // _updateZIndex(offset) {
-    //     if (!this._map._rotate) {
-    //         return markerProto._updateZIndex.apply(this, arguments);
-    //     }
-    //     this._icon.style.zIndex = Math.round(this._zIndex + offset);
-    // },
     /**
      * Set the marker icon's rotation and redraw it.
      * 
@@ -564,7 +551,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/tile/GridLayer.js
+  // src/L.GridLayer.js
   var gridLayerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.GridLayer.prototype));
   L.GridLayer.include({
     /**
@@ -638,7 +625,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/layer/vector/Renderer.js
+  // src/L.Renderer.js
   var rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
   var rendererBase = Object.getPrototypeOf(L.Renderer.prototype);
   var rendererGetEvents = rendererProto.getEvents || rendererBase.getEvents;
@@ -773,41 +760,6 @@ var leafletRotate = (() => {
       this._container.style.height = size.y + "px";
       return size;
     },
-    // getEvents() {
-    //     const events = {
-    //         viewreset: this._reset,
-    //         zoom: this._onZoom,
-    //         moveend: this._update,
-    //         zoomend: this._onZoomEnd
-    //     };
-    //     if (this._zoomAnimated) {
-    //         events.zoomanim = this._onAnimZoom;
-    //     }
-    //     return events;
-    // },
-    // _onAnimZoom(ev) {
-    //     this._updateTransform(ev.center, ev.zoom);
-    // },
-    // _onZoom() {
-    //     this._updateTransform(this._map.getCenter(), this._map.getZoom());
-    // },
-    // _onZoomEnd() {
-    //     for (const id in this._layers) {
-    //         this._layers[id]._project();
-    //     }
-    // },
-    // _reset() {
-    //     this._update();
-    //     this._updateTransform(this._center, this._zoom);
-    //     for (const id in this._layers) {
-    //         this._layers[id]._reset();
-    //     }
-    // },
-    // _updatePaths() {
-    //     for (const id in this._layers) {
-    //         this._layers[id]._update();
-    //     }
-    // },
     /**
      * Recalculate renderer bounds and cached view state.
      * 
@@ -825,7 +777,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/map/Map.js
+  // src/L.Map.js
   var mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
   L.Map.mergeOptions({
     /**
@@ -985,13 +937,6 @@ var leafletRotate = (() => {
       }
       return toPoint(point)._subtract(this._getRotatePanePos()).rotate(-this._bearing);
     },
-    // latLngToLayerPoint(latlng) {
-    //     const projectedPoint = this.project(L.latLng(latlng))._round();
-    //     return projectedPoint._subtract(this.getPixelOrigin());
-    // },
-    // latLngToContainerPoint(latlng) {
-    // 	return this.layerPointToContainerPoint(this.latLngToLayerPoint(toLatLng(latlng)));
-    // },
     /**
      * Given latlng bounds, returns the bounds in projected pixel
      * relative to the map container.
@@ -1085,22 +1030,6 @@ var leafletRotate = (() => {
       }
       return near + panePos.y;
     },
-    /**
-     * Returns the bounds of the current map view in projected pixel
-     * coordinates (sometimes useful in layer and overlay implementations).
-     * 
-     * @TODO find out if map bounds calculated by `L.Map::getPixelBounds()`
-     *       function should match the `rotatePane` or `norotatePane` bounds
-     *
-     * @see https://github.com/fnicollet/Leaflet/issues/7
-     * 
-     * @returns {L.Bounds}
-     */
-    // getPixelBounds(center, zoom) {
-    //     // const topLeftPoint = map.containerPointToLayerPoint(this._getTopLeftPoint());
-    //     const topLeftPoint = this._getTopLeftPoint(center, zoom);
-    //       return new L.Bounds(topLeftPoint, topLeftPoint.add(this.getSize()));
-    // },
     /**
      * Set the map bearing, optionally animating to the new value.
      * 
@@ -1511,30 +1440,6 @@ var leafletRotate = (() => {
       return this._bearing * (180 / Math.PI);
     },
     /**
-     * Creates a new [map pane](#map-pane) with the given name if it doesn't
-     * exist already, then returns it. The pane is created as a child of
-     * `container`, or as a child of the main map pane if not set.
-     * 
-     * @param {String} name leaflet pane
-     * @param {HTMLElement} [container] parent element
-     * 
-     * @returns {HTMLElement} pane container
-     * 
-     * @since leaflet-rotate (v0.1.0)
-     */
-    // createPane(name, container) {
-    //     if (!this._rotate || name == 'mapPane') {
-    //         return mapProto.createPane.apply(this, arguments);
-    //     }
-    //     // init "rotatePane"
-    //     if (!this._rotatePane) {
-    //         // this._pivot = this.getSize().divideBy(2);
-    //         this._rotatePane = mapProto.createPane.call(this, 'rotatePane', this._mapPane);
-    //         L.DomUtil.setPosition(this._rotatePane, new L.Point(0, 0), this._bearing, this._pivot);
-    //     }
-    //     return mapProto.createPane.call(this, name, container || this._rotatePane);
-    // },
-    /**
      * Panes are DOM elements used to control the ordering of layers on
      * the map. You can access panes with [`map.getPane`](#map-getpane)
      * or [`map.getPanes`](#map-getpanes) methods. New panes can be created
@@ -1707,32 +1612,6 @@ var leafletRotate = (() => {
       }
       return mapProto.panBy.call(this, offset, options);
     },
-    // @method flyToBounds(bounds: LatLngBounds, options?: fitBounds options): this
-    // Sets the view of the map with a smooth animation like [`flyTo`](#map-flyto),
-    // but takes a bounds parameter like [`fitBounds`](#map-fitbounds).
-    // flyToBounds(bounds, options) {
-    //     const target = this._getBoundsCenterZoom(bounds, options);
-    //     return this.flyTo(target.center, target.zoom, options);
-    // },
-    // _getBoundsCenterZoom(bounds, options) {
-    //
-    //     options = options || {};
-    //     bounds = bounds.getBounds ? bounds.getBounds() : toLatLngBounds(bounds);
-    //
-    //     const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]),
-    //           paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]);
-    //
-    //     let zoom = this.getBoundsZoom(bounds, false, paddingTL.add(paddingBR));
-    //
-    //     zoom = (typeof options.maxZoom === 'number') ? Math.min(options.maxZoom, zoom) : zoom;
-    //
-    //     if (zoom === Infinity) {
-    //         return { center: bounds.getCenter(), zoom };
-    //     }
-    //
-    //     return { center, zoom };
-    //
-    // },
     /**
      * Returns the maximum zoom level on which the given bounds fit to the map
      * view in its entirety. If `inside` (optional) is set to `true`, the method
@@ -1762,14 +1641,6 @@ var leafletRotate = (() => {
       }
       return Math.max(min, Math.min(max, zoom));
     },
-    /**
-     * Layer point of the current center
-     * 
-     * @returns {L.Point} layer center
-     */
-    // _getCenterLayerPoint() {
-    //    return this.containerPointToLayerPoint(this.getSize()._divideBy(2));
-    // },
     /**
      * Return the screen-space pan offset needed to center the given geographic point.
      * Under perspective, projecting a negated layer offset is not equivalent to
@@ -1802,10 +1673,6 @@ var leafletRotate = (() => {
     _getRotatePanePos() {
       return this._rotatePanePos || new L.Point(0, 0);
     },
-    // _latLngToNewLayerPoint(latlng, zoom, center) {
-    //    const topLeft = this._getNewPixelOrigin(center, zoom);
-    //    return this.project(latlng, zoom)._subtract(topLeft);
-    //},
     /**
      * Calculate the pixel origin for a target view while preserving bearing-aware alignment.
      * 
@@ -1832,7 +1699,7 @@ var leafletRotate = (() => {
      * 
      * @since leaflet-rotate (v0.2.0)
      * 
-     * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
+     * @see src\L.GridLayer.js::_getTiledPixelBounds()
      */
     _getNewPixelBounds(center, zoom) {
       center = center || this.getCenter();
@@ -1866,7 +1733,7 @@ var leafletRotate = (() => {
      * Convert the padded visible ground rectangle to layer bounds for vector renderers.
      * Clip its far edge before reversing perspective to avoid unbounded render areas.
      *
-     * @see src\layer\vector\Renderer::_update()
+     * @see src\L.Renderer.js::_update()
      * 
      * @param {number} padding Bounds padding as a fraction of map size.
      * @param {boolean} [round=true] Round renderer bounds; navigation needs exact ground coordinates.
@@ -1922,25 +1789,10 @@ var leafletRotate = (() => {
       }
       this.fire("locationfound", data);
     }
-    /**
-     * @see https://github.com/ronikar/Leaflet/blob/5c480ef959b947c3beed7065425a5a36c486262b/src/geo/LatLngBounds.js#L253-L264
-     * 
-     * @param {L.Bounds} points 
-     * 
-     * @returns {L.Bounds}
-     */
-    // toCircumscribedBounds(points) {
-    //     const minX = points.reduce(function (pv, v) { return Math.min(pv, v.x); }, points[0].x),
-    //         maxX = points.reduce(function (pv, v) { return Math.max(pv, v.x); }, points[0].x),
-    //         minY = points.reduce(function (pv, v) { return Math.min(pv, v.y); }, points[0].y),
-    //         maxY = points.reduce(function (pv, v) { return Math.max(pv, v.y); }, points[0].y);
-    //
-    //     return L.bounds(L.point(minX, minY), L.point(maxX, maxY));
-    // },
   });
   L.Map.addInitHook("_initRotation");
 
-  // src/map/handler/CompassBearing.js
+  // src/L.Map.CompassBearing.js
   L.Map.CompassBearing = class extends L.Handler {
     /**
      * @param {L.Map} map Map whose bearing follows device orientation.
@@ -2027,7 +1879,7 @@ var leafletRotate = (() => {
   });
   L.Map.addInitHook("addHandler", "compassBearing", L.Map.CompassBearing);
 
-  // src/map/handler/ContainerMutation.js
+  // src/L.Map.ContainerMutation.js
   L.Map.mergeOptions({
     /**
      * Whether the map uses mutation observers to
@@ -2074,7 +1926,7 @@ var leafletRotate = (() => {
   });
   L.Map.addInitHook("addHandler", "trackContainerMutation", L.Map.ContainerMutation);
 
-  // src/map/handler/Drag.js
+  // src/L.Map.Drag.js
   var DragHandler = L.DragHandler || L.Map.Drag;
   var dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(DragHandler.prototype));
   DragHandler.include({
@@ -2124,7 +1976,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/map/handler/TouchGestures.js
+  // src/L.Map.TouchGestures.js
   var zoomOption = L.version.startsWith("2.") ? "pinchZoom" : "touchZoom";
   function touchToContainerPoint(map, touch) {
     const container = map.getContainer(), rect = container.getBoundingClientRect();
@@ -2398,7 +2250,7 @@ var leafletRotate = (() => {
   });
   L.Map.addInitHook("addHandler", "touchGestures", L.Map.TouchGestures);
 
-  // src/map/handler/TouchRotate.js
+  // src/L.Map.TouchRotate.js
   L.Map.mergeOptions({
     /**
      * Whether the map can be rotated with a two-finger rotation gesture
@@ -2432,7 +2284,7 @@ var leafletRotate = (() => {
   });
   L.Map.addInitHook("addHandler", "touchRotate", L.Map.TouchRotate);
 
-  // src/map/handler/TouchPitch.js
+  // src/L.Map.TouchPitch.js
   L.Map.mergeOptions({
     /**
      * Whether the map can be pitched by dragging two fingers vertically
@@ -2466,7 +2318,7 @@ var leafletRotate = (() => {
   });
   L.Map.addInitHook("addHandler", "touchPitch", L.Map.TouchPitch);
 
-  // src/map/handler/ShiftKeyRotate.js
+  // src/L.Map.ShiftKeyRotate.js
   L.Map.mergeOptions({
     /**
      * Whether Shift+wheel changes the map bearing.
@@ -2697,7 +2549,7 @@ var leafletRotate = (() => {
     }
   });
 
-  // src/map/handler/TouchZoom.js
+  // src/L.Map.TouchZoom.js
   var zoomOption2 = L.version.startsWith("2.") ? "pinchZoom" : "touchZoom";
   L.Map.mergeOptions({
     /**
@@ -2755,7 +2607,7 @@ var leafletRotate = (() => {
     if (enabled) this[zoomOption2].enable();
   });
 
-  // src/control/Rotate.js
+  // src/L.Control.Rotate.js
   var RotateControl = class extends L.Control {
   };
   if (L.version.startsWith("1.")) {

@@ -7,7 +7,7 @@
  * @since leaflet-rotate (0.5.1)
  */
 
-import { L } from '../../Leaflet.js';
+import { L } from './L.js';
 
 L.Map.mergeOptions({
 

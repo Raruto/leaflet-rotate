@@ -4,7 +4,7 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/DomUtil.js
  */
 
-import { L } from '../Leaflet.js';
+import { L } from './L.js';
 
 const domUtilProto = Object.assign({}, L.DomUtil);
 export const DomUtil = L.DomUtil;

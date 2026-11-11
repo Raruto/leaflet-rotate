@@ -8,8 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
-import { L } from '../Leaflet.js';
-import { toPoint } from '../geometry/Point.js';
+import { L } from './L.js';
+import { toPoint } from './L.Point.js';
 
 const popupProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Popup.prototype));
 
