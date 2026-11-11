@@ -30,35 +30,35 @@
 // export * from './core/index';
 
 // dom
-export * from './dom/DomUtil';
-export * from './dom/Draggable';
+export * from './dom/DomUtil.js';
+export * from './dom/Draggable.js';
 
 // geometry
-export * from './geometry/Point';
-export * from './geometry/Bounds';
+export * from './geometry/Point.js';
+export * from './geometry/Bounds.js';
 
 // geo
-export * from './geo/LatLngBounds';
+export * from './geo/LatLngBounds.js';
 
 // layer
-export * from './layer/DivOverlay';
-export * from './layer/Popup';
-export * from './layer/Tooltip';
-export * from './layer/marker/Icon';
-export * from './layer/marker/Marker';
-export * from './layer/tile/GridLayer';
-export * from './layer/vector/Renderer';
+export * from './layer/DivOverlay.js';
+export * from './layer/Popup.js';
+export * from './layer/Tooltip.js';
+export * from './layer/marker/Icon.js';
+export * from './layer/marker/Marker.js';
+export * from './layer/tile/GridLayer.js';
+export * from './layer/vector/Renderer.js';
 
 // map
-export * from './map/Map';
-export * from './map/handler/CompassBearing';
-export * from './map/handler/ContainerMutation';
-export * from './map/handler/Drag';
-export * from './map/handler/TouchGestures';
-export * from './map/handler/TouchRotate';
-export * from './map/handler/TouchPitch';
-export * from './map/handler/ShiftKeyRotate';
-export * from './map/handler/TouchZoom';
+export * from './map/Map.js';
+export * from './map/handler/CompassBearing.js';
+export * from './map/handler/ContainerMutation.js';
+export * from './map/handler/Drag.js';
+export * from './map/handler/TouchGestures.js';
+export * from './map/handler/TouchRotate.js';
+export * from './map/handler/TouchPitch.js';
+export * from './map/handler/ShiftKeyRotate.js';
+export * from './map/handler/TouchZoom.js';
 
 // custom controls
-export * from './control/Rotate';
+export * from './control/Rotate.js';

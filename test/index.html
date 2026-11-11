@@ -41,7 +41,7 @@
 		<h1><a href="https://github.com/Raruto/leaflet-rotate" title="View on GitHub">leaflet-rotate</a></h1>
 		<fieldset>
 			<legend>Setup</legend>
-			<label>Leaflet <select id="leaflet-version"><option value="1">1.9.4</option><option value="2">2.0.0-alpha.1</option></select></label>
+			<label>Leaflet <select id="leaflet-version"><option value="1">1.9.4</option><option value="2">2.0.0-beta.3</option></select></label>
 			<label title="Compare with MapLibre GL side by side"><input type="checkbox" id="maplibre"> MapLibre</label>
 			<label class="ml-only" title="Keep both views in sync (the hovered map drives the other one)"><input type="checkbox" id="sync" checked> sync</label>
 			<label title="Show the leaflet-rotate debug overlays and info panel"><input type="checkbox" id="debug"> debug</label>
@@ -104,9 +104,8 @@
 		});
 		const loadStyle = href => document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href }));
 		const v2 = $('leaflet-version').value === '2';
-		$('leaflet-css').href = `https://unpkg.com/leaflet@${v2 ? '2.0.0-alpha.1' : '1.9.4'}/dist/leaflet.css`;
-		await loadScript(`https://unpkg.com/leaflet@${v2 ? '2.0.0-alpha.1/dist/leaflet-global-src.js' : '1.9.4/dist/leaflet-src.js'}`);
-		if (v2) globalThis.L = globalThis.leaflet;
+		$('leaflet-css').href = `https://unpkg.com/leaflet@${v2 ? '2.0.0-beta.3' : '1.9.4'}/dist/leaflet.css`;
+		await loadScript(`https://unpkg.com/leaflet@${v2 ? '2.0.0-beta.3/dist/leaflet-global.js' : '1.9.4/dist/leaflet-src.js'}`);
 		await loadScript('../dist/leaflet-rotate-src.js');
 		if ($('debug').checked) await loadScript('../lib/debug.js');
 		if (compare) {
@@ -142,13 +141,13 @@
 			touchPitch: true,
 			zoomSnap: $('snap').checked ? 0 : 1,
 		});
-		window.layers = new L.Control.Layers({ 'Empty': new L.TileLayer(''), 'Streets': osm, 'Satellite': esri }, null, { collapsed: false }).addTo(lf);
+		window.layers = new (L.LayersControl || L.Control.Layers)({ 'Empty': new L.TileLayer(''), 'Streets': osm, 'Satellite': esri }, null, { collapsed: false }).addTo(lf);
 		window.markers = Object.keys(places).map((name, i) => new L.Marker(places[name], { draggable: true })
 			.bindPopup(`<b>${name}</b><br>${loremIpsum}`)
 			.bindTooltip(`<b>${name}</b>`, i ? {} : { direction: 'right', permanent: true })
 			.addTo(lf));
 		window.path = new L.Polyline(route, { color: 'yellow', renderer: new L.Canvas() }).addTo(lf);
-		window.circle = new L.Circle([53, 4], 111111).addTo(lf);
+		window.circle = new L.Circle([53, 4], { radius: 111111 }).addTo(lf);
 		window.polygon = new L.Polygon(polygonLatLngs).addTo(lf);
 		window.rectangle = new L.Rectangle([[60.81123, 25.71632], [60.81028, 25.73166], [60.7997, 25.72892], [60.80061, 25.71362]]).addTo(lf);
 		if ($('debug').checked) {

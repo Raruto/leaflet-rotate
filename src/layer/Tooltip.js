@@ -8,6 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from '../Leaflet.js';
+
 const tooltipProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Tooltip.prototype));
 
 L.Tooltip.include({

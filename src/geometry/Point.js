@@ -4,6 +4,8 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/geometry/Point.js
  */
 
+import { L } from '../Leaflet.js';
+
 Object.assign(L.Point.prototype, {
 
     /**

@@ -31,7 +31,8 @@
  * @since leaflet-rotate (0.5.0)
  */
 
-import { toPoint } from '../geometry/Point';
+import { L } from '../Leaflet.js';
+import { toPoint } from '../geometry/Point.js';
 
 const mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
 
@@ -104,20 +105,12 @@ L.Map.include({
     },
 
     /**
-     * Initialize the Leaflet map and apply its initial bearing and pitch.
-     * 
-     * @param {HTMLElement|string} id Map container element or its ID.
-     * @param {Object} [options={}] Leaflet map options, including `rotate`, `bearing`, and `pitch`.
+     * Subscribe to camera changes and apply the initial bearing and pitch
+     * after Leaflet has initialized the map.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(id, options) {
-        if (options.rotate) {
-            this._rotate = true;
-            this._bearing = 0;
-            this._pitch = 0;
-        }
-        mapProto.initialize.apply(this, arguments);
+    _initRotation() {
         if (this.options.rotate) {
             this.on('resize', this._updatePitchTransform, this);
             this.on('movestart dragstart', this._startPitchPan, this);
@@ -520,7 +513,7 @@ L.Map.include({
         this._rotatePanePos = newPos;
 
         if (this._pitch) {
-            this._rotatePane._leaflet_pos = oldPos;
+            L.DomUtil.setPosition(this._rotatePane, oldPos);
             this._updatePitchTransform();
         } else {
             L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
@@ -584,7 +577,7 @@ L.Map.include({
         const pivot = this._getPixelCenter(),
             size = this.getSize(),
             perspective = Math.max(1, size.y * 1.5),
-            position = this._rotatePane._leaflet_pos || new L.Point(0, 0),
+            position = L.DomUtil.getPosition(this._rotatePane),
             transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
 
         this._setPitchTransform(transform);
@@ -803,7 +796,7 @@ L.Map.include({
      * @since leaflet-rotate (0.5.1)
      */
     setZoomAround(latlng, zoom, options) {
-        if (!this._pitch) {
+        if (!this._rotate || (!this._pitch && !L.version.startsWith('2.'))) {
             return mapProto.setZoomAround.apply(this, arguments);
         }
         const scale = this.getZoomScale(zoom),
@@ -879,6 +872,9 @@ L.Map.include({
      * @since leaflet-rotate (v0.1.0)
      */
     _initPanes() {
+        this._rotate = !!this.options.rotate;
+        this._bearing = 0;
+        this._pitch = 0;
         const panes = this._panes = {};
         this._paneRenderers = {};
 
@@ -1070,6 +1066,10 @@ L.Map.include({
                 center = this.unproject(this.project(this.getCenter()).subtract(shift));
             this._resetView(this._limitCenter(center, this._zoom, this.options.maxBounds), this._zoom);
             return this;
+        }
+        if (this._rotate && L.version.startsWith('2.')) {
+            // Leaflet 2's public panBy now offsets projected geography, not the screen.
+            return mapProto._panBy.call(this, offset.round(), options);
         }
         return mapProto.panBy.call(this, offset, options);
     },
@@ -1363,3 +1363,5 @@ L.Map.include({
     // },
 
 });
+
+L.Map.addInitHook('_initRotation');

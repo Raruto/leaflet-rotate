@@ -15,10 +15,15 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from '../Leaflet.js';
+
 const draggableProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Draggable.prototype));
 
 L.Draggable.include({
     _onMove(e) {
+        if (L.version.startsWith('2.')) {
+            return draggableProto._onMove.apply(this, arguments);
+        }
         const pointer = e.touches ? e.touches[0] : e;
         if (this._enabled && this._moving && (!e.touches || e.touches.length === 1)) {
             const offset = new L.Point(pointer.clientX, pointer.clientY).subtract(this._startPoint);

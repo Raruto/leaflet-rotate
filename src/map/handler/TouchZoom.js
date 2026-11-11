@@ -4,11 +4,16 @@
  * @see https://github.com/Leaflet/Leaflet/blob/v1.9.3/src/map/handler/Map.TouchZoom.js
  * 
  * @external L.Map.TouchZoom
- * @property {boolean|string} [touchZoom=L.Browser.touch] Enable pinch zoom; `'center'` zooms around the view center.
+ * @property {boolean|string} touchZoom Enable pinch zoom on Leaflet 1.9; `'center'` uses the view center.
+ * @property {boolean|string} pinchZoom The corresponding option and handler on Leaflet 2.
  * @property {boolean} [bounceAtZoomLimits=false] Allow pinch zoom to exceed zoom limits before settling.
  * 
  * @since leaflet-rotate (v0.1.0)
  */
+
+import { L } from '../../Leaflet.js';
+
+const zoomOption = L.version.startsWith('2.') ? 'pinchZoom' : 'touchZoom';
 
 L.Map.mergeOptions({
 
@@ -23,7 +28,7 @@ L.Map.mergeOptions({
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    touchZoom: L.Browser.touch,
+    [zoomOption]: L.version.startsWith('2.') || L.Browser.touch,
 
     /**
      * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`
@@ -40,7 +45,8 @@ L.Map.mergeOptions({
 
 });
 
-L.Map.TouchZoom = L.Handler.extend({
+L.Map.TouchZoom = class extends L.Handler {};
+L.Map.TouchZoom.include({
 
     /**
      * Enable pinch zoom handling and mark the shared touch handler as active.
@@ -66,10 +72,16 @@ L.Map.TouchZoom = L.Handler.extend({
 });
 
 /**
- * Add Touch Zoom handler (disabled unless `L.Browser.touch` is set).
+ * Replace Leaflet's pinch zoom handler with the shared gesture implementation.
  * 
  * @property {L.Map.TouchGestures} touchGestures
  * 
  * @since leaflet-rotate (v0.1.0)
  */
-L.Map.addInitHook('addHandler', 'touchZoom', L.Map.TouchZoom);
+L.Map.addInitHook(function () {
+    // Replace the core handler rather than leaving two pinch implementations enabled.
+    const enabled = this[zoomOption].enabled();
+    this[zoomOption].disable();
+    this.addHandler(zoomOption, L.Map.TouchZoom);
+    if (enabled) this[zoomOption].enable();
+});

@@ -16,6 +16,8 @@
  * @see https://github.com/Leaflet/Leaflet/tree/v1.9.3/src/dom/Draggable.js
  */
 
+import { L } from '../../Leaflet.js';
+
 const markerProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Marker.prototype));
 
 L.Marker.mergeOptions({
@@ -239,6 +241,15 @@ L.Marker.include({
         }
 
         return bearing;
+    },
+
+    // Keep Leaflet 1.9's screen-space anchors; Leaflet 2 interprets rotation as degrees.
+    _getPopupAnchor() {
+        return this.options.icon.options.popupAnchor;
+    },
+
+    _getTooltipAnchor() {
+        return this.options.icon.options.tooltipAnchor;
     },
 
     // _updateZIndex(offset) {

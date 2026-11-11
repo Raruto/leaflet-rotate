@@ -3,15 +3,15 @@ import { Given, Then } from '@cucumber/cucumber';
 
 Given('a standalone pitched map is open', async function () {
   const leaflet = process.env.LEAFLET_VERSION === '2'
-    ? '<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script><script>globalThis.L = globalThis.leaflet;</script>'
+    ? '<script src="https://unpkg.com/leaflet@2.0.0-beta.3/dist/leaflet-global.js"></script>'
     : '<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>';
-  await this.page.goto(`${this.baseUrl}/test/index.html`);
+  await this.page.goto(this.baseUrl);
   await this.page.setContent(`<!doctype html>
     <html lang="en">
       <head>
         <meta charset="utf-8">
         <base href="${this.baseUrl}/">
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@${process.env.LEAFLET_VERSION === '2' ? '2.0.0-alpha.1' : '1.9'}/dist/leaflet.css">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@${process.env.LEAFLET_VERSION === '2' ? '2.0.0-beta.3' : '1.9'}/dist/leaflet.css">
         ${leaflet}
         <script src="dist/leaflet-rotate-src.js"></script>
       </head>

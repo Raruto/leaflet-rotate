@@ -5,7 +5,14 @@
 	"type": "module",
 	"main": "dist/leaflet-rotate.js",
 	"browser": "dist/leaflet-rotate.js",
-	"module": "src/index.js",
+	"module": "dist/leaflet-rotate.mjs",
+	"exports": {
+		".": {
+			"import": "./dist/leaflet-rotate.mjs",
+			"default": "./dist/leaflet-rotate.js"
+		},
+		"./*": "./*"
+	},
 	"scripts": {
 		"dev": "node build/dev.js",
 		"build": "node build/build.js",
@@ -47,7 +54,7 @@
 	},
 	"homepage": "https://github.com/Raruto/leaflet-rotate#readme",
 	"peerDependencies": {
-		"leaflet": "^1.9.3 || ^2.0.0-alpha.1"
+		"leaflet": "^1.9.3 || ^2.0.0-beta.3"
 	},
 	"devDependencies": {
 		"@cucumber/cucumber": "^10.3.1",

@@ -7,6 +7,8 @@
  * @since leaflet-rotate (0.5.1)
  */
 
+import { L } from '../../Leaflet.js';
+
 L.Map.mergeOptions({
 
     /**
@@ -20,7 +22,8 @@ L.Map.mergeOptions({
 
 });
 
-L.Map.TouchPitch = L.Handler.extend({
+L.Map.TouchPitch = class extends L.Handler {};
+L.Map.TouchPitch.include({
 
     /**
      * Enable pitch handling in the map's shared touch gesture handler.

@@ -20,11 +20,21 @@ var leafletRotate = (() => {
   // src/index.js
   var index_exports = {};
   __export(index_exports, {
+    DomUtil: () => DomUtil,
+    RotateControl: () => RotateControl,
     toPoint: () => toPoint
   });
 
+  // src/Leaflet.js
+  var Leaflet = globalThis.L;
+  var L = {
+    ...Leaflet,
+    DomUtil: Leaflet.version.startsWith("1.") ? Leaflet.DomUtil : { ...Leaflet.DomUtil }
+  };
+
   // src/dom/DomUtil.js
   var domUtilProto = Object.assign({}, L.DomUtil);
+  var DomUtil = L.DomUtil;
   Object.assign(L.DomUtil, {
     /**
      * Resets the 3D CSS transform of `el` so it is translated by `offset` pixels,
@@ -66,7 +76,7 @@ var leafletRotate = (() => {
       if (!bearing) {
         return domUtilProto.setPosition(el, point);
       }
-      el._leaflet_pos = point;
+      domUtilProto.setPosition(el, point);
       L.DomUtil.setTransform(el, point, scale, bearing, pivot);
     },
     /**
@@ -79,7 +89,7 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1.0)
      */
     getPosition(el) {
-      return el._leaflet_pos || domUtilProto.getPosition(el);
+      return domUtilProto.getPosition(el);
     }
   });
 
@@ -87,6 +97,9 @@ var leafletRotate = (() => {
   var draggableProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Draggable.prototype));
   L.Draggable.include({
     _onMove(e) {
+      if (L.version.startsWith("2.")) {
+        return draggableProto._onMove.apply(this, arguments);
+      }
       const pointer = e.touches ? e.touches[0] : e;
       if (this._enabled && this._moving && (!e.touches || e.touches.length === 1)) {
         const offset = new L.Point(pointer.clientX, pointer.clientY).subtract(this._startPoint);
@@ -523,6 +536,13 @@ var leafletRotate = (() => {
       }
       return bearing;
     },
+    // Keep Leaflet 1.9's screen-space anchors; Leaflet 2 interprets rotation as degrees.
+    _getPopupAnchor() {
+      return this.options.icon.options.popupAnchor;
+    },
+    _getTooltipAnchor() {
+      return this.options.icon.options.tooltipAnchor;
+    },
     // _updateZIndex(offset) {
     //     if (!this._map._rotate) {
     //         return markerProto._updateZIndex.apply(this, arguments);
@@ -868,20 +888,12 @@ var leafletRotate = (() => {
       this._onZoomTransitionEnd();
     },
     /**
-     * Initialize the Leaflet map and apply its initial bearing and pitch.
-     * 
-     * @param {HTMLElement|string} id Map container element or its ID.
-     * @param {Object} [options={}] Leaflet map options, including `rotate`, `bearing`, and `pitch`.
+     * Subscribe to camera changes and apply the initial bearing and pitch
+     * after Leaflet has initialized the map.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(id, options) {
-      if (options.rotate) {
-        this._rotate = true;
-        this._bearing = 0;
-        this._pitch = 0;
-      }
-      mapProto.initialize.apply(this, arguments);
+    _initRotation() {
       if (this.options.rotate) {
         this.on("resize", this._updatePitchTransform, this);
         this.on("movestart dragstart", this._startPitchPan, this);
@@ -1215,7 +1227,7 @@ var leafletRotate = (() => {
       this._bearing = bearing;
       this._rotatePanePos = newPos;
       if (this._pitch) {
-        this._rotatePane._leaflet_pos = oldPos;
+        L.DomUtil.setPosition(this._rotatePane, oldPos);
         this._updatePitchTransform();
       } else {
         L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
@@ -1270,7 +1282,7 @@ var leafletRotate = (() => {
       if (!this._pitch || !this._rotatePane) {
         return;
       }
-      const pivot = this._getPixelCenter(), size = this.getSize(), perspective = Math.max(1, size.y * 1.5), position = this._rotatePane._leaflet_pos || new L.Point(0, 0), transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
+      const pivot = this._getPixelCenter(), size = this.getSize(), perspective = Math.max(1, size.y * 1.5), position = L.DomUtil.getPosition(this._rotatePane), transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
       this._setPitchTransform(transform);
     },
     /**
@@ -1478,7 +1490,7 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (0.5.1)
      */
     setZoomAround(latlng, zoom, options) {
-      if (!this._pitch) {
+      if (!this._rotate || !this._pitch && !L.version.startsWith("2.")) {
         return mapProto.setZoomAround.apply(this, arguments);
       }
       const scale = this.getZoomScale(zoom), size = this.getSize(), center = this.containerPointToLayerPoint(size.divideBy(2)), containerPoint = latlng instanceof L.Point ? latlng : this.latLngToContainerPoint(latlng), point = this.containerPointToLayerPoint(containerPoint), newCenter = this.layerPointToLatLng(center.add(point.subtract(center).multiplyBy(1 - 1 / scale)));
@@ -1545,6 +1557,9 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1.0)
      */
     _initPanes() {
+      this._rotate = !!this.options.rotate;
+      this._bearing = 0;
+      this._pitch = 0;
       const panes = this._panes = {};
       this._paneRenderers = {};
       this._mapPane = this.createPane("mapPane", this._container);
@@ -1686,6 +1701,9 @@ var leafletRotate = (() => {
         const anchor = this.getSize().divideBy(2), panePos = this._getMapPanePos(), layerAnchor = this.containerPointToLayerPoint(anchor), target = anchor.subtract(offset).subtract(panePos), shift = (this._pitch ? this._transformPitchPoint(target, this._pitchInverseTransform, anchor.subtract(panePos)) : this.containerPointToLayerPoint(anchor.subtract(offset))).subtract(layerAnchor), center = this.unproject(this.project(this.getCenter()).subtract(shift));
         this._resetView(this._limitCenter(center, this._zoom, this.options.maxBounds), this._zoom);
         return this;
+      }
+      if (this._rotate && L.version.startsWith("2.")) {
+        return mapProto._panBy.call(this, offset.round(), options);
       }
       return mapProto.panBy.call(this, offset, options);
     },
@@ -1920,23 +1938,26 @@ var leafletRotate = (() => {
     //     return L.bounds(L.point(minX, minY), L.point(maxX, maxY));
     // },
   });
+  L.Map.addInitHook("_initRotation");
 
   // src/map/handler/CompassBearing.js
-  L.Map.CompassBearing = L.Handler.extend({
+  L.Map.CompassBearing = class extends L.Handler {
     /**
      * @param {L.Map} map Map whose bearing follows device orientation.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(map) {
-      this._map = map;
+    constructor(map) {
+      super(map);
       if ("ondeviceorientationabsolute" in window) {
         this.__deviceOrientationEvent = "deviceorientationabsolute";
       } else if ("ondeviceorientation" in window) {
         this.__deviceOrientationEvent = "deviceorientation";
       }
       this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
-    },
+    }
+  };
+  L.Map.CompassBearing.include({
     /**
      * Subscribe to the supported device-orientation event, if available.
      * On iOS, permission is requested first (call `enable()` from a user gesture).
@@ -2022,7 +2043,9 @@ var leafletRotate = (() => {
      */
     trackContainerMutation: false
   });
-  L.Map.ContainerMutation = L.Handler.extend({
+  L.Map.ContainerMutation = class extends L.Handler {
+  };
+  L.Map.ContainerMutation.include({
     /**
      * Start observing the map container's style attribute.
      * 
@@ -2030,7 +2053,7 @@ var leafletRotate = (() => {
      */
     addHooks() {
       if (!this._observer) {
-        this._observer = new MutationObserver(L.Util.bind(this._map.invalidateSize, this._map));
+        this._observer = new MutationObserver(this._map.invalidateSize.bind(this._map));
       }
       this._observer.observe(this._map.getContainer(), {
         childList: false,
@@ -2052,8 +2075,9 @@ var leafletRotate = (() => {
   L.Map.addInitHook("addHandler", "trackContainerMutation", L.Map.ContainerMutation);
 
   // src/map/handler/Drag.js
-  var dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.Drag.prototype));
-  L.Map.Drag.include({
+  var DragHandler = L.DragHandler || L.Map.Drag;
+  var dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(DragHandler.prototype));
+  DragHandler.include({
     /**
      * Capture the ground footprint and pointer anchor before a constrained drag.
      */
@@ -2101,6 +2125,7 @@ var leafletRotate = (() => {
   });
 
   // src/map/handler/TouchGestures.js
+  var zoomOption = L.version.startsWith("2.") ? "pinchZoom" : "touchZoom";
   function touchToContainerPoint(map, touch) {
     const container = map.getContainer(), rect = container.getBoundingClientRect();
     return new L.Point(
@@ -2118,7 +2143,7 @@ var leafletRotate = (() => {
      */
     bounceAtZoomLimits: true
   });
-  L.Map.TouchGestures = L.Handler.extend({
+  L.Map.TouchGestures = class extends L.Handler {
     /**
      * Initialize the shared handler from the map's touch zoom/rotation options.
      * 
@@ -2126,19 +2151,29 @@ var leafletRotate = (() => {
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(map) {
-      this._map = map;
+    constructor(map) {
+      super(map);
       this.rotate = !!this._map.options.touchRotate;
-      this.zoom = !!this._map.options.touchZoom;
+      this.zoom = !!this._map.options[zoomOption];
       this.pitch = !!this._map.options.touchPitch;
-    },
+    }
+  };
+  L.Map.TouchGestures.include({
     /**
      * Listen for the start of two-finger gestures on the map container.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
-      L.DomEvent.on(this._map._container, "touchstart", this._onTouchStart, this);
+      const container = this._map._container;
+      if (L.version.startsWith("2.")) {
+        this._pointers = /* @__PURE__ */ new Map();
+        L.DomEvent.on(container, "pointerdown", this._onPointerDown, this);
+        L.DomEvent.on(container, "pointermove", this._onPointerMove, this);
+        L.DomEvent.on(container, "pointerup pointercancel lostpointercapture", this._onPointerUp, this);
+      } else {
+        L.DomEvent.on(container, "touchstart", this._onTouchStart, this);
+      }
     },
     /**
      * Remove the touch-start listener.
@@ -2146,7 +2181,59 @@ var leafletRotate = (() => {
      * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
-      L.DomEvent.off(this._map._container, "touchstart", this._onTouchStart, this);
+      const container = this._map._container;
+      L.DomEvent.off(container, "touchstart", this._onTouchStart, this);
+      L.DomEvent.off(container, "pointerdown", this._onPointerDown, this);
+      L.DomEvent.off(container, "pointermove", this._onPointerMove, this);
+      L.DomEvent.off(container, "pointerup pointercancel lostpointercapture", this._onPointerUp, this);
+      cancelAnimationFrame(this._gestureFrame);
+      this._gestureFrame = null;
+      if (this._pointers) this._pointers.clear();
+      this._onTouchEnd();
+    },
+    _pointerTouches(e) {
+      return {
+        touches: [...this._pointers.values()],
+        preventDefault: () => e.preventDefault()
+      };
+    },
+    _onPointerDown(e) {
+      if (e.pointerType === "mouse") {
+        return;
+      }
+      this._pointers.set(e.pointerId, e);
+      this._onTouchStart(this._pointerTouches(e));
+    },
+    _onPointerMove(e) {
+      if (!this._pointers.has(e.pointerId)) {
+        return;
+      }
+      this._pointers.set(e.pointerId, e);
+      if (!this._gesture) {
+        return;
+      }
+      e.preventDefault();
+      if (!this._gestureFrame) {
+        this._gestureFrame = requestAnimationFrame(() => {
+          this._gestureFrame = null;
+          this._onTouchMove(this._pointerTouches(e));
+        });
+      }
+    },
+    _onPointerUp(e) {
+      if (e.type === "lostpointercapture" && e.buttons) {
+        return;
+      }
+      if (!this._pointers.has(e.pointerId)) {
+        return;
+      }
+      if (this._gestureFrame) {
+        cancelAnimationFrame(this._gestureFrame);
+        this._gestureFrame = null;
+        this._onTouchMove(this._pointerTouches(e));
+      }
+      this._pointers.delete(e.pointerId);
+      if (this._pointers.size < 2) this._onTouchEnd();
     },
     /**
      * Record initial touch points and start tracking a two-finger gesture.
@@ -2172,7 +2259,7 @@ var leafletRotate = (() => {
       this._centerPoint = map.getSize()._divideBy(2);
       this._startLatLng = map.containerPointToLatLng(this._centerPoint);
       if (this.zoom) {
-        if (map.options.touchZoom !== "center") {
+        if (map.options[zoomOption] !== "center") {
           this._pinchStartLatLng = map.containerPointToLatLng(p1.add(p2)._divideBy(2));
         }
         this._startDist = p1.distanceTo(p2);
@@ -2193,7 +2280,10 @@ var leafletRotate = (() => {
       }
       this._moved = false;
       map._stop();
-      L.DomEvent.on(document, "touchmove", this._onTouchMove, this).on(document, "touchend touchcancel", this._onTouchEnd, this);
+      if (!L.version.startsWith("2.")) {
+        L.DomEvent.on(document, "touchmove", this._onTouchMove, this);
+        L.DomEvent.on(document, "touchend touchcancel", this._onTouchEnd, this);
+      }
       L.DomEvent.preventDefault(e);
     },
     /**
@@ -2249,7 +2339,7 @@ var leafletRotate = (() => {
         if (!map.options.bounceAtZoomLimits && (this._zoom < map.getMinZoom() && scale < 1 || this._zoom > map.getMaxZoom() && scale > 1)) {
           this._zoom = map._limitZoom(this._zoom);
         }
-        if (map.options.touchZoom === "center") {
+        if (map.options[zoomOption] === "center") {
           this._center = this._startLatLng;
           if (scale === 1) {
             return;
@@ -2289,12 +2379,14 @@ var leafletRotate = (() => {
       if (gesture === "pitch" || gesture === "pending" || !this._moved || !(this._zooming || this._rotating)) {
         this._zooming = false;
         this._rotating = false;
-        L.DomEvent.off(document, "touchmove", this._onTouchMove, this).off(document, "touchend touchcancel", this._onTouchEnd, this);
+        L.DomEvent.off(document, "touchmove", this._onTouchMove, this);
+        L.DomEvent.off(document, "touchend touchcancel", this._onTouchEnd, this);
         return;
       }
       this._zooming = false;
       this._rotating = false;
-      L.DomEvent.off(document, "touchmove", this._onTouchMove, this).off(document, "touchend touchcancel", this._onTouchEnd, this);
+      L.DomEvent.off(document, "touchmove", this._onTouchMove, this);
+      L.DomEvent.off(document, "touchend touchcancel", this._onTouchEnd, this);
       if (this.zoom) {
         if (this._map.options.zoomAnimation) {
           this._map._animateZoom(this._center, this._map._limitZoom(this._zoom), true, this._map.options.zoomSnap);
@@ -2317,7 +2409,9 @@ var leafletRotate = (() => {
      */
     touchRotate: false
   });
-  L.Map.TouchRotate = L.Handler.extend({
+  L.Map.TouchRotate = class extends L.Handler {
+  };
+  L.Map.TouchRotate.include({
     /**
      * Enable rotation handling in the map's shared touch gesture handler.
      * 
@@ -2349,7 +2443,9 @@ var leafletRotate = (() => {
      */
     touchPitch: false
   });
-  L.Map.TouchPitch = L.Handler.extend({
+  L.Map.TouchPitch = class extends L.Handler {
+  };
+  L.Map.TouchPitch.include({
     /**
      * Enable pitch handling in the map's shared touch gesture handler.
      * 
@@ -2389,20 +2485,23 @@ var leafletRotate = (() => {
      */
     pitchDrag: true
   });
-  L.Map.ShiftKeyRotate = L.Handler.extend({
+  L.Map.ShiftKeyRotate = class extends L.Handler {
     /**
      * @param {L.Map} map Map controlled by this handler.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(map) {
-      this._map = map;
+    constructor(map) {
+      super(map);
       this._onMouseDownBound = this._onMouseDown.bind(this);
       this._onMouseMoveBound = this._onMouseMove.bind(this);
       this._onMouseUpBound = this._onMouseUp.bind(this);
       this._onContextMenuBound = this._onContextMenu.bind(this);
+      this._onClickBound = this._onClick.bind(this);
       this._applyBound = this._apply.bind(this);
-    },
+    }
+  };
+  L.Map.ShiftKeyRotate.include({
     /**
      * Attach enabled wheel and pointer/mouse gesture listeners.
      * 
@@ -2437,6 +2536,7 @@ var leafletRotate = (() => {
       this._pitchEvents = L.version.startsWith("2.") ? ["pointerdown", "pointermove", "pointerup pointercancel"] : ["mousedown", "mousemove", "mouseup"];
       this._map._container.addEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
       this._map._container.addEventListener("contextmenu", this._onContextMenuBound, true);
+      this._map._container.addEventListener("click", this._onClickBound, true);
       this._pitchHooksAdded = true;
     },
     /**
@@ -2450,6 +2550,7 @@ var leafletRotate = (() => {
       }
       this._map._container.removeEventListener(this._pitchEvents[0], this._onMouseDownBound, true);
       this._map._container.removeEventListener("contextmenu", this._onContextMenuBound, true);
+      this._map._container.removeEventListener("click", this._onClickBound, true);
       this._onMouseUp();
       delete this._pitchEvents;
       this._pitchHooksAdded = false;
@@ -2552,6 +2653,12 @@ var leafletRotate = (() => {
         e.stopPropagation();
       }
     },
+    _onClick(e) {
+      if (this._moved) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
     /**
      * End Ctrl+drag, flush pending movement and clear document-level listeners.
      * 
@@ -2591,6 +2698,7 @@ var leafletRotate = (() => {
   });
 
   // src/map/handler/TouchZoom.js
+  var zoomOption2 = L.version.startsWith("2.") ? "pinchZoom" : "touchZoom";
   L.Map.mergeOptions({
     /**
      * Whether the map can be zoomed by touch-dragging
@@ -2603,7 +2711,7 @@ var leafletRotate = (() => {
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    touchZoom: L.Browser.touch,
+    [zoomOption2]: L.version.startsWith("2.") || L.Browser.touch,
     /**
      * @TODO check if this is a duplicate of `L.Map.TouchGestures::bounceAtZoomLimits`
      * 
@@ -2617,7 +2725,9 @@ var leafletRotate = (() => {
      */
     bounceAtZoomLimits: false
   });
-  L.Map.TouchZoom = L.Handler.extend({
+  L.Map.TouchZoom = class extends L.Handler {
+  };
+  L.Map.TouchZoom.include({
     /**
      * Enable pinch zoom handling and mark the shared touch handler as active.
      * 
@@ -2638,10 +2748,21 @@ var leafletRotate = (() => {
       this._map.touchGestures.zoom = false;
     }
   });
-  L.Map.addInitHook("addHandler", "touchZoom", L.Map.TouchZoom);
+  L.Map.addInitHook(function() {
+    const enabled = this[zoomOption2].enabled();
+    this[zoomOption2].disable();
+    this.addHandler(zoomOption2, L.Map.TouchZoom);
+    if (enabled) this[zoomOption2].enable();
+  });
 
   // src/control/Rotate.js
-  L.Control.Rotate = L.Control.extend({
+  var RotateControl = class extends L.Control {
+  };
+  if (L.version.startsWith("1.")) {
+    RotateControl.prototype.options = Object.create(L.Control.prototype.options);
+  }
+  L.Control.Rotate = RotateControl;
+  RotateControl.include({
     options: {
       position: "topleft",
       closeOnZeroBearing: true,
@@ -2676,7 +2797,12 @@ var leafletRotate = (() => {
       link.style.touchAction = "none";
       this._onPointerMoveBound = this._onPointerMove.bind(this);
       this._onPointerUpBound = this._onPointerUp.bind(this);
-      L.DomEvent.on(link, "dblclick contextmenu", L.DomEvent.stop).on(link, "click", L.DomEvent.stop).on(link, "click", this._onClick, this).on(link, "click", this._refocusOnMap, this);
+      L.DomEvent.on(link, "dblclick contextmenu", L.DomEvent.stop);
+      L.DomEvent.on(link, "click", L.DomEvent.stop);
+      L.DomEvent.on(link, "click", this._onClick, this);
+      if (this._refocusOnMap) {
+        L.DomEvent.on(link, "click", this._refocusOnMap, this);
+      }
       link.addEventListener("pointerdown", this._onPointerDown.bind(this));
       map.on("rotate pitch", this._restyle, this);
       this._map = map;

@@ -18,7 +18,14 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
-L.Control.Rotate = L.Control.extend({
+import { L } from '../Leaflet.js';
+
+export class RotateControl extends L.Control {}
+if (L.version.startsWith('1.')) {
+    RotateControl.prototype.options = Object.create(L.Control.prototype.options);
+}
+L.Control.Rotate = RotateControl;
+RotateControl.include({
 
     options: {
         position: 'topleft',
@@ -60,11 +67,12 @@ L.Control.Rotate = L.Control.extend({
         this._onPointerMoveBound = this._onPointerMove.bind(this);
         this._onPointerUpBound = this._onPointerUp.bind(this);
 
-        L.DomEvent
-            .on(link, 'dblclick contextmenu', L.DomEvent.stop)
-            .on(link, 'click', L.DomEvent.stop)
-            .on(link, 'click', this._onClick, this)
-            .on(link, 'click', this._refocusOnMap, this);
+        L.DomEvent.on(link, 'dblclick contextmenu', L.DomEvent.stop);
+        L.DomEvent.on(link, 'click', L.DomEvent.stop);
+        L.DomEvent.on(link, 'click', this._onClick, this);
+        if (this._refocusOnMap) {
+            L.DomEvent.on(link, 'click', this._refocusOnMap, this);
+        }
         link.addEventListener('pointerdown', this._onPointerDown.bind(this));
 
         map.on('rotate pitch', this._restyle, this);
@@ -226,4 +234,3 @@ L.Map.addInitHook(function() {
         this.addControl(this.rotateControl);
     }
 });
-

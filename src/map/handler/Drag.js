@@ -1,9 +1,12 @@
 /**
  * Apply maxBoundsViscosity in projected ground coordinates before moving the map pane.
  */
-const dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.Drag.prototype));
+import { L } from '../../Leaflet.js';
 
-L.Map.Drag.include({
+const DragHandler = L.DragHandler || L.Map.Drag;
+const dragProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(DragHandler.prototype));
+
+DragHandler.include({
 
     /**
      * Capture the ground footprint and pointer anchor before a constrained drag.

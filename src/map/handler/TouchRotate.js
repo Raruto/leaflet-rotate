@@ -7,6 +7,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from '../../Leaflet.js';
+
 L.Map.mergeOptions({
 
     /**
@@ -20,7 +22,8 @@ L.Map.mergeOptions({
 
 });
 
-L.Map.TouchRotate = L.Handler.extend({
+L.Map.TouchRotate = class extends L.Handler {};
+L.Map.TouchRotate.include({
 
     /**
      * Enable rotation handling in the map's shared touch gesture handler.

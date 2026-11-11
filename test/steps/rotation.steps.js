@@ -86,7 +86,7 @@ When('I set the map pitch to 45 degrees', async function () {
       size = map.getSize();
     const css = new DOMMatrix(getComputedStyle(map._rotatePane).transform),
       pivot = map._getPixelCenter(),
-      origin = map._rotatePane._leaflet_pos,
+      origin = L.DomUtil.getPosition(map._rotatePane),
       angle = Math.PI / 4,
       bearing = map._bearing,
       perspective = size.y * 1.5,
@@ -561,37 +561,35 @@ When('I pan inside the Trondheim marker', async function () {
   this.markerBounds = await this.page.evaluate(() => {
     const marker = markers[4];
     const bounds = [];
+    const positions = [];
+    const record = () => {
+      bounds.push(map.getBounds());
+      positions.push(map.latLngToContainerPoint(marker.getLatLng()));
+    };
     map.setBearing(50);
     map.setView(marker.getLatLng(), 30, { animate: false });
-    bounds.push(map.getBounds());
+    record();
     map.panBy([0, map._container.clientHeight / 2], { animate: false });
-    bounds.push(map.getBounds());
+    record();
     map.panBy([0, -marker.getElement().clientHeight], { animate: false });
-    bounds.push(map.getBounds());
+    record();
     map.panInside(marker.getLatLng());
-    bounds.push(map.getBounds());
+    record();
     map.panInside(marker.getLatLng());
-    bounds.push(map.getBounds());
+    record();
     marker.getElement().click();
-    bounds.push(map.getBounds());
-    return { autoPanOnFocus: marker.options.autoPanOnFocus, bounds };
+    record();
+    return { autoPanOnFocus: marker.options.autoPanOnFocus, bounds, positions,
+      size: map.getSize(), iconHeight: marker.getElement().clientHeight };
   });
 });
 
 Then('panning inside keeps the expected bounds', function () {
-  const { autoPanOnFocus, bounds } = this.markerBounds;
+  const { autoPanOnFocus, bounds, positions, size, iconHeight } = this.markerBounds;
   assert.equal(autoPanOnFocus, true);
-  const expected = [
-    { _southWest: { lat: 63.40997749296754, lng: 10.409954421520982 }, _northEast: { lat: 63.41002250228354, lng: 10.410045638381689 } },
-    { _southWest: { lat: 63.40997315210509, lng: 10.409965979159589 }, _northEast: { lat: 63.4100181614279, lng: 10.410057196020334 } },
-    { _southWest: { lat: 63.409974140857145, lng: 10.40996334658635 }, _northEast: { lat: 63.410019150178414, lng: 10.410054563447094 } },
-  ];
-  for (let index = 0; index < expected.length; index++) {
-    for (const corner of ['_southWest', '_northEast']) {
-      for (const coordinate of ['lat', 'lng']) {
-        assert.ok(Math.abs(bounds[index][corner][coordinate] - expected[index][corner][coordinate]) < 1e-6);
-      }
-    }
+  for (const [index, y] of [size.y / 2, 0, iconHeight].entries()) {
+    assert.ok(Math.abs(positions[index].x - size.x / 2) < 1.5, JSON.stringify(this.markerBounds));
+    assert.ok(Math.abs(positions[index].y - y) < 1.5, JSON.stringify(this.markerBounds));
   }
   for (const index of [3, 4, 5]) {
     for (const corner of ['_southWest', '_northEast']) {
@@ -615,7 +613,7 @@ Then('the draggable marker has one drag listener and one drag-end listener', asy
 });
 
 When('I rotate and zoom two fingers over a vector path', async function () {
-  this.gesturePathPositions = await this.page.evaluate(() => {
+  this.gesturePathPositions = await this.page.evaluate(async () => {
     map.options.zoomAnimation = true;
     map.setView([55, 10], 6, { animate: false });
     const location = new L.LatLng(55.1, 10.1);
@@ -635,11 +633,7 @@ When('I rotate and zoom two fingers over a vector path', async function () {
       }));
     };
     const dispatch = (type, activeTouches) => {
-      const event = new TouchEvent(type, {
-        bubbles: true, cancelable: true,
-        touches: activeTouches, targetTouches: activeTouches, changedTouches: activeTouches,
-      });
-      (type === 'touchstart' ? container : document).dispatchEvent(event);
+      dispatchTouches(type === 'touchstart' ? container : document, type, activeTouches);
     };
     const measure = () => {
       const element = path.getElement();
@@ -653,6 +647,7 @@ When('I rotate and zoom two fingers over a vector path', async function () {
 
     dispatch('touchstart', touches(40, 0));
     dispatch('touchmove', touches(60, Math.PI / 6));
+    await new Promise(requestAnimationFrame);
     const during = measure();
     const bearingDuring = map.getBearing(),
       zoomDuring = map.getZoom();
@@ -677,13 +672,7 @@ When('I disable touch rotation and rotate two fingers', async function () {
       new Touch({ identifier: 2, target: container, clientX: centerX + x2, clientY: centerY + y2 }),
     ];
     const dispatch = (target, type, activeTouches, changedTouches = activeTouches) => {
-      target.dispatchEvent(new TouchEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        touches: activeTouches,
-        targetTouches: activeTouches,
-        changedTouches,
-      }));
+      dispatchTouches(target, type, activeTouches, changedTouches);
     };
 
     map.touchRotate.disable();

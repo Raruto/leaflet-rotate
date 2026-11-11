@@ -8,6 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from '../../Leaflet.js';
+
 const rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
 const rendererBase = Object.getPrototypeOf(L.Renderer.prototype);
 const rendererGetEvents = rendererProto.getEvents || rendererBase.getEvents;

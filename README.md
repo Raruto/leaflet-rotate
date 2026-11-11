@@ -29,19 +29,18 @@ Load Leaflet first, then the plugin. For example, using the published CDN build:
 <script src="https://unpkg.com/leaflet-rotate@0.5.4/dist/leaflet-rotate.js"></script>
 ```
 
-Or if you want to test it with [`2.0.0-alpha.1`](https://github.com/Leaflet/Leaflet/releases/tag/v2.0.0-alpha.1):
+Or if you want to test it with [`2.0.0-beta.3`](https://github.com/Leaflet/Leaflet/releases/tag/v2.0.0-beta.3):
 
 ```html
-<link rel="stylesheet" href="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script>
-<script>globalThis.L = globalThis.leaflet;</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@2.0.0-beta.3/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@2.0.0-beta.3/dist/leaflet-global.js"></script>
 <script src="https://unpkg.com/leaflet-rotate@0.5.4/dist/leaflet-rotate.js"></script>
 ```
 
 Now, you can enable rotation in the map options. Bearing and pitch values are in degrees:
 
 ```js
-const map = L.map('map', {
+const map = new L.Map('map', {
     rotate: true,
     bearing: 30,
     pitch: 20,
@@ -130,6 +129,6 @@ Initial changes to this project have been apported by comparing the following br
 ---
 
 **Compatibile with:**
-[![Leaflet 1.9.4 compatible!](https://img.shields.io/badge/Leaflet-1.9.4-1EB300.svg?style=flat)](http://leafletjs.com/reference.html) [![Leaflet 2.x compatible!](https://img.shields.io/badge/Leaflet-2.0.0--alpha.1-1EB300.svg?style=flat)](http://leafletjs.com/reference.html)
+[![Leaflet 1.9.4 compatible!](https://img.shields.io/badge/Leaflet-1.9.4-1EB300.svg?style=flat)](http://leafletjs.com/reference.html) [![Leaflet 2 beta compatible!](https://img.shields.io/badge/Leaflet-2.0.0--beta.3-1EB300.svg?style=flat)](http://leafletjs.com/reference.html)
 
 **Contributors:** [IvanSanchez](https://github.com/IvanSanchez), [Fnicollet](https://github.com/fnicollet/Leaflet/tree/rotate-master), [Hyperknot](https://github.com/hyperknot), [Raruto](https://github.com/Raruto/leaflet-rotate)
