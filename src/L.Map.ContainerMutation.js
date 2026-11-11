@@ -12,6 +12,8 @@
  * Mutation Observer support will likely be added by default in next releases.
  */
 
+import { L } from './L.js';
+
 L.Map.mergeOptions({
 
     /**
@@ -30,7 +32,8 @@ L.Map.mergeOptions({
 
 });
 
-L.Map.ContainerMutation = L.Handler.extend({
+L.Map.ContainerMutation = class extends L.Handler {};
+L.Map.ContainerMutation.include({
 
     /**
      * Start observing the map container's style attribute.
@@ -40,7 +43,7 @@ L.Map.ContainerMutation = L.Handler.extend({
     addHooks() {
         // if (!L.Browser.mutation) { return; }
         if (!this._observer) {
-            this._observer = new MutationObserver(L.Util.bind(this._map.invalidateSize, this._map));
+            this._observer = new MutationObserver(this._map.invalidateSize.bind(this._map));
         }
         this._observer.observe(this._map.getContainer(), {
             childList: false,

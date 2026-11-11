@@ -7,15 +7,16 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
-L.Map.CompassBearing = L.Handler.extend({
+import { L } from './L.js';
 
+L.Map.CompassBearing = class extends L.Handler {
     /**
      * @param {L.Map} map Map whose bearing follows device orientation.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(map) {
-        this._map = map;
+    constructor(map) {
+        super(map);
         /** @see https://caniuse.com/?search=DeviceOrientation */
         if ('ondeviceorientationabsolute' in window) {
             this.__deviceOrientationEvent = 'deviceorientationabsolute';
@@ -23,8 +24,10 @@ L.Map.CompassBearing = L.Handler.extend({
             this.__deviceOrientationEvent = 'deviceorientation';
         }
         this._throttled = L.Util.throttle(this._onDeviceOrientation, 100, this);
-    },
+    }
+};
 
+L.Map.CompassBearing.include({
     /**
      * Subscribe to the supported device-orientation event, if available.
      * On iOS, permission is requested first (call `enable()` from a user gesture).

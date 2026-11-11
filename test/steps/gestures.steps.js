@@ -17,7 +17,7 @@ Then('the map bearing remains unchanged', function () {
 });
 
 When('I move a two-finger pinch gesture', async function () {
-  this.zoomEndsDuringGesture = await this.page.evaluate(() => {
+  this.zoomEndsDuringGesture = await this.page.evaluate(async () => {
     const container = map.getContainer();
     const gestures = map.touchGestures;
     const wasZoomEnabled = gestures.zoom;
@@ -29,13 +29,7 @@ When('I move a two-finger pinch gesture', async function () {
       new Touch({ identifier: 2, target: container, clientX: centerX + offsetX, clientY: centerY + offsetY }),
     ];
     const dispatch = (target, type, activeTouches, changedTouches = activeTouches) => {
-      target.dispatchEvent(new TouchEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        touches: activeTouches,
-        targetTouches: activeTouches,
-        changedTouches,
-      }));
+      dispatchTouches(target, type, activeTouches, changedTouches);
     };
     let zoomEnds = 0;
     const onZoomEnd = () => zoomEnds++;
@@ -45,6 +39,7 @@ When('I move a two-finger pinch gesture', async function () {
     const startTouches = touches(30, 0);
     dispatch(container, 'touchstart', startTouches);
     dispatch(document, 'touchmove', touches(40, 30));
+    await new Promise(requestAnimationFrame);
     const result = zoomEnds;
     dispatch(document, 'touchend', [], touches(40, 30));
     map.off('zoomend', onZoomEnd);
@@ -54,7 +49,7 @@ When('I move a two-finger pinch gesture', async function () {
 });
 
 When('I drag two fingers vertically and then pinch with touch pitch enabled', async function () {
-  this.touchPitch = await this.page.evaluate(() => {
+  this.touchPitch = await this.page.evaluate(async () => {
     map.setView([55, 10], 6, { animate: false });
     map.setPitch(0);
     map.setBearing(20);
@@ -68,20 +63,15 @@ When('I drag two fingers vertically and then pinch with touch pitch enabled', as
       new Touch({ identifier: 2, target: container, clientX: centerX + x2, clientY: centerY + y2 }),
     ];
     const dispatch = (target, type, activeTouches, changedTouches = activeTouches) => {
-      target.dispatchEvent(new TouchEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        touches: activeTouches,
-        targetTouches: activeTouches,
-        changedTouches,
-      }));
+      dispatchTouches(target, type, activeTouches, changedTouches);
     };
     const state = () => ({ pitch: map.getPitch(), bearing: map.getBearing(), zoom: map.getZoom() });
 
     // both fingers up by 60px: pitch +30°
     dispatch(container, 'touchstart', touches(-40, 0, 40, 0));
-    for (let dy = -10; dy >= -60; dy -= 10) {
+    for (const dy of [-10, -20, -60]) {
       dispatch(document, 'touchmove', touches(-40, dy, 40, dy));
+      await new Promise(requestAnimationFrame);
     }
     dispatch(document, 'touchend', [], touches(-40, -60, 40, -60));
     const afterPitch = state();
@@ -175,7 +165,8 @@ When('I drag a map with interactive layers while rotated', async function () {
       const markerElement = marker.getElement();
       const markerRect = markerElement.getBoundingClientRect();
       const mapRect = map.getContainer().getBoundingClientRect();
-      const markerScreen = [markerRect.left + markerRect.width / 2 - mapRect.left, markerRect.bottom - mapRect.top];
+      const anchor = marker.options.icon.options.iconAnchor;
+      const markerScreen = [markerRect.left + anchor[0] - mapRect.left, markerRect.top + anchor[1] - mapRect.top];
       const markerExpected = map.latLngToContainerPoint(marker.getLatLng());
       const pathElement = path.getElement();
       const pathBounds = pathElement.getBBox();

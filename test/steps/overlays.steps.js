@@ -193,6 +193,8 @@ When('I drag between city markers and reset north before clicking Trondheim', { 
   await this.page.mouse.up();
   await this.page.keyboard.up('Control');
   assert.ok(await this.page.evaluate(() => map.getBearing() > 1 && map.getPitch() === 0));
+  assert.equal(await this.page.evaluate(() => markers[0].isPopupOpen()), false,
+    'Ctrl-drag over a marker must not open its popup');
 
   const waitForPan = () => this.page.waitForFunction(() => !map._panAnim || !map._panAnim._inProgress);
   const dragTo = async name => {
@@ -204,9 +206,11 @@ When('I drag between city markers and reset north before clicking Trondheim', { 
       const dx = Math.max(-rect.width / 4, Math.min(rect.width / 4, rect.width * 0.6 - point.x));
       const dy = Math.max(-rect.height / 4, Math.min(rect.height / 4, rect.height * 0.65 - point.y));
       if (Math.hypot(dx, dy) < 2) return;
-      await this.page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      // Start away from the city pin: Leaflet 2's icon extends below its anchor.
+      const startX = rect.x + rect.width * 0.4, startY = rect.y + rect.height / 2;
+      await this.page.mouse.move(startX, startY);
       await this.page.mouse.down();
-      await this.page.mouse.move(rect.x + rect.width / 2 + dx, rect.y + rect.height / 2 + dy, { steps: 4 });
+      await this.page.mouse.move(startX + dx, startY + dy, { steps: 4 });
       await this.page.mouse.up();
     }
     throw new Error(`Could not drag to ${name}`);
@@ -324,10 +328,13 @@ When('I redraw a heat layer after rotating, panning, and zooming', async functio
   await this.page.evaluate(() => {
     map.setView([55, 10], 6, { animate: false });
     map.setBearing(35);
-    L.HeatLayer = L.Layer.extend({
-      initialize(latlngs) {
+    L.HeatLayer = class extends L.Layer {
+      constructor(latlngs) {
+        super();
         this._latlngs = latlngs;
-      },
+      }
+    };
+    L.HeatLayer.include({
       onAdd(map) {
         this._map = map;
         const size = map.getSize();
@@ -342,18 +349,21 @@ When('I redraw a heat layer after rotating, panning, and zooming', async functio
       },
       onRemove(map) {
         map.off('moveend', this._reset, this);
-        L.DomUtil.remove(this._canvas);
+        this._canvas.remove();
       },
       _redraw() {
         this._drawnPoints = this._latlngs.map(latlng => this._map.latLngToContainerPoint(latlng));
       },
     });
     L.heatLayer = latlngs => new L.HeatLayer(latlngs);
-    globalThis.HeatmapOverlay = L.Layer.extend({
-      initialize(latlngs) {
+    globalThis.HeatmapOverlay = class extends L.Layer {
+      constructor(latlngs) {
+        super();
         this._latlngs = latlngs;
         this._el = L.DomUtil.create('div', 'leaflet-heatmap-overlay');
-      },
+      }
+    };
+    HeatmapOverlay.include({
       onAdd(map) {
         this._map = map;
         map.getPane('overlayPane').appendChild(this._el);
@@ -362,7 +372,7 @@ When('I redraw a heat layer after rotating, panning, and zooming', async functio
       },
       onRemove(map) {
         map.off('moveend', this._draw, this);
-        L.DomUtil.remove(this._el);
+        this._el.remove();
       },
       _draw() {
         this._update();
@@ -574,7 +584,7 @@ When('I add markers to a Canvas-preferred map at pitch {int}', async function (p
     container.style.cssText = 'height: 300px; width: 500px';
     document.body.appendChild(container);
     const map = new L.Map(container, {
-      center: [55, 10], zoom: 6, rotate: true, bearing: 35, pitch, preferCanvas: true,
+      center: [55, 10], zoom: 6, rotate: true, bearing: 35, pitch, renderer: new L.Canvas(),
     });
     const marker = new L.Marker([55, 10], { draggable: true, rotation: Math.PI / 4 })
       .bindPopup('DOM popup', { autoPan: false }).addTo(map);
@@ -590,7 +600,7 @@ When('I add markers to a Canvas-preferred map at pitch {int}', async function (p
     const result = {
       icon: element.tagName,
       iconPane: element.parentNode === map.getPane('markerPane'),
-      shadow: marker._shadow.tagName,
+      shadow: marker._shadow?.tagName ?? null,
       divIcon: divMarker.getElement().tagName,
       vectorCanvas: vector._renderer instanceof L.Canvas,
       aligned: position.distanceTo(expected) < 1,
@@ -607,7 +617,8 @@ When('I add markers to a Canvas-preferred map at pitch {int}', async function (p
 
 Then('the markers use Leaflet DOM icons while vector paths use Canvas', function () {
   assert.deepEqual(this.domMarkers, {
-    icon: 'IMG', iconPane: true, shadow: 'IMG', divIcon: 'DIV', vectorCanvas: true,
+    icon: 'IMG', iconPane: true, shadow: process.env.LEAFLET_VERSION === '2' ? null : 'IMG',
+    divIcon: 'DIV', vectorCanvas: true,
     aligned: true, rotation: true, opacity: '0.5', draggable: true, popup: true, removed: true,
   });
 });

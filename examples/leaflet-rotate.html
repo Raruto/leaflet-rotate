@@ -11,13 +11,13 @@
 		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css">
 
 		<!-- Leaflet-Rotate -->
-		<script src="https://unpkg.com/leaflet-rotate@0.5.4/dist/leaflet-rotate-src.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.6.0/dist/leaflet-rotate-src.js"></script>
 
 		<!-- include some miscellaneous -->
-		<script src="https://unpkg.com/leaflet-rotate@0.5.4/misc/route.js"></script>
-		<script src="https://unpkg.com/leaflet-rotate@0.5.4/misc/places.js"></script>
-		<script src="https://unpkg.com/leaflet-rotate@0.5.4/misc/loremIpsum.js"></script>
-		<script src="https://unpkg.com/leaflet-rotate@0.5.4/lib/debug.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.6.0/misc/route.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.6.0/misc/places.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.6.0/misc/loremIpsum.js"></script>
+		<script src="https://unpkg.com/leaflet-rotate@0.6.0/lib/debug.js"></script>
 
 		<style>
 			#map {
@@ -111,7 +111,7 @@
 			// map.rotateControl.setPosition('bottomleft');
 			// map.setMaxBounds([[-90,-180], [90,180]]);
 
-			const layers = new L.Control.Layers({
+			const layers = new (L.LayersControl || L.Control.Layers)({
 				'Empty': new L.TileLayer(''),
 				'Streets': osm,
 				'Satellite': esri,
@@ -138,7 +138,7 @@
 				renderer: new L.Canvas()
 			}).addTo(map);
 
-			const circle = new L.Circle([53, 4], 111111)
+			const circle = new L.Circle([53, 4], { radius: 111111 })
 				.addTo(map);
 
 			const polygon = new L.Polygon([

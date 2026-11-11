@@ -31,7 +31,8 @@
  * @since leaflet-rotate (0.5.0)
  */
 
-import { toPoint } from '../geometry/Point';
+import { L } from './L.js';
+import { toPoint } from './L.Point.js';
 
 const mapProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Map.prototype));
 
@@ -104,20 +105,12 @@ L.Map.include({
     },
 
     /**
-     * Initialize the Leaflet map and apply its initial bearing and pitch.
-     * 
-     * @param {HTMLElement|string} id Map container element or its ID.
-     * @param {Object} [options={}] Leaflet map options, including `rotate`, `bearing`, and `pitch`.
+     * Subscribe to camera changes and apply the initial bearing and pitch
+     * after Leaflet has initialized the map.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(id, options) {
-        if (options.rotate) {
-            this._rotate = true;
-            this._bearing = 0;
-            this._pitch = 0;
-        }
-        mapProto.initialize.apply(this, arguments);
+    _initRotation() {
         if (this.options.rotate) {
             this.on('resize', this._updatePitchTransform, this);
             this.on('movestart dragstart', this._startPitchPan, this);
@@ -223,15 +216,6 @@ L.Map.include({
             ._subtract(this._getRotatePanePos())
             .rotate(-this._bearing);
     },
-
-    // latLngToLayerPoint(latlng) {
-    //     const projectedPoint = this.project(L.latLng(latlng))._round();
-    //     return projectedPoint._subtract(this.getPixelOrigin());
-    // },
-
-    // latLngToContainerPoint(latlng) {
-	// 	return this.layerPointToContainerPoint(this.latLngToLayerPoint(toLatLng(latlng)));
-	// },
 
     /**
      * Given latlng bounds, returns the bounds in projected pixel
@@ -352,23 +336,6 @@ L.Map.include({
         }
         return near + panePos.y;
     },
-
-    /**
-     * Returns the bounds of the current map view in projected pixel
-     * coordinates (sometimes useful in layer and overlay implementations).
-     * 
-     * @TODO find out if map bounds calculated by `L.Map::getPixelBounds()`
-     *       function should match the `rotatePane` or `norotatePane` bounds
-     *
-     * @see https://github.com/fnicollet/Leaflet/issues/7
-     * 
-     * @returns {L.Bounds}
-     */
-    // getPixelBounds(center, zoom) {
-    //     // const topLeftPoint = map.containerPointToLayerPoint(this._getTopLeftPoint());
-    //     const topLeftPoint = this._getTopLeftPoint(center, zoom);
-    //       return new L.Bounds(topLeftPoint, topLeftPoint.add(this.getSize()));
-    // },
 
     /**
      * Set the map bearing, optionally animating to the new value.
@@ -520,7 +487,7 @@ L.Map.include({
         this._rotatePanePos = newPos;
 
         if (this._pitch) {
-            this._rotatePane._leaflet_pos = oldPos;
+            L.DomUtil.setPosition(this._rotatePane, oldPos);
             this._updatePitchTransform();
         } else {
             L.DomUtil.setPosition(this._rotatePane, oldPos, bearing, center);
@@ -584,7 +551,7 @@ L.Map.include({
         const pivot = this._getPixelCenter(),
             size = this.getSize(),
             perspective = Math.max(1, size.y * 1.5),
-            position = this._rotatePane._leaflet_pos || new L.Point(0, 0),
+            position = L.DomUtil.getPosition(this._rotatePane),
             transform = `translate3d(${pivot.x}px,${pivot.y}px,0) perspective(${perspective}px) rotateX(${this.getPitch()}deg) rotateZ(${this.getBearing()}deg) translate3d(${position.x - pivot.x}px,${position.y - pivot.y}px,0)`;
 
         this._setPitchTransform(transform);
@@ -803,7 +770,7 @@ L.Map.include({
      * @since leaflet-rotate (0.5.1)
      */
     setZoomAround(latlng, zoom, options) {
-        if (!this._pitch) {
+        if (!this._rotate || (!this._pitch && !L.version.startsWith('2.'))) {
             return mapProto.setZoomAround.apply(this, arguments);
         }
         const scale = this.getZoomScale(zoom),
@@ -832,31 +799,6 @@ L.Map.include({
     },
 
     /**
-     * Creates a new [map pane](#map-pane) with the given name if it doesn't
-     * exist already, then returns it. The pane is created as a child of
-     * `container`, or as a child of the main map pane if not set.
-     * 
-     * @param {String} name leaflet pane
-     * @param {HTMLElement} [container] parent element
-     * 
-     * @returns {HTMLElement} pane container
-     * 
-     * @since leaflet-rotate (v0.1.0)
-     */
-    // createPane(name, container) {
-    //     if (!this._rotate || name == 'mapPane') {
-    //         return mapProto.createPane.apply(this, arguments);
-    //     }
-    //     // init "rotatePane"
-    //     if (!this._rotatePane) {
-    //         // this._pivot = this.getSize().divideBy(2);
-    //         this._rotatePane = mapProto.createPane.call(this, 'rotatePane', this._mapPane);
-    //         L.DomUtil.setPosition(this._rotatePane, new L.Point(0, 0), this._bearing, this._pivot);
-    //     }
-    //     return mapProto.createPane.call(this, name, container || this._rotatePane);
-    // },
-
-    /**
      * Panes are DOM elements used to control the ordering of layers on
      * the map. You can access panes with [`map.getPane`](#map-getpane)
      * or [`map.getPanes`](#map-getpanes) methods. New panes can be created
@@ -879,6 +821,9 @@ L.Map.include({
      * @since leaflet-rotate (v0.1.0)
      */
     _initPanes() {
+        this._rotate = !!this.options.rotate;
+        this._bearing = 0;
+        this._pitch = 0;
         const panes = this._panes = {};
         this._paneRenderers = {};
 
@@ -1071,36 +1016,12 @@ L.Map.include({
             this._resetView(this._limitCenter(center, this._zoom, this.options.maxBounds), this._zoom);
             return this;
         }
+        if (this._rotate && L.version.startsWith('2.')) {
+            // Leaflet 2's public panBy now offsets projected geography, not the screen.
+            return mapProto._panBy.call(this, offset.round(), options);
+        }
         return mapProto.panBy.call(this, offset, options);
     },
-
-    // @method flyToBounds(bounds: LatLngBounds, options?: fitBounds options): this
-    // Sets the view of the map with a smooth animation like [`flyTo`](#map-flyto),
-    // but takes a bounds parameter like [`fitBounds`](#map-fitbounds).
-    // flyToBounds(bounds, options) {
-    //     const target = this._getBoundsCenterZoom(bounds, options);
-    //     return this.flyTo(target.center, target.zoom, options);
-    // },
-
-    // _getBoundsCenterZoom(bounds, options) {
-    //
-    //     options = options || {};
-    //     bounds = bounds.getBounds ? bounds.getBounds() : toLatLngBounds(bounds);
-    //
-    //     const paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]),
-    //           paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]);
-    //
-    //     let zoom = this.getBoundsZoom(bounds, false, paddingTL.add(paddingBR));
-    //
-    //     zoom = (typeof options.maxZoom === 'number') ? Math.min(options.maxZoom, zoom) : zoom;
-    //
-    //     if (zoom === Infinity) {
-    //         return { center: bounds.getCenter(), zoom };
-    //     }
-    //
-    //     return { center, zoom };
-    //
-    // },
 
     /**
      * Returns the maximum zoom level on which the given bounds fit to the map
@@ -1150,15 +1071,6 @@ L.Map.include({
     },
 
     /**
-     * Layer point of the current center
-     * 
-     * @returns {L.Point} layer center
-     */
-    // _getCenterLayerPoint() {
-    //    return this.containerPointToLayerPoint(this.getSize()._divideBy(2));
-    // },
-
-    /**
      * Return the screen-space pan offset needed to center the given geographic point.
      * Under perspective, projecting a negated layer offset is not equivalent to
      * negating its screen projection. Reflect the target about the layer center
@@ -1196,11 +1108,6 @@ L.Map.include({
         // return L.DomUtil.getPosition(this._rotatePane) || new L.Point(0, 0);
     },
 
-    // _latLngToNewLayerPoint(latlng, zoom, center) {
-    //    const topLeft = this._getNewPixelOrigin(center, zoom);
-    //    return this.project(latlng, zoom)._subtract(topLeft);
-    //},
-
     /**
      * Calculate the pixel origin for a target view while preserving bearing-aware alignment.
      * 
@@ -1232,7 +1139,7 @@ L.Map.include({
      * 
      * @since leaflet-rotate (v0.2.0)
      * 
-     * @see src\layer\tile\GridLayer::_getTiledPixelBounds()
+     * @see src\L.GridLayer.js::_getTiledPixelBounds()
      */
     _getNewPixelBounds(center, zoom) {
         center = center || this.getCenter();
@@ -1277,7 +1184,7 @@ L.Map.include({
      * Convert the padded visible ground rectangle to layer bounds for vector renderers.
      * Clip its far edge before reversing perspective to avoid unbounded render areas.
      *
-     * @see src\layer\vector\Renderer::_update()
+     * @see src\L.Renderer.js::_update()
      * 
      * @param {number} padding Bounds padding as a fraction of map size.
      * @param {boolean} [round=true] Round renderer bounds; navigation needs exact ground coordinates.
@@ -1346,20 +1253,6 @@ L.Map.include({
         this.fire('locationfound', data);
     },
 
-    /**
-     * @see https://github.com/ronikar/Leaflet/blob/5c480ef959b947c3beed7065425a5a36c486262b/src/geo/LatLngBounds.js#L253-L264
-     * 
-     * @param {L.Bounds} points 
-     * 
-     * @returns {L.Bounds}
-     */
-    // toCircumscribedBounds(points) {
-    //     const minX = points.reduce(function (pv, v) { return Math.min(pv, v.x); }, points[0].x),
-    //         maxX = points.reduce(function (pv, v) { return Math.max(pv, v.x); }, points[0].x),
-    //         minY = points.reduce(function (pv, v) { return Math.min(pv, v.y); }, points[0].y),
-    //         maxY = points.reduce(function (pv, v) { return Math.max(pv, v.y); }, points[0].y);
-    //
-    //     return L.bounds(L.point(minX, minY), L.point(maxX, maxY));
-    // },
-
 });
+
+L.Map.addInitHook('_initRotation');

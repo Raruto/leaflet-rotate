@@ -20,7 +20,7 @@ BeforeAll({ timeout: 60000 }, async () => {
   browser = await engine.launch(options);
 });
 
-AfterAll({ timeout: 30000 }, async () => {
+AfterAll({ timeout: 60000 }, async () => {
   await browser.close();
   await new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
@@ -32,6 +32,38 @@ AfterAll({ timeout: 30000 }, async () => {
 Before({ tags: 'not @unit' }, async function () {
   this.baseUrl = baseUrl;
   this.context = await browser.newContext();
+  await this.context.route(/server\.arcgisonline\.com|tile\.openstreetmap\.org/, route =>
+    route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"/>' }));
+  await this.context.addInitScript(() => {
+    const pointers = new Map();
+    window.dispatchTouches = (target, type, touches, changedTouches = touches) => {
+      if (!L.version.startsWith('2.')) {
+        target.dispatchEvent(new TouchEvent(type, {
+          bubbles: true, cancelable: true, touches, targetTouches: touches, changedTouches,
+        }));
+        return;
+      }
+      const container = map.getContainer();
+      const dispatch = (type, touch) => container.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: 'touch', pointerId: touch.identifier + 1,
+        clientX: touch.clientX, clientY: touch.clientY, button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
+      }));
+      if (type === 'touchend') {
+        for (const [id, touch] of pointers) {
+          if (!touches.some(touch => touch.identifier === id)) {
+            dispatch('pointerup', touch);
+            pointers.delete(id);
+          }
+        }
+      } else {
+        for (const touch of touches) {
+          pointers.set(touch.identifier, touch);
+          dispatch(type === 'touchstart' ? 'pointerdown' : 'pointermove', touch);
+        }
+      }
+    };
+  });
   await this.context.route(/\.html(?:\?|$)/, async route => {
     const response = await route.fetch();
     const version = process.env.LEAFLET_VERSION;
@@ -43,13 +75,13 @@ Before({ tags: 'not @unit' }, async function () {
       body = body
         .replace(
           '<script src="https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"></script>',
-          '<script src="https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"></script><script>globalThis.L = globalThis.leaflet;</script>'
+          '<script src="https://unpkg.com/leaflet@2.0.0-beta.3/dist/leaflet-global.js"></script>'
         )
         .replace(
           '"leaflet": "https://unpkg.com/leaflet@1.9/dist/leaflet-src.js"',
-          '"leaflet": "https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet-global-src.js"'
+          '"leaflet": "https://unpkg.com/leaflet@2.0.0-beta.3/dist/leaflet.js"'
         )
-        .replace('https://unpkg.com/leaflet@1.9/dist/leaflet.css', 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.css');
+        .replace('https://unpkg.com/leaflet@1.9/dist/leaflet.css', 'https://unpkg.com/leaflet@2.0.0-beta.3/dist/leaflet.css');
     }
     await route.fulfill({ response, body, headers: response.headers() });
   });
@@ -60,15 +92,14 @@ After({ tags: 'not @unit' }, async function () {
   await this.context.close();
 });
 
-Given('the example page is open', async function () {
+Given('the example page is open', { timeout: 30000 }, async function () {
   const version = process.env.LEAFLET_VERSION;
-  await this.page.goto(`${baseUrl}/examples/leaflet-rotate.html`);
-  await this.page.waitForLoadState('domcontentloaded');
+  await this.page.goto(`${baseUrl}/examples/leaflet-rotate.html`, { waitUntil: 'domcontentloaded' });
   await this.page.waitForFunction(() => window.map && window.path && typeof window.map.getBearing === 'function');
 
   const result = await this.page.evaluate(() => {
     const domUtilTest = document.createElement('div');
-    L.DomUtil.setPosition(domUtilTest, new L.Point(10, 20), Math.PI / 2, new L.Point(10, 20));
+    leafletRotate.DomUtil.setPosition(domUtilTest, new L.Point(10, 20), Math.PI / 2, new L.Point(10, 20));
     const testMarker = new L.Marker([55, 10], { rotation: Math.PI / 4 }).addTo(map);
     const compatibility = {
       bearing: map.getBearing(),
@@ -88,5 +119,5 @@ Given('the example page is open', async function () {
   assert.equal(result.pathOnMap, true);
   assert.match(result.markerTransform, /rotate\(0\.785/);
   assert.match(result.domUtilTransform, /rotate\(1\.570/);
-  assert.match(result.pluginVersion, version === '2' ? /^2\.0\.0-alpha/ : /^1\.9/);
+  assert.match(result.pluginVersion, version === '2' ? /^2\.0\.0-beta/ : /^1\.9/);
 });

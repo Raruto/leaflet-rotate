@@ -8,6 +8,8 @@
  * @since leaflet-rotate (v0.1.0)
  */
 
+import { L } from './L.js';
+
 const rendererProto = Object.defineProperties({}, Object.getOwnPropertyDescriptors(L.Renderer.prototype));
 const rendererBase = Object.getPrototypeOf(L.Renderer.prototype);
 const rendererGetEvents = rendererProto.getEvents || rendererBase.getEvents;
@@ -155,48 +157,6 @@ L.Renderer.include({
         this._container.style.height = size.y + 'px';
         return size;
     },
-
-    // getEvents() {
-    //     const events = {
-    //         viewreset: this._reset,
-    //         zoom: this._onZoom,
-    //         moveend: this._update,
-    //         zoomend: this._onZoomEnd
-    //     };
-    //     if (this._zoomAnimated) {
-    //         events.zoomanim = this._onAnimZoom;
-    //     }
-    //     return events;
-    // },
-
-    // _onAnimZoom(ev) {
-    //     this._updateTransform(ev.center, ev.zoom);
-    // },
-
-	// _onZoom() {
-    //     this._updateTransform(this._map.getCenter(), this._map.getZoom());
-	// },
-
-    // _onZoomEnd() {
-    //     for (const id in this._layers) {
-    //         this._layers[id]._project();
-    //     }
-    // },
-
-    // _reset() {
-    //     this._update();
-    //     this._updateTransform(this._center, this._zoom);
-
-    //     for (const id in this._layers) {
-    //         this._layers[id]._reset();
-    //     }
-    // },
-
-    // _updatePaths() {
-    //     for (const id in this._layers) {
-    //         this._layers[id]._update();
-    //     }
-    // },
 
     /**
      * Recalculate renderer bounds and cached view state.

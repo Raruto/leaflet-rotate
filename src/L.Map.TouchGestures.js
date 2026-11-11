@@ -22,6 +22,10 @@
  * 
  * @since leaflet-rotate (v0.1.0)
  */
+import { L } from './L.js';
+
+const zoomOption = L.version.startsWith('2.') ? 'pinchZoom' : 'touchZoom';
+
 function touchToContainerPoint(map, touch) {
     const container = map.getContainer(),
         rect = container.getBoundingClientRect();
@@ -45,7 +49,7 @@ L.Map.mergeOptions({
 
 });
 
-L.Map.TouchGestures = L.Handler.extend({
+L.Map.TouchGestures = class extends L.Handler {
 
     /**
      * Initialize the shared handler from the map's touch zoom/rotation options.
@@ -54,20 +58,30 @@ L.Map.TouchGestures = L.Handler.extend({
      * 
      * @since leaflet-rotate (v0.1.0)
      */
-    initialize(map) {
-        this._map = map;
+    constructor(map) {
+        super(map);
         this.rotate = !!this._map.options.touchRotate;
-        this.zoom = !!this._map.options.touchZoom;
+        this.zoom = !!this._map.options[zoomOption];
         this.pitch = !!this._map.options.touchPitch;
-    },
+    }
+};
 
+L.Map.TouchGestures.include({
     /**
      * Listen for the start of two-finger gestures on the map container.
      * 
      * @since leaflet-rotate (v0.1.0)
      */
     addHooks() {
-        L.DomEvent.on(this._map._container, 'touchstart', this._onTouchStart, this);
+        const container = this._map._container;
+        if (L.version.startsWith('2.')) {
+            this._pointers = new Map();
+            L.DomEvent.on(container, 'pointerdown', this._onPointerDown, this);
+            L.DomEvent.on(container, 'pointermove', this._onPointerMove, this);
+            L.DomEvent.on(container, 'pointerup pointercancel lostpointercapture', this._onPointerUp, this);
+        } else {
+            L.DomEvent.on(container, 'touchstart', this._onTouchStart, this);
+        }
     },
 
     /**
@@ -76,7 +90,54 @@ L.Map.TouchGestures = L.Handler.extend({
      * @since leaflet-rotate (v0.1.0)
      */
     removeHooks() {
-        L.DomEvent.off(this._map._container, 'touchstart', this._onTouchStart, this);
+        const container = this._map._container;
+        L.DomEvent.off(container, 'touchstart', this._onTouchStart, this);
+        L.DomEvent.off(container, 'pointerdown', this._onPointerDown, this);
+        L.DomEvent.off(container, 'pointermove', this._onPointerMove, this);
+        L.DomEvent.off(container, 'pointerup pointercancel lostpointercapture', this._onPointerUp, this);
+        cancelAnimationFrame(this._gestureFrame);
+        this._gestureFrame = null;
+        if (this._pointers) this._pointers.clear();
+        this._onTouchEnd();
+    },
+
+    _pointerTouches(e) {
+        return {
+            touches: [...this._pointers.values()],
+            preventDefault: () => e.preventDefault(),
+        };
+    },
+
+    _onPointerDown(e) {
+        if (e.pointerType === 'mouse') { return; }
+        this._pointers.set(e.pointerId, e);
+        this._onTouchStart(this._pointerTouches(e));
+    },
+
+    _onPointerMove(e) {
+        if (!this._pointers.has(e.pointerId)) { return; }
+        this._pointers.set(e.pointerId, e);
+        if (!this._gesture) { return; }
+        e.preventDefault();
+        // Coalesce the two fingers' separate pointer events before classifying the gesture.
+        if (!this._gestureFrame) {
+            this._gestureFrame = requestAnimationFrame(() => {
+                this._gestureFrame = null;
+                this._onTouchMove(this._pointerTouches(e));
+            });
+        }
+    },
+
+    _onPointerUp(e) {
+        if (e.type === 'lostpointercapture' && e.buttons) { return; }
+        if (!this._pointers.has(e.pointerId)) { return; }
+        if (this._gestureFrame) {
+            cancelAnimationFrame(this._gestureFrame);
+            this._gestureFrame = null;
+            this._onTouchMove(this._pointerTouches(e));
+        }
+        this._pointers.delete(e.pointerId);
+        if (this._pointers.size < 2) this._onTouchEnd();
     },
 
     /**
@@ -107,7 +168,7 @@ L.Map.TouchGestures = L.Handler.extend({
         this._startLatLng = map.containerPointToLatLng(this._centerPoint);
 
         if (this.zoom) {
-            if (map.options.touchZoom !== 'center') {
+            if (map.options[zoomOption] !== 'center') {
                 this._pinchStartLatLng = map.containerPointToLatLng(p1.add(p2)._divideBy(2));
             }
             this._startDist = p1.distanceTo(p2);
@@ -130,9 +191,10 @@ L.Map.TouchGestures = L.Handler.extend({
 
         map._stop();
 
-        L.DomEvent
-            .on(document, 'touchmove', this._onTouchMove, this)
-            .on(document, 'touchend touchcancel', this._onTouchEnd, this);
+        if (!L.version.startsWith('2.')) {
+            L.DomEvent.on(document, 'touchmove', this._onTouchMove, this);
+            L.DomEvent.on(document, 'touchend touchcancel', this._onTouchEnd, this);
+        }
 
         L.DomEvent.preventDefault(e);
     },
@@ -207,7 +269,7 @@ L.Map.TouchGestures = L.Handler.extend({
                 this._zoom = map._limitZoom(this._zoom);
             }
 
-            if (map.options.touchZoom === 'center') {
+            if (map.options[zoomOption] === 'center') {
                 this._center = this._startLatLng;
                 if (scale === 1) { return; }
             } else {
@@ -255,17 +317,15 @@ L.Map.TouchGestures = L.Handler.extend({
         if (gesture === 'pitch' || gesture === 'pending' || !this._moved || !(this._zooming || this._rotating)) {
             this._zooming = false;
             this._rotating = false;
-            L.DomEvent
-                .off(document, 'touchmove', this._onTouchMove, this)
-                .off(document, 'touchend touchcancel', this._onTouchEnd, this);
+            L.DomEvent.off(document, 'touchmove', this._onTouchMove, this);
+            L.DomEvent.off(document, 'touchend touchcancel', this._onTouchEnd, this);
             return;
         }
 
         this._zooming = false;
         this._rotating = false;
-        L.DomEvent
-            .off(document, 'touchmove', this._onTouchMove, this)
-            .off(document, 'touchend touchcancel', this._onTouchEnd, this);
+        L.DomEvent.off(document, 'touchmove', this._onTouchMove, this);
+        L.DomEvent.off(document, 'touchend touchcancel', this._onTouchEnd, this);
 
         if (this.zoom) {
             // Pinch updates GridLayers' levels only when zoomSnap is off, so zoomSnap becomes noUpdate.
