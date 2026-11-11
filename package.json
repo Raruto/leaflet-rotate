@@ -10,7 +10,9 @@
 		"dev": "node build/dev.js",
 		"build": "node build/build.js",
 		"test": "node build/test.js",
-		"version": "npm run build && git add -A dist"
+		"preversion": "node build/version.js",
+		"version": "npm run build && git add -A dist",
+		"postversion": "npm publish && git push --follow-tags"
 	},
 	"repository": {
 		"type": "git",
