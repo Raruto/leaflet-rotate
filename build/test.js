@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { build } from './build.js';
+import { prepareDependencies } from '../test/fixtures/dependencies.js';
 
+await prepareDependencies();
 await build();
 
 for (const version of ['1', '2']) {

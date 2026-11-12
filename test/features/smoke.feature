@@ -1,5 +1,6 @@
 @smoke
 Feature: Example smoke tests
+  @unit
   Scenario: The examples list is complete
     Then all HTML examples are listed
 

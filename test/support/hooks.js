@@ -1,9 +1,25 @@
 import assert from 'node:assert/strict';
-import { After, AfterAll, Before, BeforeAll, Given, setDefaultTimeout } from '@cucumber/cucumber';
+import { After, AfterAll, Before, BeforeAll, Given, setDefaultTimeout, setDefinitionFunctionWrapper } from '@cucumber/cucumber';
 import { chromium, firefox } from 'playwright';
 import { startServer } from '../../build/server.js';
+import { scenarioTimeout, withScenarioBudget } from './scenario-budget.js';
+import { dependencyFile } from '../fixtures/dependencies.js';
 
-setDefaultTimeout(10000);
+setDefaultTimeout(scenarioTimeout);
+setDefinitionFunctionWrapper(withScenarioBudget);
+
+const scenarioTimings = [];
+
+Before(function () {
+  this.scenarioStarted = performance.now();
+});
+
+After({ wrapperOptions: { cleanup: true } }, function ({ pickle, result }) {
+  scenarioTimings.push({
+    name: pickle.name, status: result.status,
+    seconds: (performance.now() - this.scenarioStarted) / 1000,
+  });
+});
 
 let server;
 let browser;
@@ -21,19 +37,35 @@ BeforeAll({ timeout: 60000 }, async () => {
 });
 
 AfterAll({ timeout: 60000 }, async () => {
-  await browser.close();
   await new Promise((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());
     server.closeAllConnections();
   });
+  await browser.close();
+});
+
+AfterAll(function () {
+  console.log('\nSlowest scenarios (including setup and cleanup):');
+  for (const timing of scenarioTimings.sort((a, b) => b.seconds - a.seconds).slice(0, 10)) {
+    console.log(`${timing.seconds.toFixed(2)}s [${timing.status}] ${timing.name}`);
+  }
 });
 
 // @unit scenarios run in Node only and need no browser page.
 Before({ tags: 'not @unit' }, async function () {
   this.baseUrl = baseUrl;
-  this.context = await browser.newContext();
-  await this.context.route(/server\.arcgisonline\.com|tile\.openstreetmap\.org/, route =>
-    route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"/>' }));
+  this.unexpectedRequests = [];
+  this.context = await browser.newContext({ serviceWorkers: 'block' });
+  await this.context.route(/^https?:\/\/(?!(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$))/i, route => {
+    const url = route.request().url();
+    const file = dependencyFile(url);
+    if (file) return route.fulfill({ path: file });
+    if (/^https?:\/\/(?:server\.arcgisonline\.com|(?:[abc]\.)?tile\.openstreetmap\.org)\//.test(url)) {
+      return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"/>' });
+    }
+    this.unexpectedRequests.push(url);
+    return route.abort('blockedbyclient');
+  });
   await this.context.addInitScript(() => {
     const pointers = new Map();
     window.dispatchTouches = (target, type, touches, changedTouches = touches) => {
@@ -64,7 +96,7 @@ Before({ tags: 'not @unit' }, async function () {
       }
     };
   });
-  await this.context.route(/\.html(?:\?|$)/, async route => {
+  await this.context.route(url => url.origin === baseUrl && url.pathname.endsWith('.html'), async route => {
     const response = await route.fetch();
     const version = process.env.LEAFLET_VERSION;
     let body = (await response.text())
@@ -88,8 +120,9 @@ Before({ tags: 'not @unit' }, async function () {
   this.page = await this.context.newPage();
 });
 
-After({ tags: 'not @unit' }, async function () {
-  await this.context.close();
+After({ tags: 'not @unit', wrapperOptions: { cleanup: true } }, async function () {
+  if (this.context) await this.context.close();
+  assert.deepEqual(this.unexpectedRequests, [], 'External browser requests must have a downloaded dependency or a tile fixture');
 });
 
 Given('the example page is open', { timeout: 30000 }, async function () {

@@ -50,7 +50,7 @@ When('I animate the bearing to 90 degrees', async function () {
     const onRotate = () => {
       const bearing = map.getBearing();
       bearings.push(bearing);
-      if (Math.abs(bearing - 90) < 1e-6) {
+      if (bearing === 90) {
         map.off('rotate', onRotate);
         map.setBearing(15);
         map.compassBearing._onDeviceOrientation({ alpha: null, absolute: true });

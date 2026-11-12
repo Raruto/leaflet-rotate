@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { AfterAll, Before, Then } from '@cucumber/cucumber';
-import { startServer } from '../../build/server.js';
-import { chromium } from 'playwright';
+import { Then } from '@cucumber/cucumber';
 
 const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
 const pluginName = manifest.name.split('/').pop();
@@ -11,25 +9,6 @@ const main = manifest.main.replace(/^\.\//, '');
 const packagePath = manifest.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const packageUrl = new RegExp(`^/${packagePath}(?:@[^/]+)?/(.+)$`);
 const bundleName = new RegExp(`^${pluginName}(?:-src|\\.min)?\\.js$`);
-let server;
-let browser;
-let base;
-
-Before({ tags: '@smoke', timeout: 30000 }, async function () {
-  if (!server) {
-    server = await startServer(0);
-    base = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch();
-  }
-});
-
-AfterAll(async function () {
-  try {
-    if (browser) await browser.close();
-  } finally {
-    if (server) await new Promise((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); });
-  }
-});
 
 Then('all HTML examples are listed', function () {
   const examples = [];
@@ -50,7 +29,8 @@ Then('all HTML examples are listed', function () {
 });
 
 Then('the example {string} loads without browser errors', { timeout: 30000 }, async function (example) {
-  const page = await browser.newPage();
+  const page = this.page;
+  const base = this.baseUrl;
   const errors = [];
   const localBundles = new Set();
   let googleKeyWarning = false;
@@ -83,10 +63,7 @@ Then('the example {string} loads without browser errors', { timeout: 30000 }, as
     const url = new URL(route.request().url());
     const match = url.hostname === 'unpkg.com' ? packageUrl.exec(decodeURIComponent(url.pathname)) : null;
     let file = match ? match[1] : url.origin === base ? decodeURIComponent(url.pathname).slice(1) : null;
-    if (file === null) return route.continue();
-    if (match && !file.startsWith('dist/') && !path.posix.basename(file).startsWith(`${pluginName}.`)) {
-      return route.continue();
-    }
+    if (file === null) return route.fallback();
     const bundleScript = route.request().resourceType() === 'script' && bundleName.test(path.posix.basename(file));
     if (bundleScript && !file.startsWith('dist/') && file !== main) file = main;
     if (bundleScript && file === main && !main.includes('/') && !main.endsWith('.min.js')) {
