@@ -360,7 +360,7 @@ When('I zoom off-center then rotate the map', async function () {
     zoomPoint = { x: mapBounds.x + mapBounds.width * 0.9, y: mapBounds.y + mapBounds.height * 0.1 };
   await this.page.mouse.move(zoomPoint.x, zoomPoint.y);
   await this.page.mouse.wheel(0, -480);
-  await this.page.waitForTimeout(500);
+  await this.page.waitForFunction(() => map.getZoom() > 5 && !map._animatingZoom);
 
   const positions = await this.page.evaluate(() => {
     const location = map.containerPointToLatLng([600, 170]),
