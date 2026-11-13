@@ -356,6 +356,8 @@ When('I zoom off-center then rotate the map', async function () {
     map.setBearing(30);
     map.setPitch(0);
   });
+  // Leaflet 2 briefly blocks wheel input after an immediate zoom.
+  await this.page.waitForFunction(() => !map._zoomInputBlocked?.());
   const mapBounds = await this.page.locator('#map').boundingBox(),
     zoomPoint = { x: mapBounds.x + mapBounds.width * 0.9, y: mapBounds.y + mapBounds.height * 0.1 };
   await this.page.mouse.move(zoomPoint.x, zoomPoint.y);

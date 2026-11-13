@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { Then } from '@cucumber/cucumber';
 
 const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
 const pluginName = manifest.name.split('/').pop();
-const main = manifest.main.replace(/^\.\//, '');
 const packagePath = manifest.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const packageUrl = new RegExp(`^/${packagePath}(?:@[^/]+)?/(.+)$`);
+const packageCdn = new RegExp(`https://(?:unpkg\\.com/|cdn\\.jsdelivr\\.net/(?:npm/|gh/Raruto/))${packagePath}(?:@[^/\\s"\x27<>]+)?/`);
 const bundleName = new RegExp(`^${pluginName}(?:-src|\\.min)?\\.js$`);
 
 Then('all HTML examples are listed', function () {
@@ -28,17 +27,50 @@ Then('all HTML examples are listed', function () {
   assert.deepEqual(listed.sort(), examples.sort(), 'Update the examples table');
 });
 
+Then('development pages rewrite CDN URLs without changing files', { timeout: 30000 }, async function () {
+  const origin = typeof base === 'string' ? base : this.baseUrl;
+  const feature = readFileSync('test/features/smoke.feature', 'utf8');
+  const examples = [...feature.matchAll(/^\s*\|\s*([^|]+\.html)\s*\|\s*$/gm)].map(match => match[1].trim());
+  assert.ok(examples.length, 'No examples to check');
+  const packageSpecifier = new RegExp('(["\x27`])' + packagePath + '(?:@[^/\\s"\x27<>]+)?/');
+  for (const example of examples) {
+    const file = path.join('examples', example);
+    const original = readFileSync(file, 'utf8');
+    const response = await fetch(`${origin}/examples/${example}`);
+    assert.equal(response.status, 200, example);
+    const html = await response.text();
+    assert.doesNotMatch(html, packageCdn, example);
+    assert.doesNotMatch(html, packageSpecifier, example);
+    const external = original.match(/https?:\/\/[^\s"'<>`]+/g) || [];
+    for (const url of external) {
+      if (!packageCdn.test(url)) assert.ok(html.includes(url), `Changed external URL: ${url}`);
+    }
+    const assets = new Set([...html.matchAll(/["'`](\/[^"'`\s<>]+\.(?:js|css)(?:\?[^"'`\s<>]*)?)["'`]/g)].map(match => match[1]));
+    assert.ok(assets.size, `No local assets in ${example}`);
+    for (const asset of assets) {
+      const result = await fetch(origin + asset);
+      assert.equal(result.status, 200, `${example}: ${asset}`);
+      const filename = path.resolve('.' + decodeURIComponent(new URL(origin + asset).pathname));
+      assert.deepEqual(Buffer.from(await result.arrayBuffer()), readFileSync(filename), asset);
+    }
+    assert.equal(readFileSync(file, 'utf8'), original);
+  }
+});
+
 Then('the example {string} loads without browser errors', { timeout: 30000 }, async function (example) {
   const page = this.page;
   const base = this.baseUrl;
   const errors = [];
-  const localBundles = new Set();
   let googleKeyWarning = false;
   let bundleLoaded = false;
   function isBundleResponse(response) {
+    const url = new URL(response.url());
     return response.request().resourceType() === 'script' && response.status() >= 200 && response.status() < 300 &&
-      localBundles.has(response.url());
+      url.origin === base && bundleName.test(path.posix.basename(url.pathname));
   }
+  page.on('request', request => {
+    if (packageCdn.test(request.url())) errors.push(`Unexpected plugin CDN request: ${request.url()}`);
+  });
   page.on('pageerror', error => errors.push(`JavaScript: ${error.message}`));
   page.on('console', message => {
     if (message.type() === 'error') {
@@ -58,28 +90,6 @@ Then('the example {string} loads without browser errors', { timeout: 30000 }, as
   page.on('response', response => {
     if (isBundleResponse(response)) bundleLoaded = true;
     if (response.status() >= 400) errors.push(`HTTP ${response.status()}: ${response.url()}`);
-  });
-  await page.route('**/*', async route => {
-    const url = new URL(route.request().url());
-    const match = url.hostname === 'unpkg.com' ? packageUrl.exec(decodeURIComponent(url.pathname)) : null;
-    let file = match ? match[1] : url.origin === base ? decodeURIComponent(url.pathname).slice(1) : null;
-    if (file === null) return route.fallback();
-    const bundleScript = route.request().resourceType() === 'script' && bundleName.test(path.posix.basename(file));
-    if (bundleScript && !file.startsWith('dist/') && file !== main) file = main;
-    if (bundleScript && file === main && !main.includes('/') && !main.endsWith('.min.js')) {
-      const minified = main.replace(/\.js$/, '.min.js');
-      assert.ok(minified !== main && existsSync(minified), `Missing built bundle: ${minified}`);
-      file = minified;
-    }
-    if (bundleScript) localBundles.add(route.request().url());
-    if (file === `${pluginName}.css` && existsSync(`${pluginName}.min.css`)) {
-      file = `${pluginName}.min.css`;
-    }
-    if (match || file !== decodeURIComponent(url.pathname).slice(1)) {
-      const response = await route.fetch({ url: `${base}/${file}` });
-      return route.fulfill({ response, headers: { ...response.headers(), 'access-control-allow-origin': '*' } });
-    }
-    return route.continue();
   });
   try {
     const url = `${base}/examples/${example.split('/').map(encodeURIComponent).join('/')}`;

@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,6 +71,18 @@ export function startServer(port = 8080) {
       }
       if (!content.isFile()) {
         response.writeHead(404).end();
+        return;
+      }
+      if (extname(target).toLowerCase() === '.html') {
+        const body = (await readFile(target, 'utf8'))
+          .replace(/https:\/\/unpkg\.com\/leaflet-rotate(?:@[^/\s"'<>]+)?\//g, '/')
+          .replace(/(["'`])leaflet-rotate(?:@[^/\s"'<>]+)?\//g, '$1/');
+        response.writeHead(200, {
+          'Content-Type': types['.html'],
+          'Content-Length': Buffer.byteLength(body),
+          'Cache-Control': 'no-store',
+        });
+        response.end(request.method === 'HEAD' ? undefined : body);
         return;
       }
       const headers = {
